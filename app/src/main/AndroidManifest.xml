@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <application
+        android:name=".EzTubeApplication"
         android:allowBackup="true"
         android:label="ezTube"
         android:supportsRtl="true"
