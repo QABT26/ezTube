@@ -32,6 +32,8 @@ import androidx.media3.session.SessionToken
 import coil.compose.AsyncImage
 import com.qabt.eztube.history.EzTubeDatabase
 import com.qabt.eztube.history.HistoryEntry
+import com.qabt.eztube.history.FavoriteEntry
+import com.qabt.eztube.history.FavoriteRepository
 import com.qabt.eztube.history.HistoryRepository
 import com.qabt.eztube.history.toMediaSummary
 import com.qabt.eztube.playback.AudioQuality
@@ -52,8 +54,11 @@ fun EzTubeApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val source = remember { NewPipeYouTubeSource() }
-    val history = remember { HistoryRepository(EzTubeDatabase.get(context).historyDao()) }
+    val database = remember { EzTubeDatabase.get(context) }
+    val history = remember { HistoryRepository(database.historyDao()) }
+    val favoritesRepo = remember { FavoriteRepository(database.favoriteDao()) }
     val recent by history.recent.collectAsState(initial = emptyList())
+    val favorites by favoritesRepo.all.collectAsState(initial = emptyList())
     var controller by remember { mutableStateOf<MediaController?>(null) }
     var nowPlaying by remember { mutableStateOf<MediaSummary?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -124,6 +129,14 @@ fun EzTubeApp() {
                 isPlaying = isPlaying,
                 quality = quality,
                 onQuality = { quality = it },
+                isFavorite = favorites.any { it.mediaId == nowPlaying?.id },
+                onFavorite = {
+                    val media = nowPlaying ?: return@FullPlayer
+                    scope.launch(Dispatchers.IO) {
+                        if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id)
+                        else favoritesRepo.add(media)
+                    }
+                },
                 onToggle = { togglePlayback() },
                 onClose = { showPlayer = false }
             )
@@ -169,16 +182,23 @@ fun EzTubeApp() {
                         playbackError = errorMessage,
                         onPlay = { media -> playMedia(media) }
                     )
-                    Tab.HOME -> EmptyPage(
-                        Modifier.fillMaxSize().padding(padding), Icons.Outlined.Headphones,
-                        "Listen without the video",
-                        "Search YouTube and stream audio only. Your recent listening will appear here."
+                    Tab.HOME -> HomeScreen(
+                        modifier = Modifier.fillMaxSize().padding(padding),
+                        recent = recent.take(10),
+                        favorites = favorites.take(10),
+                        resolvingId = resolvingId,
+                        onPlayRecent = { playMedia(it.toMediaSummary()) },
+                        onPlayFavorite = { playMedia(it.toMediaSummary()) },
+                        onSearch = { selected = Tab.SEARCH }
                     )
                     Tab.LIBRARY -> LibraryScreen(
                         modifier = Modifier.fillMaxSize().padding(padding),
                         recent = recent,
+                        favorites = favorites,
                         resolvingId = resolvingId,
                         onPlay = { playMedia(it.toMediaSummary()) },
+                        onPlayFavorite = { playMedia(it.toMediaSummary()) },
+                        onRemoveFavorite = { entry -> scope.launch(Dispatchers.IO) { favoritesRepo.remove(entry.mediaId) } },
                         onDelete = { entry -> scope.launch(Dispatchers.IO) { history.delete(entry.mediaId) } },
                         onClear = { scope.launch(Dispatchers.IO) { history.clear() } }
                     )
@@ -323,15 +343,120 @@ private fun MiniPlayer(
 }
 
 @Composable
+private fun HomeScreen(
+    modifier: Modifier,
+    recent: List<HistoryEntry>,
+    favorites: List<FavoriteEntry>,
+    resolvingId: String?,
+    onPlayRecent: (HistoryEntry) -> Unit,
+    onPlayFavorite: (FavoriteEntry) -> Unit,
+    onSearch: () -> Unit
+) {
+    LazyColumn(modifier.padding(horizontal = 14.dp), contentPadding = PaddingValues(vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Text("Listen without the video", style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold)
+            Text("Audio-first YouTube listening", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(10.dp))
+            FilledTonalButton(onClick = onSearch) {
+                Icon(Icons.Outlined.Search, null)
+                Spacer(Modifier.width(6.dp))
+                Text("Search YouTube")
+            }
+        }
+        if (recent.isNotEmpty()) {
+            item { Text("Recently played", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            items(recent, key = { "home-r-" + it.mediaId }) { entry ->
+                CompactMediaRow(entry.title, entry.channel, entry.thumbnailUrl,
+                    resolvingId == entry.mediaId) { onPlayRecent(entry) }
+            }
+        }
+        if (favorites.isNotEmpty()) {
+            item { Text("Favorites", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            items(favorites, key = { "home-f-" + it.mediaId }) { entry ->
+                CompactMediaRow(entry.title, entry.channel, entry.thumbnailUrl,
+                    resolvingId == entry.mediaId) { onPlayFavorite(entry) }
+            }
+        }
+        if (recent.isEmpty() && favorites.isEmpty()) {
+            item {
+                Text("Play a few tracks and your listening shortcuts will appear here.",
+                    modifier = Modifier.padding(top = 24.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactMediaRow(
+    title: String,
+    channel: String,
+    thumbnailUrl: String?,
+    resolving: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+            .clickable(enabled = !resolving, onClick = onClick).padding(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AsyncImage(thumbnailUrl, null, Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)),
+            contentScale = ContentScale.Crop)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            Text(channel, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
+        if (resolving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        else Icon(Icons.Outlined.PlayArrow, "Play")
+    }
+}
+
+@Composable
 private fun LibraryScreen(
     modifier: Modifier,
     recent: List<HistoryEntry>,
+    favorites: List<FavoriteEntry>,
     resolvingId: String?,
     onPlay: (HistoryEntry) -> Unit,
+    onPlayFavorite: (FavoriteEntry) -> Unit,
+    onRemoveFavorite: (FavoriteEntry) -> Unit,
     onDelete: (HistoryEntry) -> Unit,
     onClear: () -> Unit
 ) {
     Column(modifier.padding(horizontal = 14.dp)) {
+        if (favorites.isNotEmpty()) {
+            Text("Favorites", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 220.dp)) {
+                items(favorites, key = { "fav-" + it.mediaId }) { entry ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                            .clickable(enabled = resolvingId == null) { onPlayFavorite(entry) }
+                            .padding(7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AsyncImage(entry.thumbnailUrl, null,
+                            Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(entry.title, style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(entry.channel, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        }
+                        IconButton(onClick = { onRemoveFavorite(entry) }) {
+                            Icon(Icons.Outlined.Favorite, "Remove favorite")
+                        }
+                    }
+                }
+            }
+        }
         Row(
             Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -399,6 +524,8 @@ private fun FullPlayer(
     isPlaying: Boolean,
     quality: AudioQuality,
     onQuality: (AudioQuality) -> Unit,
+    isFavorite: Boolean,
+    onFavorite: () -> Unit,
     onToggle: () -> Unit,
     onClose: () -> Unit
 ) {
@@ -438,11 +565,19 @@ private fun FullPlayer(
             Text(media.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(3.dp))
-            Text(media.channel, style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
-                overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(media.channel, style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                IconButton(onClick = onFavorite) {
+                    Icon(
+                        if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                        if (isFavorite) "Remove favorite" else "Add favorite"
+                    )
+                }
+            }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 AudioQuality.entries.forEach { option ->
                     FilterChip(
