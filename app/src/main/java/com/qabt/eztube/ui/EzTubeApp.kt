@@ -30,6 +30,10 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import coil.compose.AsyncImage
+import com.qabt.eztube.history.EzTubeDatabase
+import com.qabt.eztube.history.HistoryEntry
+import com.qabt.eztube.history.HistoryRepository
+import com.qabt.eztube.history.toMediaSummary
 import com.qabt.eztube.playback.AudioQuality
 import com.qabt.eztube.playback.AudioStreamSelector
 import com.qabt.eztube.playback.PlaybackService
@@ -48,6 +52,8 @@ fun EzTubeApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val source = remember { NewPipeYouTubeSource() }
+    val history = remember { HistoryRepository(EzTubeDatabase.get(context).historyDao()) }
+    val recent by history.recent.collectAsState(initial = emptyList())
     var controller by remember { mutableStateOf<MediaController?>(null) }
     var nowPlaying by remember { mutableStateOf<MediaSummary?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -76,6 +82,38 @@ fun EzTubeApp() {
 
     fun togglePlayback() {
         controller?.let { if (it.isPlaying) it.pause() else it.play() }
+    }
+
+    fun playMedia(media: MediaSummary) {
+        if (resolvingId != null) return
+        scope.launch {
+            resolvingId = media.id
+            errorMessage = null
+            runCatching {
+                val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
+                AudioStreamSelector.select(streams, quality) ?: error("No playable audio stream")
+            }.onSuccess { stream ->
+                controller?.apply {
+                    val metadata = MediaMetadata.Builder()
+                        .setTitle(media.title)
+                        .setArtist(media.channel)
+                        .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
+                        .build()
+                    setMediaItem(
+                        MediaItem.Builder()
+                            .setMediaId(media.id)
+                            .setUri(stream.url)
+                            .setMediaMetadata(metadata)
+                            .build()
+                    )
+                    prepare()
+                    play()
+                    nowPlaying = media
+                    withContext(Dispatchers.IO) { history.record(media) }
+                } ?: run { errorMessage = "Playback service is not ready yet" }
+            }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
+            resolvingId = null
+        }
     }
 
     MaterialTheme {
@@ -129,47 +167,20 @@ fun EzTubeApp() {
                         source = source,
                         resolvingId = resolvingId,
                         playbackError = errorMessage,
-                        onPlay = { media ->
-                            if (resolvingId != null) return@SearchScreen
-                            scope.launch {
-                                resolvingId = media.id
-                                errorMessage = null
-                                runCatching {
-                                    val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
-                                    AudioStreamSelector.select(streams, quality)
-                                        ?: error("No playable audio stream")
-                                }.onSuccess { stream ->
-                                    controller?.apply {
-                                        val metadata = MediaMetadata.Builder()
-                                            .setTitle(media.title)
-                                            .setArtist(media.channel)
-                                            .apply {
-                                                media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) }
-                                            }
-                                            .build()
-                                        val item = MediaItem.Builder()
-                                            .setMediaId(media.id)
-                                            .setUri(stream.url)
-                                            .setMediaMetadata(metadata)
-                                            .build()
-                                        setMediaItem(item)
-                                        prepare()
-                                        play()
-                                        nowPlaying = media
-                                    } ?: run { errorMessage = "Playback service is not ready yet" }
-                                }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
-                                resolvingId = null
-                            }
-                        }
+                        onPlay = { media -> playMedia(media) }
                     )
                     Tab.HOME -> EmptyPage(
                         Modifier.fillMaxSize().padding(padding), Icons.Outlined.Headphones,
                         "Listen without the video",
                         "Search YouTube and stream audio only. Your recent listening will appear here."
                     )
-                    Tab.LIBRARY -> EmptyPage(
-                        Modifier.fillMaxSize().padding(padding), Icons.Outlined.LibraryMusic,
-                        "Your library", "History, favorites and playlists are coming next."
+                    Tab.LIBRARY -> LibraryScreen(
+                        modifier = Modifier.fillMaxSize().padding(padding),
+                        recent = recent,
+                        resolvingId = resolvingId,
+                        onPlay = { playMedia(it.toMediaSummary()) },
+                        onDelete = { entry -> scope.launch(Dispatchers.IO) { history.delete(entry.mediaId) } },
+                        onClear = { scope.launch(Dispatchers.IO) { history.clear() } }
                     )
                 }
             }
@@ -306,6 +317,76 @@ private fun MiniPlayer(
             IconButton(onClick = onToggle) {
                 Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
                     if (isPlaying) "Pause" else "Play")
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryScreen(
+    modifier: Modifier,
+    recent: List<HistoryEntry>,
+    resolvingId: String?,
+    onPlay: (HistoryEntry) -> Unit,
+    onDelete: (HistoryEntry) -> Unit,
+    onClear: () -> Unit
+) {
+    Column(modifier.padding(horizontal = 14.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Recently played", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("${recent.size} items", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (recent.isNotEmpty()) {
+                TextButton(onClick = onClear) { Text("Clear all") }
+            }
+        }
+        if (recent.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Songs you play will appear here.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(recent, key = { it.mediaId }) { entry ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                            .clickable(enabled = resolvingId == null) { onPlay(entry) }
+                            .padding(7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AsyncImage(
+                            entry.thumbnailUrl, null,
+                            Modifier.size(58.dp).clip(RoundedCornerShape(9.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentScale = ContentScale.Crop
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(entry.title, style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold, maxLines = 2,
+                                overflow = TextOverflow.Ellipsis)
+                            Text(entry.channel, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (resolvingId == entry.mediaId) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            IconButton(onClick = { onDelete(entry) }) {
+                                Icon(Icons.Outlined.Close, "Remove from history")
+                            }
+                        }
+                    }
+                }
             }
         }
     }
