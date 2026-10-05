@@ -43,7 +43,8 @@ class NewPipeYouTubeSource : YouTubeSource {
                 url = url,
                 bitrateKbps = bitrate,
                 codec = stream.codec,
-                mimeType = stream.format?.mimeType
+                mimeType = stream.format?.mimeType,
+                isFallbackMuxed = false
             )
         }
         if (audioOnly.isNotEmpty()) return audioOnly
@@ -61,7 +62,8 @@ class NewPipeYouTubeSource : YouTubeSource {
                     url = stream.content,
                     bitrateKbps = null,
                     codec = null,
-                    mimeType = stream.format?.mimeType
+                    mimeType = stream.format?.mimeType,
+                    isFallbackMuxed = true
                 )
             }
             .toList()
