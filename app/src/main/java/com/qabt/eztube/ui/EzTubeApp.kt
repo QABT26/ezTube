@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -327,76 +329,84 @@ private fun FullPlayer(
         }
     }
 
-    Column(
-        Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp)
-    ) {
-        Row(Modifier.fillMaxWidth().height(58.dp), verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+        Row(
+            Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             IconButton(onClick = onClose) { Icon(Icons.Outlined.KeyboardArrowDown, "Close player") }
             Spacer(Modifier.weight(1f))
             Text("NOW PLAYING", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             Spacer(Modifier.size(48.dp))
         }
-        Spacer(Modifier.height(24.dp))
-        AsyncImage(
-            media.thumbnailUrl, null,
-            Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(26.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentScale = ContentScale.Crop
-        )
-        Spacer(Modifier.height(28.dp))
-        Text(media.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
-            maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.height(5.dp))
-        Text(media.channel, style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-        Spacer(Modifier.height(22.dp))
 
-        Slider(
-            value = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
-            onValueChange = { fraction -> if (duration > 0) controller?.seekTo((duration * fraction).toLong()) }
-        )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(formatTime(position), style = MaterialTheme.typography.labelSmall)
-            Text(formatTime(duration), style = MaterialTheme.typography.labelSmall)
-        }
-
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 18.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp)
         ) {
-            FilledTonalIconButton(onClick = { controller?.seekBack() }) {
-                Icon(Icons.Outlined.Replay10, "Back 10 seconds")
-            }
-            FilledIconButton(onClick = onToggle, modifier = Modifier.size(72.dp)) {
-                Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                    if (isPlaying) "Pause" else "Play", modifier = Modifier.size(36.dp))
-            }
-            FilledTonalIconButton(onClick = { controller?.seekForward() }) {
-                Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
-            }
-        }
+            Spacer(Modifier.height(8.dp))
+            AsyncImage(
+                media.thumbnailUrl, null,
+                Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(20.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentScale = ContentScale.Crop
+            )
+            Spacer(Modifier.height(18.dp))
+            Text(media.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(3.dp))
+            Text(media.channel, style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
 
-        Text("Audio quality", style = MaterialTheme.typography.labelLarge)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AudioQuality.entries.forEach { option ->
-                FilterChip(
-                    selected = quality == option,
-                    onClick = { onQuality(option) },
-                    label = {
-                        Text(when (option) {
-                            AudioQuality.DATA_SAVER -> "Saver · 64"
-                            AudioQuality.STANDARD -> "Standard · 128"
-                            AudioQuality.HIGH -> "High"
-                        })
-                    }
-                )
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                AudioQuality.entries.forEach { option ->
+                    FilterChip(
+                        modifier = Modifier.weight(1f),
+                        selected = quality == option,
+                        onClick = { onQuality(option) },
+                        label = {
+                            Text(when (option) {
+                                AudioQuality.DATA_SAVER -> "Saver 64"
+                                AudioQuality.STANDARD -> "Std 128"
+                                AudioQuality.HIGH -> "High"
+                            }, maxLines = 1)
+                        }
+                    )
+                }
+            }
+            Text("Applies to next track", style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            Spacer(Modifier.height(10.dp))
+            Slider(
+                value = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
+                onValueChange = { fraction ->
+                    if (duration > 0) controller?.seekTo((duration * fraction).toLong())
+                }
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(formatTime(position), style = MaterialTheme.typography.labelSmall)
+                Text(formatTime(duration), style = MaterialTheme.typography.labelSmall)
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 20.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilledTonalIconButton(onClick = { controller?.seekBack() }) {
+                    Icon(Icons.Outlined.Replay10, "Back 10 seconds")
+                }
+                FilledIconButton(onClick = onToggle, modifier = Modifier.size(68.dp)) {
+                    Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                        if (isPlaying) "Pause" else "Play", modifier = Modifier.size(34.dp))
+                }
+                FilledTonalIconButton(onClick = { controller?.seekForward() }) {
+                    Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
+                }
             }
         }
-        Text("Quality applies to the next track.", style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
