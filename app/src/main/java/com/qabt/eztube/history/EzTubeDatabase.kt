@@ -5,9 +5,10 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [HistoryEntry::class], version = 1, exportSchema = false)
+@Database(entities = [HistoryEntry::class, FavoriteEntry::class], version = 2, exportSchema = false)
 abstract class EzTubeDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
+    abstract fun favoriteDao(): FavoriteDao
 
     companion object {
         @Volatile private var instance: EzTubeDatabase? = null
@@ -18,7 +19,10 @@ abstract class EzTubeDatabase : RoomDatabase() {
                     context.applicationContext,
                     EzTubeDatabase::class.java,
                     "eztube.db"
-                ).build().also { instance = it }
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
+                    .also { instance = it }
             }
     }
 }
