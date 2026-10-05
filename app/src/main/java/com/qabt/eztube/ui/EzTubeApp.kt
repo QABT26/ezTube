@@ -1,24 +1,29 @@
 package com.qabt.eztube.ui
 
 import android.content.ComponentName
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.LibraryMusic
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import com.google.common.util.concurrent.ListenableFuture
+import coil.compose.AsyncImage
 import com.qabt.eztube.playback.AudioQuality
 import com.qabt.eztube.playback.AudioStreamSelector
 import com.qabt.eztube.playback.PlaybackService
@@ -37,18 +42,25 @@ fun EzTubeApp() {
     val scope = rememberCoroutineScope()
     val source = remember { NewPipeYouTubeSource() }
     var controller by remember { mutableStateOf<MediaController?>(null) }
-    var controllerFuture by remember { mutableStateOf<ListenableFuture<MediaController>?>(null) }
     var nowPlaying by remember { mutableStateOf<MediaSummary?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var isPlaying by remember { mutableStateOf(false) }
+    var resolvingId by remember { mutableStateOf<String?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
-        controllerFuture = future
-        future.addListener(
-            { runCatching { future.get() }.onSuccess { controller = it }.onFailure { error = it.message } },
-            context.mainExecutor
-        )
+        future.addListener({
+            runCatching { future.get() }
+                .onSuccess { mediaController ->
+                    controller = mediaController
+                    isPlaying = mediaController.isPlaying
+                    mediaController.addListener(object : Player.Listener {
+                        override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
+                    })
+                }
+                .onFailure { errorMessage = it.message ?: "Playback service unavailable" }
+        }, context.mainExecutor)
         onDispose {
             controller = null
             MediaController.releaseFuture(future)
@@ -57,34 +69,19 @@ fun EzTubeApp() {
 
     MaterialTheme {
         Scaffold(
-            topBar = {
-                Surface(shadowElevation = 1.dp) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("ezTube", style = MaterialTheme.typography.titleLarge)
-                        Text("Audio first", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-            },
+            topBar = { AppHeader() },
             bottomBar = {
                 Column {
                     nowPlaying?.let { media ->
-                        Surface(tonalElevation = 3.dp) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(Icons.Outlined.PlayArrow, contentDescription = null)
-                                Column(Modifier.weight(1f)) {
-                                    Text(media.title, maxLines = 1)
-                                    Text(media.channel, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                                }
+                        MiniPlayer(
+                            media = media,
+                            isPlaying = isPlaying,
+                            onToggle = {
+                                controller?.let { if (it.isPlaying) it.pause() else it.play() }
                             }
-                        }
+                        )
                     }
-                    NavigationBar {
+                    NavigationBar(windowInsets = NavigationBarDefaults.windowInsets) {
                         Tab.entries.forEach { tab ->
                             NavigationBarItem(
                                 selected = selected == tab,
@@ -109,10 +106,14 @@ fun EzTubeApp() {
             when (selected) {
                 Tab.SEARCH -> SearchScreen(
                     modifier = Modifier.fillMaxSize().padding(padding),
-                    error = error,
+                    source = source,
+                    resolvingId = resolvingId,
+                    playbackError = errorMessage,
                     onPlay = { media ->
+                        if (resolvingId != null) return@SearchScreen
                         scope.launch {
-                            error = null
+                            resolvingId = media.id
+                            errorMessage = null
                             runCatching {
                                 val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
                                 AudioStreamSelector.select(streams, AudioQuality.STANDARD)
@@ -123,19 +124,49 @@ fun EzTubeApp() {
                                     prepare()
                                     play()
                                     nowPlaying = media
-                                } ?: run { error = "Playback service is not ready yet" }
-                            }.onFailure { error = it.message ?: "Unable to play this item" }
+                                } ?: run { errorMessage = "Playback service is not ready yet" }
+                            }.onFailure {
+                                errorMessage = it.message ?: "Unable to play this item"
+                            }
+                            resolvingId = null
                         }
-                    },
-                    source = source
+                    }
                 )
-                else -> Column(
-                    Modifier.fillMaxSize().padding(padding).padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(selected.label, style = MaterialTheme.typography.headlineMedium)
-                    Text(if (selected == Tab.HOME) "Audio-first feed foundation." else "History, favorites and playlists will live here.")
-                }
+                Tab.HOME -> EmptyPage(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    icon = Icons.Outlined.Headphones,
+                    title = "Listen without the video",
+                    text = "Search YouTube and stream audio only. Your recent listening will appear here."
+                )
+                Tab.LIBRARY -> EmptyPage(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    icon = Icons.Outlined.LibraryMusic,
+                    title = "Your library",
+                    text = "History, favorites and playlists are coming next."
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppHeader() {
+    Surface(tonalElevation = 1.dp) {
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().height(58.dp).padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("ez", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary)
+            Text("Tube", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Text(
+                    "AUDIO ONLY",
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
@@ -144,9 +175,10 @@ fun EzTubeApp() {
 @Composable
 private fun SearchScreen(
     modifier: Modifier,
-    error: String?,
-    onPlay: (MediaSummary) -> Unit,
-    source: NewPipeYouTubeSource
+    source: NewPipeYouTubeSource,
+    resolvingId: String?,
+    playbackError: String?,
+    onPlay: (MediaSummary) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
@@ -154,54 +186,141 @@ private fun SearchScreen(
     var results by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var searchError by remember { mutableStateOf<String?>(null) }
 
-    Column(modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+    fun submit() {
+        if (query.isBlank() || loading) return
+        scope.launch {
+            loading = true
+            searchError = null
+            runCatching { withContext(Dispatchers.IO) { source.search(query) } }
+                .onSuccess { results = it }
+                .onFailure { searchError = it.message ?: "Search failed" }
+            loading = false
+        }
+    }
+
+    Column(modifier.padding(horizontal = 14.dp)) {
+        Spacer(Modifier.height(12.dp))
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            label = { Text("Search YouTube") },
+            placeholder = { Text("Search songs, artists, podcasts…") },
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
             trailingIcon = {
-                IconButton(
-                    enabled = query.isNotBlank() && !loading,
-                    onClick = {
-                        scope.launch {
-                            loading = true
-                            searchError = null
-                            runCatching {
-                                withContext(Dispatchers.IO) { source.search(query) }
-                            }.onSuccess { results = it }
-                                .onFailure { searchError = it.message ?: "Search failed" }
-                            loading = false
-                        }
-                    }
-                ) { Icon(Icons.Outlined.Search, contentDescription = "Search") }
-            }
+                if (query.isNotEmpty()) IconButton(onClick = { query = "" }) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Clear")
+                }
+            },
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { submit() }),
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                imeAction = androidx.compose.ui.text.input.ImeAction.Search
+            ),
+            shape = RoundedCornerShape(18.dp)
         )
 
-        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        (searchError ?: error)?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
+        (searchError ?: playbackError)?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp))
         }
 
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 8.dp)
-        ) {
-            items(results, key = { it.id }) { media ->
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { onPlay(media) }
-                        .padding(vertical = 12.dp)
-                ) {
-                    Text(media.title, style = MaterialTheme.typography.titleMedium, maxLines = 2)
-                    if (media.channel.isNotBlank()) {
-                        Text(media.channel, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                HorizontalDivider()
+        if (results.isEmpty() && !loading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Search YouTube, play the audio.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(results, key = { it.id }) { media ->
+                    SearchResult(
+                        media = media,
+                        resolving = resolvingId == media.id,
+                        enabled = resolvingId == null,
+                        onClick = { onPlay(media) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResult(media: MediaSummary, resolving: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = enabled, onClick = onClick)
+            .padding(7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AsyncImage(
+            model = media.thumbnailUrl,
+            contentDescription = null,
+            modifier = Modifier.size(width = 116.dp, height = 66.dp).clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentScale = ContentScale.Crop
+        )
+        Spacer(Modifier.width(11.dp))
+        Column(Modifier.weight(1f)) {
+            Text(media.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(3.dp))
+            Text(media.channel.ifBlank { "YouTube" }, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.width(6.dp))
+        if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+        else Icon(Icons.Outlined.PlayCircle, contentDescription = "Play")
+    }
+}
+
+@Composable
+private fun MiniPlayer(media: MediaSummary, isPlaying: Boolean, onToggle: () -> Unit) {
+    Surface(tonalElevation = 4.dp) {
+        Row(
+            Modifier.fillMaxWidth().height(66.dp).padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AsyncImage(
+                model = media.thumbnailUrl,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(media.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+                Text(media.channel, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+            IconButton(onClick = onToggle) {
+                Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                    contentDescription = if (isPlaying) "Pause" else "Play")
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyPage(
+    modifier: Modifier,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    text: String
+) {
+    Box(modifier.padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(42.dp),
+                tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(14.dp))
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            Text(text, style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
