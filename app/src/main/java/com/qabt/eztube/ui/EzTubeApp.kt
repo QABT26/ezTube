@@ -69,6 +69,7 @@ fun EzTubeApp() {
     var playerError by remember { mutableStateOf<String?>(null) }
     var isBuffering by remember { mutableStateOf(false) }
     var sleepMinutes by remember { mutableStateOf<Int?>(null) }
+    var resumePositionMs by remember { mutableLongStateOf(0L) }
     var controller by remember { mutableStateOf<MediaController?>(null) }
     var nowPlaying by remember { mutableStateOf<MediaSummary?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -91,6 +92,12 @@ fun EzTubeApp() {
                     }
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                         playerError = error.message ?: "Playback error"
+                    }
+                    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && queueIndex >= 0 && queueIndex < queue.lastIndex) {
+                            queueIndex += 1
+                            playMedia(queue[queueIndex])
+                        }
                     }
                 })
             }.onFailure { errorMessage = it.message ?: "Playback service unavailable" }
@@ -134,6 +141,7 @@ fun EzTubeApp() {
                     setPlaybackSpeed(playbackSpeed)
                     play()
                     nowPlaying = media
+                    resumePositionMs = 0L
                     playbackPrefs.save(media, startPositionMs)
                     withContext(Dispatchers.IO) { history.record(media) }
                 } ?: run { errorMessage = "Playback service is not ready yet" }
@@ -146,8 +154,17 @@ fun EzTubeApp() {
         playbackPrefs.load()?.let { (media, position) ->
             if (nowPlaying == null) {
                 nowPlaying = media
-                playMedia(media, position)
+                resumePositionMs = position
             }
+        }
+    }
+
+    LaunchedEffect(nowPlaying?.id, controller) {
+        while (true) {
+            delay(5_000)
+            val media = nowPlaying ?: continue
+            val position = controller?.currentPosition?.takeIf { it >= 0 } ?: resumePositionMs
+            playbackPrefs.save(media, position)
         }
     }
 
@@ -198,7 +215,11 @@ fun EzTubeApp() {
                         else favoritesRepo.add(media)
                     }
                 },
-                onToggle = { togglePlayback() },
+                onToggle = {
+                    if (controller?.currentMediaItem == null && resumePositionMs > 0) {
+                        nowPlaying?.let { playMedia(it, resumePositionMs) }
+                    } else togglePlayback()
+                },
                 onClose = { showPlayer = false }
             )
         } else {
@@ -211,7 +232,11 @@ fun EzTubeApp() {
                                 media = media,
                                 isPlaying = isPlaying,
                                 onOpen = { showPlayer = true },
-                                onToggle = { togglePlayback() }
+                                onToggle = {
+                                    if (controller?.currentMediaItem == null && resumePositionMs > 0) {
+                                        nowPlaying?.let { playMedia(it, resumePositionMs) }
+                                    } else togglePlayback()
+                                }
                             )
                         }
                         NavigationBar(windowInsets = NavigationBarDefaults.windowInsets) {
