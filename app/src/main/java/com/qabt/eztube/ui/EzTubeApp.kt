@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -39,6 +40,7 @@ import com.qabt.eztube.history.toMediaSummary
 import com.qabt.eztube.playback.AudioQuality
 import com.qabt.eztube.playback.AudioStreamSelector
 import com.qabt.eztube.playback.PlaybackService
+import com.qabt.eztube.playback.PlaybackPreferences
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +61,14 @@ fun EzTubeApp() {
     val favoritesRepo = remember { FavoriteRepository(database.favoriteDao()) }
     val recent by history.recent.collectAsState(initial = emptyList())
     val favorites by favoritesRepo.all.collectAsState(initial = emptyList())
+    val playbackPrefs = remember { PlaybackPreferences(context) }
+    var queue by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
+    var queueIndex by remember { mutableIntStateOf(-1) }
+    var playbackSpeed by remember { mutableFloatStateOf(1f) }
+    var compatibilityFallback by remember { mutableStateOf(false) }
+    var playerError by remember { mutableStateOf<String?>(null) }
+    var isBuffering by remember { mutableStateOf(false) }
+    var sleepMinutes by remember { mutableStateOf<Int?>(null) }
     var controller by remember { mutableStateOf<MediaController?>(null) }
     var nowPlaying by remember { mutableStateOf<MediaSummary?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -76,6 +86,12 @@ fun EzTubeApp() {
                 isPlaying = mediaController.isPlaying
                 mediaController.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
+                    override fun onPlaybackStateChanged(state: Int) {
+                        isBuffering = state == Player.STATE_BUFFERING
+                    }
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        playerError = error.message ?: "Playback error"
+                    }
                 })
             }.onFailure { errorMessage = it.message ?: "Playback service unavailable" }
         }, context.mainExecutor)
@@ -89,7 +105,7 @@ fun EzTubeApp() {
         controller?.let { if (it.isPlaying) it.pause() else it.play() }
     }
 
-    fun playMedia(media: MediaSummary) {
+    fun playMedia(media: MediaSummary, startPositionMs: Long = 0L) {
         if (resolvingId != null) return
         scope.launch {
             resolvingId = media.id
@@ -98,6 +114,8 @@ fun EzTubeApp() {
                 val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
                 AudioStreamSelector.select(streams, quality) ?: error("No playable audio stream")
             }.onSuccess { stream ->
+                compatibilityFallback = stream.isFallbackMuxed
+                playerError = null
                 controller?.apply {
                     val metadata = MediaMetadata.Builder()
                         .setTitle(media.title)
@@ -112,13 +130,32 @@ fun EzTubeApp() {
                             .build()
                     )
                     prepare()
+                    if (startPositionMs > 0) seekTo(startPositionMs)
+                    setPlaybackSpeed(playbackSpeed)
                     play()
                     nowPlaying = media
+                    playbackPrefs.save(media, startPositionMs)
                     withContext(Dispatchers.IO) { history.record(media) }
                 } ?: run { errorMessage = "Playback service is not ready yet" }
             }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
             resolvingId = null
         }
+    }
+
+    LaunchedEffect(Unit) {
+        playbackPrefs.load()?.let { (media, position) ->
+            if (nowPlaying == null) {
+                nowPlaying = media
+                playMedia(media, position)
+            }
+        }
+    }
+
+    LaunchedEffect(sleepMinutes) {
+        val minutes = sleepMinutes ?: return@LaunchedEffect
+        delay(minutes * 60_000L)
+        controller?.pause()
+        sleepMinutes = null
     }
 
     MaterialTheme {
@@ -129,6 +166,30 @@ fun EzTubeApp() {
                 isPlaying = isPlaying,
                 quality = quality,
                 onQuality = { quality = it },
+                playbackSpeed = playbackSpeed,
+                onSpeed = {
+                    playbackSpeed = it
+                    controller?.setPlaybackSpeed(it)
+                },
+                compatibilityFallback = compatibilityFallback,
+                isBuffering = isBuffering,
+                playerError = playerError,
+                sleepMinutes = sleepMinutes,
+                onSleep = { sleepMinutes = it },
+                hasPrevious = queueIndex > 0,
+                hasNext = queueIndex >= 0 && queueIndex < queue.lastIndex,
+                onPrevious = {
+                    if (queueIndex > 0) {
+                        queueIndex -= 1
+                        playMedia(queue[queueIndex])
+                    }
+                },
+                onNext = {
+                    if (queueIndex >= 0 && queueIndex < queue.lastIndex) {
+                        queueIndex += 1
+                        playMedia(queue[queueIndex])
+                    }
+                },
                 isFavorite = favorites.any { it.mediaId == nowPlaying?.id },
                 onFavorite = {
                     val media = nowPlaying ?: return@FullPlayer
@@ -180,7 +241,11 @@ fun EzTubeApp() {
                         source = source,
                         resolvingId = resolvingId,
                         playbackError = errorMessage,
-                        onPlay = { media -> playMedia(media) }
+                        onPlay = { media, resultQueue ->
+                            queue = resultQueue
+                            queueIndex = resultQueue.indexOfFirst { it.id == media.id }
+                            playMedia(media)
+                        }
                     )
                     Tab.HOME -> HomeScreen(
                         modifier = Modifier.fillMaxSize().padding(padding),
@@ -233,7 +298,7 @@ private fun SearchScreen(
     source: NewPipeYouTubeSource,
     resolvingId: String?,
     playbackError: String?,
-    onPlay: (MediaSummary) -> Unit
+    onPlay: (MediaSummary, List<MediaSummary>) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
@@ -283,7 +348,7 @@ private fun SearchScreen(
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 items(results, key = { it.id }) { media ->
-                    SearchResult(media, resolvingId == media.id, resolvingId == null) { onPlay(media) }
+                    SearchResult(media, resolvingId == media.id, resolvingId == null) { onPlay(media, results) }
                 }
             }
         }
@@ -524,6 +589,17 @@ private fun FullPlayer(
     isPlaying: Boolean,
     quality: AudioQuality,
     onQuality: (AudioQuality) -> Unit,
+    playbackSpeed: Float,
+    onSpeed: (Float) -> Unit,
+    compatibilityFallback: Boolean,
+    isBuffering: Boolean,
+    playerError: String?,
+    sleepMinutes: Int?,
+    onSleep: (Int?) -> Unit,
+    hasPrevious: Boolean,
+    hasNext: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
     isFavorite: Boolean,
     onFavorite: () -> Unit,
     onToggle: () -> Unit,
@@ -594,8 +670,42 @@ private fun FullPlayer(
                     )
                 }
             }
-            Text("Applies to next track", style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                if (compatibilityFallback) "Compatibility stream · may use more data"
+                else "Audio-only · quality applies to next track",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (compatibilityFallback) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (isBuffering) {
+                LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
+            }
+            playerError?.let {
+                Text(it, color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+            }
+
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(1f, 1.25f, 1.5f, 2f).forEach { speed ->
+                    FilterChip(
+                        selected = playbackSpeed == speed,
+                        onClick = { onSpeed(speed) },
+                        label = { Text("${speed}×") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(null, 15, 30, 60).forEach { minutes ->
+                    FilterChip(
+                        selected = sleepMinutes == minutes,
+                        onClick = { onSleep(minutes) },
+                        label = { Text(minutes?.let { "${it}m" } ?: "Sleep off") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
 
             Spacer(Modifier.height(10.dp))
             val progress = if (duration > 0) {
@@ -606,12 +716,16 @@ private fun FullPlayer(
                     .fillMaxWidth()
                     .height(28.dp)
                     .pointerInput(duration) {
-                        detectTapGestures { offset ->
+                        fun seek(x: Float) {
                             if (duration > 0) {
-                                val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                                val fraction = (x / size.width).coerceIn(0f, 1f)
                                 controller?.seekTo((duration * fraction).toLong())
                             }
                         }
+                        detectDragGestures(
+                            onDragStart = { seek(it.x) },
+                            onDrag = { change, _ -> seek(change.position.x) }
+                        )
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -629,6 +743,9 @@ private fun FullPlayer(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                IconButton(onClick = onPrevious, enabled = hasPrevious) {
+                    Icon(Icons.Outlined.SkipPrevious, "Previous")
+                }
                 FilledTonalIconButton(onClick = { controller?.seekBack() }) {
                     Icon(Icons.Outlined.Replay10, "Back 10 seconds")
                 }
@@ -638,6 +755,9 @@ private fun FullPlayer(
                 }
                 FilledTonalIconButton(onClick = { controller?.seekForward() }) {
                     Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
+                }
+                IconButton(onClick = onNext, enabled = hasNext) {
+                    Icon(Icons.Outlined.SkipNext, "Next")
                 }
             }
         }
