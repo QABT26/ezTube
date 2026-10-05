@@ -209,10 +209,11 @@ fun EzTubeApp() {
                 },
                 isFavorite = favorites.any { it.mediaId == nowPlaying?.id },
                 onFavorite = {
-                    val media = nowPlaying ?: return@FullPlayer
-                    scope.launch(Dispatchers.IO) {
-                        if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id)
-                        else favoritesRepo.add(media)
+                    nowPlaying?.let { media ->
+                        scope.launch(Dispatchers.IO) {
+                            if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id)
+                            else favoritesRepo.add(media)
+                        }
                     }
                 },
                 onToggle = {
