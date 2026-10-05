@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -380,12 +382,28 @@ private fun FullPlayer(
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             Spacer(Modifier.height(10.dp))
-            Slider(
-                value = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
-                onValueChange = { fraction ->
-                    if (duration > 0) controller?.seekTo((duration * fraction).toLong())
-                }
-            )
+            val progress = if (duration > 0) {
+                (position.toFloat() / duration).coerceIn(0f, 1f)
+            } else 0f
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(28.dp)
+                    .pointerInput(duration) {
+                        detectTapGestures { offset ->
+                            if (duration > 0) {
+                                val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                                controller?.seekTo((duration * fraction).toLong())
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50))
+                )
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(formatTime(position), style = MaterialTheme.typography.labelSmall)
                 Text(formatTime(duration), style = MaterialTheme.typography.labelSmall)
