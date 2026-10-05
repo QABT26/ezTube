@@ -1,0 +1,15 @@
+package com.qabt.eztube.youtube
+
+import com.qabt.eztube.playback.AudioStream
+
+data class MediaSummary(
+    val id: String,
+    val title: String,
+    val channel: String,
+    val thumbnailUrl: String?
+)
+
+interface YouTubeSource {
+    suspend fun search(query: String): List<MediaSummary>
+    suspend fun audioStreams(mediaId: String): List<AudioStream>
+}
