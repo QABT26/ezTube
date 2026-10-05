@@ -1,6 +1,7 @@
 package com.qabt.eztube.ui
 
 import android.content.ComponentName
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -20,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -30,6 +32,7 @@ import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -44,22 +47,22 @@ fun EzTubeApp() {
     var controller by remember { mutableStateOf<MediaController?>(null) }
     var nowPlaying by remember { mutableStateOf<MediaSummary?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
+    var quality by remember { mutableStateOf(AudioQuality.STANDARD) }
     var resolvingId by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showPlayer by remember { mutableStateOf(false) }
 
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
         future.addListener({
-            runCatching { future.get() }
-                .onSuccess { mediaController ->
-                    controller = mediaController
-                    isPlaying = mediaController.isPlaying
-                    mediaController.addListener(object : Player.Listener {
-                        override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
-                    })
-                }
-                .onFailure { errorMessage = it.message ?: "Playback service unavailable" }
+            runCatching { future.get() }.onSuccess { mediaController ->
+                controller = mediaController
+                isPlaying = mediaController.isPlaying
+                mediaController.addListener(object : Player.Listener {
+                    override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
+                })
+            }.onFailure { errorMessage = it.message ?: "Playback service unavailable" }
         }, context.mainExecutor)
         onDispose {
             controller = null
@@ -67,83 +70,104 @@ fun EzTubeApp() {
         }
     }
 
+    fun togglePlayback() {
+        controller?.let { if (it.isPlaying) it.pause() else it.play() }
+    }
+
     MaterialTheme {
-        Scaffold(
-            topBar = { AppHeader() },
-            bottomBar = {
-                Column {
-                    nowPlaying?.let { media ->
-                        MiniPlayer(
-                            media = media,
-                            isPlaying = isPlaying,
-                            onToggle = {
-                                controller?.let { if (it.isPlaying) it.pause() else it.play() }
-                            }
-                        )
-                    }
-                    NavigationBar(windowInsets = NavigationBarDefaults.windowInsets) {
-                        Tab.entries.forEach { tab ->
-                            NavigationBarItem(
-                                selected = selected == tab,
-                                onClick = { selected = tab },
-                                icon = {
-                                    Icon(
-                                        when (tab) {
-                                            Tab.HOME -> Icons.Outlined.Home
-                                            Tab.SEARCH -> Icons.Outlined.Search
-                                            Tab.LIBRARY -> Icons.Outlined.LibraryMusic
-                                        },
-                                        contentDescription = tab.label
-                                    )
-                                },
-                                label = { Text(tab.label) }
+        if (showPlayer && nowPlaying != null) {
+            FullPlayer(
+                media = requireNotNull(nowPlaying),
+                controller = controller,
+                isPlaying = isPlaying,
+                quality = quality,
+                onQuality = { quality = it },
+                onToggle = { togglePlayback() },
+                onClose = { showPlayer = false }
+            )
+        } else {
+            Scaffold(
+                topBar = { AppHeader() },
+                bottomBar = {
+                    Column {
+                        nowPlaying?.let { media ->
+                            MiniPlayer(
+                                media = media,
+                                isPlaying = isPlaying,
+                                onOpen = { showPlayer = true },
+                                onToggle = { togglePlayback() }
                             )
+                        }
+                        NavigationBar(windowInsets = NavigationBarDefaults.windowInsets) {
+                            Tab.entries.forEach { tab ->
+                                NavigationBarItem(
+                                    selected = selected == tab,
+                                    onClick = { selected = tab },
+                                    icon = {
+                                        Icon(
+                                            when (tab) {
+                                                Tab.HOME -> Icons.Outlined.Home
+                                                Tab.SEARCH -> Icons.Outlined.Search
+                                                Tab.LIBRARY -> Icons.Outlined.LibraryMusic
+                                            }, contentDescription = tab.label
+                                        )
+                                    },
+                                    label = { Text(tab.label) }
+                                )
+                            }
                         }
                     }
                 }
-            }
-        ) { padding ->
-            when (selected) {
-                Tab.SEARCH -> SearchScreen(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    source = source,
-                    resolvingId = resolvingId,
-                    playbackError = errorMessage,
-                    onPlay = { media ->
-                        if (resolvingId != null) return@SearchScreen
-                        scope.launch {
-                            resolvingId = media.id
-                            errorMessage = null
-                            runCatching {
-                                val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
-                                AudioStreamSelector.select(streams, AudioQuality.STANDARD)
-                                    ?: error("No playable audio stream")
-                            }.onSuccess { stream ->
-                                controller?.apply {
-                                    setMediaItem(MediaItem.fromUri(stream.url))
-                                    prepare()
-                                    play()
-                                    nowPlaying = media
-                                } ?: run { errorMessage = "Playback service is not ready yet" }
-                            }.onFailure {
-                                errorMessage = it.message ?: "Unable to play this item"
+            ) { padding ->
+                when (selected) {
+                    Tab.SEARCH -> SearchScreen(
+                        modifier = Modifier.fillMaxSize().padding(padding),
+                        source = source,
+                        resolvingId = resolvingId,
+                        playbackError = errorMessage,
+                        onPlay = { media ->
+                            if (resolvingId != null) return@SearchScreen
+                            scope.launch {
+                                resolvingId = media.id
+                                errorMessage = null
+                                runCatching {
+                                    val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
+                                    AudioStreamSelector.select(streams, quality)
+                                        ?: error("No playable audio stream")
+                                }.onSuccess { stream ->
+                                    controller?.apply {
+                                        val metadata = MediaMetadata.Builder()
+                                            .setTitle(media.title)
+                                            .setArtist(media.channel)
+                                            .apply {
+                                                media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) }
+                                            }
+                                            .build()
+                                        val item = MediaItem.Builder()
+                                            .setMediaId(media.id)
+                                            .setUri(stream.url)
+                                            .setMediaMetadata(metadata)
+                                            .build()
+                                        setMediaItem(item)
+                                        prepare()
+                                        play()
+                                        nowPlaying = media
+                                    } ?: run { errorMessage = "Playback service is not ready yet" }
+                                }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
+                                resolvingId = null
                             }
-                            resolvingId = null
                         }
-                    }
-                )
-                Tab.HOME -> EmptyPage(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    icon = Icons.Outlined.Headphones,
-                    title = "Listen without the video",
-                    text = "Search YouTube and stream audio only. Your recent listening will appear here."
-                )
-                Tab.LIBRARY -> EmptyPage(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    icon = Icons.Outlined.LibraryMusic,
-                    title = "Your library",
-                    text = "History, favorites and playlists are coming next."
-                )
+                    )
+                    Tab.HOME -> EmptyPage(
+                        Modifier.fillMaxSize().padding(padding), Icons.Outlined.Headphones,
+                        "Listen without the video",
+                        "Search YouTube and stream audio only. Your recent listening will appear here."
+                    )
+                    Tab.LIBRARY -> EmptyPage(
+                        Modifier.fillMaxSize().padding(padding), Icons.Outlined.LibraryMusic,
+                        "Your library", "History, favorites and playlists are coming next."
+                    )
+                }
             }
         }
     }
@@ -161,12 +185,8 @@ private fun AppHeader() {
             Text("Tube", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surfaceVariant) {
-                Text(
-                    "AUDIO ONLY",
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold
-                )
+                Text("AUDIO ONLY", Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -201,15 +221,12 @@ private fun SearchScreen(
     Column(modifier.padding(horizontal = 14.dp)) {
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            placeholder = { Text("Search songs, artists, podcasts…") },
-            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+            value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(),
+            singleLine = true, placeholder = { Text("Search songs, artists, podcasts…") },
+            leadingIcon = { Icon(Icons.Outlined.Search, null) },
             trailingIcon = {
                 if (query.isNotEmpty()) IconButton(onClick = { query = "" }) {
-                    Icon(Icons.Outlined.Close, contentDescription = "Clear")
+                    Icon(Icons.Outlined.Close, "Clear")
                 }
             },
             keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { submit() }),
@@ -218,30 +235,20 @@ private fun SearchScreen(
             ),
             shape = RoundedCornerShape(18.dp)
         )
-
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
         (searchError ?: playbackError)?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 8.dp))
         }
-
         if (results.isEmpty() && !loading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Search YouTube, play the audio.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 items(results, key = { it.id }) { media ->
-                    SearchResult(
-                        media = media,
-                        resolving = resolvingId == media.id,
-                        enabled = resolvingId == null,
-                        onClick = { onPlay(media) }
-                    )
+                    SearchResult(media, resolvingId == media.id, resolvingId == null) { onPlay(media) }
                 }
             }
         }
@@ -252,44 +259,39 @@ private fun SearchScreen(
 private fun SearchResult(media: MediaSummary, resolving: Boolean, enabled: Boolean, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = enabled, onClick = onClick)
-            .padding(7.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(7.dp), verticalAlignment = Alignment.CenterVertically
     ) {
-        AsyncImage(
-            model = media.thumbnailUrl,
-            contentDescription = null,
-            modifier = Modifier.size(width = 116.dp, height = 66.dp).clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentScale = ContentScale.Crop
-        )
+        AsyncImage(media.thumbnailUrl, null,
+            Modifier.size(width = 116.dp, height = 66.dp).clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant), contentScale = ContentScale.Crop)
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
             Text(media.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(3.dp))
             Text(media.channel.ifBlank { "YouTube" }, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
-                overflow = TextOverflow.Ellipsis)
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.width(6.dp))
         if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-        else Icon(Icons.Outlined.PlayCircle, contentDescription = "Play")
+        else Icon(Icons.Outlined.PlayCircle, "Play")
     }
 }
 
 @Composable
-private fun MiniPlayer(media: MediaSummary, isPlaying: Boolean, onToggle: () -> Unit) {
+private fun MiniPlayer(
+    media: MediaSummary,
+    isPlaying: Boolean,
+    onOpen: () -> Unit,
+    onToggle: () -> Unit
+) {
     Surface(tonalElevation = 4.dp) {
         Row(
-            Modifier.fillMaxWidth().height(66.dp).padding(horizontal = 10.dp),
+            Modifier.fillMaxWidth().height(66.dp).clickable(onClick = onOpen).padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AsyncImage(
-                model = media.thumbnailUrl,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
-                contentScale = ContentScale.Crop
-            )
+            AsyncImage(media.thumbnailUrl, null, Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(media.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
@@ -299,10 +301,108 @@ private fun MiniPlayer(media: MediaSummary, isPlaying: Boolean, onToggle: () -> 
             }
             IconButton(onClick = onToggle) {
                 Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play")
+                    if (isPlaying) "Pause" else "Play")
             }
         }
     }
+}
+
+@Composable
+private fun FullPlayer(
+    media: MediaSummary,
+    controller: MediaController?,
+    isPlaying: Boolean,
+    quality: AudioQuality,
+    onQuality: (AudioQuality) -> Unit,
+    onToggle: () -> Unit,
+    onClose: () -> Unit
+) {
+    var position by remember { mutableLongStateOf(0L) }
+    var duration by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(controller, media.id) {
+        while (true) {
+            position = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
+            duration = controller?.duration?.takeIf { it > 0 } ?: 0L
+            delay(500)
+        }
+    }
+
+    Column(
+        Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().height(58.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onClose) { Icon(Icons.Outlined.KeyboardArrowDown, "Close player") }
+            Spacer(Modifier.weight(1f))
+            Text("NOW PLAYING", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.size(48.dp))
+        }
+        Spacer(Modifier.height(24.dp))
+        AsyncImage(
+            media.thumbnailUrl, null,
+            Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(26.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentScale = ContentScale.Crop
+        )
+        Spacer(Modifier.height(28.dp))
+        Text(media.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.height(5.dp))
+        Text(media.channel, style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        Spacer(Modifier.height(22.dp))
+
+        Slider(
+            value = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
+            onValueChange = { fraction -> if (duration > 0) controller?.seekTo((duration * fraction).toLong()) }
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatTime(position), style = MaterialTheme.typography.labelSmall)
+            Text(formatTime(duration), style = MaterialTheme.typography.labelSmall)
+        }
+
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 18.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilledTonalIconButton(onClick = { controller?.seekBack() }) {
+                Icon(Icons.Outlined.Replay10, "Back 10 seconds")
+            }
+            FilledIconButton(onClick = onToggle, modifier = Modifier.size(72.dp)) {
+                Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                    if (isPlaying) "Pause" else "Play", modifier = Modifier.size(36.dp))
+            }
+            FilledTonalIconButton(onClick = { controller?.seekForward() }) {
+                Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
+            }
+        }
+
+        Text("Audio quality", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AudioQuality.entries.forEach { option ->
+                FilterChip(
+                    selected = quality == option,
+                    onClick = { onQuality(option) },
+                    label = {
+                        Text(when (option) {
+                            AudioQuality.DATA_SAVER -> "Saver · 64"
+                            AudioQuality.STANDARD -> "Standard · 128"
+                            AudioQuality.HIGH -> "High"
+                        })
+                    }
+                )
+            }
+        }
+        Text("Quality applies to the next track.", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private fun formatTime(ms: Long): String {
+    val total = (ms / 1000).coerceAtLeast(0)
+    return "%d:%02d".format(total / 60, total % 60)
 }
 
 @Composable
@@ -314,8 +414,7 @@ private fun EmptyPage(
 ) {
     Box(modifier.padding(24.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(42.dp),
-                tint = MaterialTheme.colorScheme.primary)
+            Icon(icon, null, Modifier.size(42.dp), tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(14.dp))
             Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(6.dp))
