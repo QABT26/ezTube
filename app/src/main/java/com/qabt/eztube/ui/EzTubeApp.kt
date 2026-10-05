@@ -77,6 +77,7 @@ fun EzTubeApp() {
     var resolvingId by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showPlayer by remember { mutableStateOf(false) }
+    var playbackEndedToken by remember { mutableIntStateOf(0) }
 
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -87,17 +88,12 @@ fun EzTubeApp() {
                 isPlaying = mediaController.isPlaying
                 mediaController.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
-                    override fun onPlaybackStateChanged(state: Int) {
-                        isBuffering = state == Player.STATE_BUFFERING
-                    }
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                         playerError = error.message ?: "Playback error"
                     }
-                    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && queueIndex >= 0 && queueIndex < queue.lastIndex) {
-                            queueIndex += 1
-                            playMedia(queue[queueIndex])
-                        }
+                    override fun onPlaybackStateChanged(state: Int) {
+                        isBuffering = state == Player.STATE_BUFFERING
+                        if (state == Player.STATE_ENDED) playbackEndedToken += 1
                     }
                 })
             }.onFailure { errorMessage = it.message ?: "Playback service unavailable" }
@@ -147,6 +143,13 @@ fun EzTubeApp() {
                 } ?: run { errorMessage = "Playback service is not ready yet" }
             }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
             resolvingId = null
+        }
+    }
+
+    LaunchedEffect(playbackEndedToken) {
+        if (playbackEndedToken > 0 && queueIndex >= 0 && queueIndex < queue.lastIndex) {
+            queueIndex += 1
+            playMedia(queue[queueIndex])
         }
     }
 
