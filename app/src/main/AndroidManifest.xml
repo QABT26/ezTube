@@ -7,8 +7,8 @@
     <application
         android:name=".EzTubeApplication"
         android:allowBackup="true"
-        android:icon="@drawable/ic_launcher_legacy"
-        android:roundIcon="@drawable/ic_launcher_legacy"
+        android:icon="@drawable/eztube_launcher"
+        android:roundIcon="@drawable/eztube_launcher"
         android:label="ezTube"
         android:supportsRtl="true"
         android:theme="@style/Theme.EzTube">
