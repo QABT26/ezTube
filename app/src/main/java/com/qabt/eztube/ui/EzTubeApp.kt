@@ -130,6 +130,19 @@ fun EzTubeApp() {
                 isPlaying = mediaController.isPlaying
                 mediaController.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
+                    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                        val id = mediaItem?.mediaId ?: return
+                        val saved = playbackPrefs.loadQueue()
+                        val media = saved?.first?.firstOrNull { it.id == id }
+                            ?: playbackPrefs.load()?.first?.takeIf { it.id == id }
+                            ?: return
+                        nowPlaying = media
+                        saved?.let { (items, _) ->
+                            val index = items.indexOfFirst { it.id == id }
+                            if (index >= 0) queueIndex = index
+                        }
+                        resumePositionMs = 0L
+                    }
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                         playerError = error.message ?: "Playback error"
                     }
