@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
+import androidx.compose.material.icons.automirrored.outlined.TrendingUp
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -838,7 +839,7 @@ private fun HomeScreen(
                 FilledTonalButton(
                     onClick = { scope.launch { listState.animateScrollToItem(if (suggestions.isNotEmpty()) suggestions.size + 3 else 2) } }
                 ) {
-                    Icon(Icons.Outlined.TrendingUp, null)
+                    Icon(Icons.AutoMirrored.Outlined.TrendingUp, null)
                     Spacer(Modifier.width(5.dp))
                     Text("Trending")
                 }
