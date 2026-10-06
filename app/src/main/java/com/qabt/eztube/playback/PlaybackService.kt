@@ -4,6 +4,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.MediaSession.ConnectionResult
@@ -42,10 +43,23 @@ class PlaybackService : MediaSessionService() {
                         .add(Player.COMMAND_SEEK_TO_NEXT)
                         .add(Player.COMMAND_SEEK_TO_PREVIOUS)
                         .build()
-                    return ConnectionResult.AcceptedResultBuilder(session)
+                    val result = ConnectionResult.AcceptedResultBuilder(session)
                         .setAvailableSessionCommands(sessionCommands)
                         .setAvailablePlayerCommands(playerCommands)
-                        .build()
+
+                    if (session.isMediaNotificationController(controller)) {
+                        val previousButton = CommandButton.Builder(CommandButton.ICON_PREVIOUS)
+                            .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
+                            .setSlots(CommandButton.SLOT_BACK)
+                            .build()
+                        val nextButton = CommandButton.Builder(CommandButton.ICON_NEXT)
+                            .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
+                            .setSlots(CommandButton.SLOT_FORWARD)
+                            .build()
+                        result.setMediaButtonPreferences(listOf(previousButton, nextButton))
+                    }
+
+                    return result.build()
                 }
 
                 override fun onPlayerCommandRequest(
