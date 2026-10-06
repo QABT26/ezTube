@@ -3,6 +3,7 @@ package com.qabt.eztube.youtube
 import com.qabt.eztube.playback.AudioStream
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.search.SearchInfo
+import org.schabi.newpipe.extractor.kiosk.KioskInfo
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
 import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
@@ -11,6 +12,21 @@ import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 
 class NewPipeYouTubeSource : YouTubeSource {
+    private companion object {
+        const val MAX_EXTRA_PAGES = 20
+    }
+
+    private fun StreamInfoItem.toSummary(fallbackChannelUrl: String? = null, fallbackChannel: String = "") =
+        MediaSummary(
+            id = url,
+            title = name,
+            channel = uploaderName.orEmpty().ifBlank { fallbackChannel },
+            thumbnailUrl = thumbnails.firstOrNull()?.url,
+            channelUrl = uploaderUrl ?: fallbackChannelUrl,
+            viewCount = viewCount,
+            uploadDateText = textualUploadDate
+        )
+
     override suspend fun search(query: String): List<MediaSummary> {
         val normalized = query.trim()
         if (normalized.isEmpty()) return emptyList()
@@ -36,6 +52,19 @@ class NewPipeYouTubeSource : YouTubeSource {
             .toList()
     }
 
+    override suspend fun trending(): List<MediaSummary> {
+        val service = ServiceList.YouTube
+        val factory = service.kioskList.getListLinkHandlerFactoryByType("Trending")
+        val url = factory.fromId("Trending").url
+        return KioskInfo.getInfo(service, url).relatedItems
+            .asSequence()
+            .filterIsInstance<StreamInfoItem>()
+            .filterNot { it.isShortFormContent }
+            .map { it.toSummary() }
+            .take(20)
+            .toList()
+    }
+
     override suspend fun channel(channelUrl: String): ChannelSummary {
         val service = ServiceList.YouTube
         val info = ChannelInfo.getInfo(service, channelUrl)
@@ -48,27 +77,33 @@ class NewPipeYouTubeSource : YouTubeSource {
         }
 
         val videos = videosTab?.let { handler ->
-            ChannelTabInfo.getInfo(service, handler).relatedItems
-                .asSequence()
+            val first = ChannelTabInfo.getInfo(service, handler)
+            val all = first.relatedItems.toMutableList()
+            var next = first.nextPage
+            var pages = 0
+            while (next != null && pages++ < MAX_EXTRA_PAGES) {
+                val page = ChannelTabInfo.getMoreItems(service, handler, next)
+                all += page.items
+                next = page.nextPage
+            }
+            all.asSequence()
                 .filterIsInstance<StreamInfoItem>()
                 .filterNot { it.isShortFormContent }
-                .map { item ->
-                    MediaSummary(
-                        id = item.url,
-                        title = item.name,
-                        channel = item.uploaderName.orEmpty().ifBlank { info.name },
-                        thumbnailUrl = item.thumbnails.firstOrNull()?.url,
-                        channelUrl = item.uploaderUrl ?: info.url,
-                        viewCount = item.viewCount,
-                        uploadDateText = item.textualUploadDate
-                    )
-                }
+                .map { it.toSummary(info.url, info.name) }
                 .toList()
         }.orEmpty()
 
         val playlists = playlistsTab?.let { handler ->
-            ChannelTabInfo.getInfo(service, handler).relatedItems
-                .asSequence()
+            val first = ChannelTabInfo.getInfo(service, handler)
+            val all = first.relatedItems.toMutableList()
+            var next = first.nextPage
+            var pages = 0
+            while (next != null && pages++ < MAX_EXTRA_PAGES) {
+                val page = ChannelTabInfo.getMoreItems(service, handler, next)
+                all += page.items
+                next = page.nextPage
+            }
+            all.asSequence()
                 .filterIsInstance<PlaylistInfoItem>()
                 .map { item ->
                     PlaylistSummary(
@@ -94,20 +129,17 @@ class NewPipeYouTubeSource : YouTubeSource {
 
     override suspend fun playlist(playlistUrl: String): PlaylistDetail {
         val info = PlaylistInfo.getInfo(ServiceList.YouTube, playlistUrl)
-        val items = info.relatedItems
-            .asSequence()
+        val all = info.relatedItems.toMutableList()
+        var next = info.nextPage
+        var pages = 0
+        while (next != null && pages++ < MAX_EXTRA_PAGES) {
+            val page = PlaylistInfo.getMoreItems(ServiceList.YouTube, playlistUrl, next)
+            all += page.items
+            next = page.nextPage
+        }
+        val items = all.asSequence()
             .filterNot { it.isShortFormContent }
-            .map { item ->
-                MediaSummary(
-                    id = item.url,
-                    title = item.name,
-                    channel = item.uploaderName.orEmpty(),
-                    thumbnailUrl = item.thumbnails.firstOrNull()?.url,
-                    channelUrl = item.uploaderUrl,
-                    viewCount = item.viewCount,
-                    uploadDateText = item.textualUploadDate
-                )
-            }
+            .map { it.toSummary() }
             .toList()
         return PlaylistDetail(
             url = info.url,
