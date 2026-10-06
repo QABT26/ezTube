@@ -1355,7 +1355,7 @@ private fun FullPlayer(
                             maxLines = 1
                         )
                     },
-                    modifier = Modifier.weight(1f).height(48.dp)
+                    modifier = Modifier.weight(1f).height(32.dp)
                 )
             }
 
