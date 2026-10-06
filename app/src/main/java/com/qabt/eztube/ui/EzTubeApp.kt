@@ -292,11 +292,11 @@ fun EzTubeApp() {
         trendingLoading = false
     }
 
-    LaunchedEffect(recent.firstOrNull()?.mediaId, favorites.firstOrNull()?.mediaId, homeRefreshToken) {
-        val seeds = (favorites.map { it.channel } + recent.map { it.channel })
-            .filter { it.isNotBlank() }
-            .distinct()
-            .take(3)
+    LaunchedEffect(recent.firstOrNull()?.mediaId, favorites.firstOrNull()?.mediaId, recentSearches, homeRefreshToken) {
+        val searchSeeds = recentSearches.filter { it.isNotBlank() }.distinct().take(5)
+        val tasteSeeds = (favorites.map { it.channel } + recent.map { it.channel })
+            .filter { it.isNotBlank() }.distinct().take(3)
+        val seeds = (searchSeeds + tasteSeeds).distinct().take(8)
         if (seeds.isEmpty()) {
             homeSuggestions = emptyList()
             homeLoading = false
@@ -305,7 +305,9 @@ fun EzTubeApp() {
         homeLoading = true
         val played = recent.mapTo(mutableSetOf()) { it.mediaId }
         val recommended = withContext(Dispatchers.IO) {
-            seeds.flatMap { seed -> runCatching { source.search(seed) }.getOrDefault(emptyList()) }
+            seeds.flatMapIndexed { index, seed ->
+                runCatching { source.search(seed) }.getOrDefault(emptyList()).take(if (index < searchSeeds.size) 6 else 4)
+            }
         }
         homeSuggestions = recommended
             .distinctBy { it.id }
@@ -338,6 +340,12 @@ fun EzTubeApp() {
     MaterialTheme {
         Box(Modifier.fillMaxSize()) {
         if (playlistDetail != null || playlistLoading || playlistError != null) {
+            Scaffold(bottomBar = {
+                nowPlaying?.let { media -> MiniPlayer(media, isPlaying, { showPlayer = true }) {
+                    if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs) else togglePlayback()
+                } }
+            }) { detailPadding ->
+            Box(Modifier.fillMaxSize().padding(detailPadding)) {
             PlaylistDetailScreen(
                 playlist = playlistDetail,
                 loading = playlistLoading,
@@ -363,7 +371,15 @@ fun EzTubeApp() {
                     }
                 }
             )
+            }
+            }
         } else if (channelDetail != null || channelLoading || channelError != null) {
+            Scaffold(bottomBar = {
+                nowPlaying?.let { media -> MiniPlayer(media, isPlaying, { showPlayer = true }) {
+                    if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs) else togglePlayback()
+                } }
+            }) { detailPadding ->
+            Box(Modifier.fillMaxSize().padding(detailPadding)) {
             ChannelScreen(
                 channel = channelDetail,
                 loading = channelLoading,
@@ -382,6 +398,8 @@ fun EzTubeApp() {
                     playMedia(media)
                 }
             )
+            }
+            }
         } else if (showSettings) {
             SettingsScreen(
                 quality = quality,
@@ -551,23 +569,7 @@ fun EzTubeApp() {
                 }
             }
         }
-        if (nowPlaying != null && !showPlayer && (playlistDetail != null || channelDetail != null)) {
-            Surface(
-                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
-                tonalElevation = 6.dp,
-                shadowElevation = 8.dp
-            ) {
-                MiniPlayer(
-                    media = requireNotNull(nowPlaying),
-                    isPlaying = isPlaying,
-                    onOpen = { showPlayer = true },
-                    onToggle = {
-                        if (controller?.currentMediaItem == null) nowPlaying?.let { playMedia(it, resumePositionMs) }
-                        else togglePlayback()
-                    }
-                )
-            }
-        }
+
         }
     }
 }
