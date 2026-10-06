@@ -102,6 +102,7 @@ fun EzTubeApp() {
     var playbackEndedToken by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
+    var recentSearches by remember { mutableStateOf(playbackPrefs.loadRecentSearches()) }
     var homeSuggestions by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var homeLoading by remember { mutableStateOf(false) }
     var trending by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
@@ -519,6 +520,8 @@ fun EzTubeApp() {
                         results = searchResults,
                         listState = searchListState,
                         onResultsChange = { searchResults = it },
+                        recentSearches = recentSearches,
+                        onSearchSubmitted = { q -> playbackPrefs.saveSearch(q); recentSearches = playbackPrefs.loadRecentSearches() },
                         onChannel = { openChannel(it.channelUrl) },
                         onPlay = { media, resultQueue ->
                             queue = resultQueue
@@ -697,6 +700,8 @@ private fun SearchScreen(
     results: List<MediaSummary>,
     listState: androidx.compose.foundation.lazy.LazyListState,
     onResultsChange: (List<MediaSummary>) -> Unit,
+    recentSearches: List<String>,
+    onSearchSubmitted: (String) -> Unit,
     onChannel: (MediaSummary) -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit
 ) {
@@ -709,6 +714,7 @@ private fun SearchScreen(
         scope.launch {
             loading = true
             searchError = null
+            onSearchSubmitted(query)
             runCatching { withContext(Dispatchers.IO) { source.search(query) } }
                 .onSuccess { onResultsChange(it) }
                 .onFailure { searchError = it.message ?: "Search failed" }
@@ -733,6 +739,18 @@ private fun SearchScreen(
             ),
             shape = RoundedCornerShape(18.dp)
         )
+        if (query.isBlank() && recentSearches.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                recentSearches.take(5).forEach { recent ->
+                    AssistChip(onClick = { onQueryChange(recent) }, label = {
+                        Text(recent, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }, modifier = Modifier.weight(1f))
+                }
+            }
+        }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
         (searchError ?: playbackError)?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
