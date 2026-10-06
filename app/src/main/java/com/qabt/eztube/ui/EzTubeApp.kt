@@ -44,6 +44,7 @@ import com.qabt.eztube.playback.AudioQuality
 import com.qabt.eztube.playback.AudioStreamSelector
 import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
+import com.qabt.eztube.playback.SystemTransportBridge
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import kotlinx.coroutines.Dispatchers
@@ -148,6 +149,28 @@ fun EzTubeApp() {
                 } ?: run { errorMessage = "Playback service is not ready yet" }
             }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
             resolvingId = null
+        }
+    }
+
+    DisposableEffect(queue, queueIndex) {
+        SystemTransportBridge.onPrevious = {
+            scope.launch {
+                if (queueIndex > 0) {
+                    queueIndex -= 1
+                    playMedia(queue[queueIndex])
+                }
+            }
+        }
+        SystemTransportBridge.onNext = {
+            scope.launch {
+                if (queueIndex >= 0 && queueIndex < queue.lastIndex) {
+                    queueIndex += 1
+                    playMedia(queue[queueIndex])
+                }
+            }
+        }
+        onDispose {
+            SystemTransportBridge.clear()
         }
     }
 
