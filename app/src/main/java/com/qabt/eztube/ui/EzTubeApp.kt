@@ -420,7 +420,15 @@ fun EzTubeApp() {
                 onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) }, nextMode = nextMode,
                 onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) }, repeatMode = repeatMode,
                 onRepeatMode = { repeatMode = it; playbackPrefs.saveRepeatMode(it.ordinal) },
+                queue = queue, queueIndex = queueIndex,
                 hasPrevious = queueIndex > 0, hasNext = queueIndex >= 0 && queueIndex < queue.lastIndex,
+                onQueueItem = { index ->
+                    if (index in queue.indices && index != queueIndex) {
+                        queueIndex = index
+                        playbackPrefs.saveQueue(queue, queueIndex)
+                        playMedia(queue[index])
+                    }
+                },
                 onPrevious = {
                     controller?.let { mc ->
                         if (mc.hasPreviousMediaItem()) mc.seekToPreviousMediaItem()
@@ -1307,6 +1315,9 @@ private fun FullPlayer(
     onNextMode: (NextMode) -> Unit,
     repeatMode: RepeatMode,
     onRepeatMode: (RepeatMode) -> Unit,
+    queue: List<MediaSummary>,
+    queueIndex: Int,
+    onQueueItem: (Int) -> Unit,
     hasPrevious: Boolean,
     hasNext: Boolean,
     onPrevious: () -> Unit,
@@ -1319,6 +1330,7 @@ private fun FullPlayer(
 ) {
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
+    var showQueue by remember { mutableStateOf(false) }
     LaunchedEffect(controller, media.id) {
         while (true) {
             position = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
@@ -1552,6 +1564,78 @@ private fun FullPlayer(
                 Text(formatTime(position), style = MaterialTheme.typography.labelSmall)
                 Text(formatTime(duration), style = MaterialTheme.typography.labelSmall)
             }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = { showQueue = !showQueue },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Icon(Icons.AutoMirrored.Outlined.PlaylistPlay, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text(if (showQueue) "Hide queue" else "Up next")
+                }
+                Spacer(Modifier.weight(1f))
+                if (queue.isNotEmpty()) {
+                    Text(
+                        "${(queueIndex + 1).coerceAtLeast(1)} / ${queue.size}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            if (showQueue) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                ) {
+                    Column(Modifier.padding(vertical = 5.dp)) {
+                        queue.forEachIndexed { index, item ->
+                            val current = index == queueIndex
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .clickable(enabled = !current) { onQueueItem(index) }
+                                    .padding(horizontal = 9.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AsyncImage(
+                                    item.thumbnailUrl, null,
+                                    Modifier.size(42.dp).clip(RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                                Spacer(Modifier.width(9.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        item.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        item.channel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (current) {
+                                    Icon(Icons.Outlined.GraphicEq, "Playing", Modifier.size(19.dp),
+                                        tint = MaterialTheme.colorScheme.primary)
+                                } else {
+                                    Text("${index + 1}", style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             Row(
                 Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
