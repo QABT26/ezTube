@@ -10,13 +10,21 @@ data class MediaSummary(
     val channelUrl: String? = null
 )
 
+data class PlaylistSummary(
+    val url: String,
+    val title: String,
+    val thumbnailUrl: String?,
+    val streamCount: Long
+)
+
 data class ChannelSummary(
     val url: String,
     val name: String,
     val avatarUrl: String?,
     val bannerUrl: String?,
     val subscriberCount: Long,
-    val videos: List<MediaSummary>
+    val videos: List<MediaSummary>,
+    val playlists: List<PlaylistSummary>
 )
 
 interface YouTubeSource {
