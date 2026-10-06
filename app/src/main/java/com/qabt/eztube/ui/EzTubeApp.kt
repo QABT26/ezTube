@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -903,7 +904,7 @@ private fun PlaylistDetailScreen(
     LaunchedEffect(nowPlayingId, playlist?.url) {
         if (playingIndex >= 0) {
             // Header is item 0. Keep the active row around the visual center.
-            listState.animateScrollToItem((playingIndex + 1).coerceAtLeast(0), scrollOffset = -280)
+            listState.animateScrollToItem((playingIndex + 1).coerceAtLeast(0))
         }
     }
 
@@ -932,7 +933,7 @@ private fun PlaylistDetailScreen(
                     }
                 }
             }
-            items(playlist.items, key = { "pl-item-" + it.id }) { media ->
+            itemsIndexed(playlist.items, key = { index, media -> "pl-item-$index-${media.id}" }) { _, media ->
                 val isCurrent = media.id == nowPlayingId
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
