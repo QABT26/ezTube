@@ -2,6 +2,7 @@ package com.qabt.eztube.playback
 
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -24,12 +25,25 @@ class PlaybackService : MediaSessionService() {
             .build()
             .apply {
                 setAudioAttributes(audioAttributes, true)
+                setHandleAudioBecomingNoisy(true)
             }
 
         session = MediaSession.Builder(this, requireNotNull(player)).build()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+
+    override fun onTaskRemoved(rootIntent: android.content.Intent?) {
+        val activePlayer = player
+        if (activePlayer == null ||
+            !activePlayer.playWhenReady ||
+            activePlayer.mediaItemCount == 0 ||
+            activePlayer.playbackState == Player.STATE_ENDED
+        ) {
+            stopSelf()
+        }
+        super.onTaskRemoved(rootIntent)
+    }
 
     override fun onDestroy() {
         session?.release()
