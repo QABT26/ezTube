@@ -53,7 +53,6 @@ import com.qabt.eztube.playback.AudioQuality
 import com.qabt.eztube.playback.AudioStreamSelector
 import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
-import com.qabt.eztube.playback.SystemTransportBridge
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.ChannelSummary
 import com.qabt.eztube.youtube.PlaylistSummary
@@ -101,7 +100,6 @@ fun EzTubeApp() {
     var resolvingId by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showPlayer by remember { mutableStateOf(false) }
-    var playbackEndedToken by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var recentSearches by remember { mutableStateOf(playbackPrefs.loadRecentSearches()) }
@@ -149,7 +147,6 @@ fun EzTubeApp() {
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         isBuffering = state == Player.STATE_BUFFERING
-                        if (state == Player.STATE_ENDED) playbackEndedToken += 1
                     }
                 })
             }.onFailure { errorMessage = it.message ?: "Playback service unavailable" }
@@ -188,11 +185,12 @@ fun EzTubeApp() {
         controller?.let { if (it.isPlaying) it.pause() else it.play() }
     }
 
-    fun activeQueueFor(media: MediaSummary): List<MediaSummary> {
-        if (nextMode == NextMode.LIST) return queue
-        val pool = (homeSuggestions + trending + searchResults + queue)
-            .distinctBy { it.id }.filterNot { it.id == media.id }
-        if (pool.isEmpty()) return queue
+    fun queueForStart(media: MediaSummary, sourceItems: List<MediaSummary>): List<MediaSummary> {
+        if (nextMode == NextMode.LIST) return sourceItems
+        val pool = (sourceItems + homeSuggestions + trending + searchResults)
+            .distinctBy { it.id }
+            .filterNot { it.id == media.id }
+        if (pool.isEmpty()) return listOf(media)
         val seed = (media.id.hashCode().toLong() shl 32) xor System.nanoTime()
         return listOf(media) + pool.shuffled(kotlin.random.Random(seed))
     }
@@ -202,9 +200,10 @@ fun EzTubeApp() {
         scope.launch {
             resolvingId = media.id
             errorMessage = null
-            if (nextMode == NextMode.RECOMMENDED) {
-                queue = activeQueueFor(media)
-                queueIndex = 0
+            if (queue.isNotEmpty()) {
+                val idx = queue.indexOfFirst { it.id == media.id }
+                if (idx >= 0) queueIndex = idx
+                playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
             }
             runCatching {
                 val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
@@ -238,70 +237,26 @@ fun EzTubeApp() {
                     resumePositionMs = 0L
                     playbackPrefs.save(media, startPositionMs)
                     withContext(Dispatchers.IO) { history.record(media) }
-                    val next = queue.getOrNull(queueIndex + 1)
-                    if (next != null) {
-                        launch {
-                            runCatching {
-                                val nextStreams = withContext(Dispatchers.IO) { source.audioStreams(next.id) }
-                                AudioStreamSelector.select(nextStreams, quality) ?: error("No next audio stream")
-                            }.onSuccess { nextStream ->
-                                if (nowPlaying?.id == media.id && controller?.currentMediaItem?.mediaId == media.id) {
-                                    val nextMetadata = MediaMetadata.Builder()
-                                        .setTitle(next.title).setArtist(next.channel)
-                                        .apply { next.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }.build()
-                                    controller?.addMediaItem(
-                                        MediaItem.Builder().setMediaId(next.id).setUri(nextStream.url)
-                                            .setMediaMetadata(nextMetadata).build()
-                                    )
-                                }
-                            }
-                        }
-                    }
                 } ?: run { errorMessage = "Playback service is not ready yet" }
             }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
             resolvingId = null
         }
     }
 
-    DisposableEffect(queue, queueIndex) {
-        SystemTransportBridge.onPrevious = {
-            scope.launch {
-                if (queueIndex > 0) {
-                    queueIndex -= 1
-                    playMedia(queue[queueIndex])
-                }
-            }
-        }
-        SystemTransportBridge.onNext = {
-            scope.launch {
-                if (queueIndex >= 0 && queueIndex < queue.lastIndex) {
-                    queueIndex += 1
-                    playMedia(queue[queueIndex])
-                }
-            }
-        }
-        onDispose { SystemTransportBridge.clear() }
+    fun startQueue(media: MediaSummary, sourceItems: List<MediaSummary>, startPositionMs: Long = 0L) {
+        queue = queueForStart(media, sourceItems)
+        queueIndex = queue.indexOfFirst { it.id == media.id }.coerceAtLeast(0)
+        playbackPrefs.saveQueue(queue, queueIndex)
+        playMedia(media, startPositionMs)
     }
 
-    LaunchedEffect(playbackEndedToken) {
-        if (playbackEndedToken <= 0) return@LaunchedEffect
-        when (repeatMode) {
-            RepeatMode.ONE -> nowPlaying?.let { playMedia(it) }
-            RepeatMode.ALL -> {
-                if (queue.isNotEmpty()) {
-                    queueIndex = if (queueIndex >= 0 && queueIndex < queue.lastIndex) queueIndex + 1 else 0
-                    playMedia(queue[queueIndex])
-                } else {
-                    nowPlaying?.let { playMedia(it) }
-                }
-            }
-            RepeatMode.OFF -> {
-                if (autoplay && queueIndex >= 0 && queueIndex < queue.lastIndex) {
-                    queueIndex += 1
-                    playMedia(queue[queueIndex])
-                }
-            }
+    LaunchedEffect(controller, autoplay, repeatMode) {
+        val media3RepeatMode = when (repeatMode) {
+            RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+            RepeatMode.ALL -> Player.REPEAT_MODE_ALL
         }
+        controller?.repeatMode = media3RepeatMode
     }
 
     LaunchedEffect(Unit) {
@@ -406,16 +361,12 @@ fun EzTubeApp() {
                     playlistLoading = false
                 },
                 onPlay = { media, items ->
-                    queue = items
-                    queueIndex = items.indexOfFirst { it.id == media.id }
-                    playMedia(media)
+                    startQueue(media, items)
                 },
                 onChannel = { openChannel(it.channelUrl) },
                 onPlayAll = { items ->
                     if (items.isNotEmpty()) {
-                        queue = items
-                        queueIndex = 0
-                        playMedia(items.first())
+                        startQueue(items.first(), items)
                     }
                 }
             )
@@ -441,9 +392,7 @@ fun EzTubeApp() {
                 },
                 onPlaylist = { openPlaylist(it.url) },
                 onPlay = { media, items ->
-                    queue = items
-                    queueIndex = items.indexOfFirst { it.id == media.id }
-                    playMedia(media)
+                    startQueue(media, items)
                 }
             )
             }
@@ -544,9 +493,7 @@ fun EzTubeApp() {
                         onSearchSubmitted = { q -> playbackPrefs.saveSearch(q); recentSearches = playbackPrefs.loadRecentSearches() },
                         onChannel = { openChannel(it.channelUrl) },
                         onPlay = { media, resultQueue ->
-                            queue = resultQueue
-                            queueIndex = resultQueue.indexOfFirst { it.id == media.id }
-                            playMedia(media)
+                            startQueue(media, resultQueue)
                         }
                     )
                     Tab.HOME -> HomeScreen(
@@ -559,9 +506,7 @@ fun EzTubeApp() {
                         onRefresh = { homeRefreshToken += 1 },
                         resolvingId = resolvingId,
                         onPlay = { media, items ->
-                            queue = items
-                            queueIndex = queue.indexOfFirst { it.id == media.id }
-                            playMedia(media)
+                            startQueue(media, items)
                         },
                         onSearch = { selected = Tab.SEARCH }
                     )
@@ -571,21 +516,17 @@ fun EzTubeApp() {
                         favorites = favorites,
                         resolvingId = resolvingId,
                         onPlay = { entry ->
-                            queue = recent.map { it.toMediaSummary() }
-                            queueIndex = queue.indexOfFirst { it.id == entry.mediaId }
-                            playMedia(entry.toMediaSummary())
+                            val items = recent.map { it.toMediaSummary() }
+                            startQueue(entry.toMediaSummary(), items)
                         },
                         onPlayFavorite = { entry ->
-                            queue = favorites.map { it.toMediaSummary() }
-                            queueIndex = queue.indexOfFirst { it.id == entry.mediaId }
-                            playMedia(entry.toMediaSummary())
+                            val items = favorites.map { it.toMediaSummary() }
+                            startQueue(entry.toMediaSummary(), items)
                         },
                         onPlayAllFavorites = {
                             val items = favorites.map { it.toMediaSummary() }
                             if (items.isNotEmpty()) {
-                                queue = items
-                                queueIndex = 0
-                                playMedia(items.first())
+                                startQueue(items.first(), items)
                             }
                         },
                         onRemoveFavorite = { entry -> scope.launch(Dispatchers.IO) { favoritesRepo.remove(entry.mediaId) } },
