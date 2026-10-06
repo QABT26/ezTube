@@ -3,6 +3,16 @@ package com.qabt.eztube.playback
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import android.net.Uri
+import com.qabt.eztube.youtube.NewPipeYouTubeSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
@@ -13,9 +23,14 @@ import androidx.media3.session.SessionResult
 class PlaybackService : MediaSessionService() {
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private lateinit var preferences: PlaybackPreferences
+    private val source by lazy { NewPipeYouTubeSource() }
+    @Volatile private var transportBusy = false
 
     override fun onCreate() {
         super.onCreate()
+        preferences = PlaybackPreferences(this)
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -67,13 +82,44 @@ class PlaybackService : MediaSessionService() {
                     playerCommand: Int
                 ): Int {
                     when (playerCommand) {
-                        Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> SystemTransportBridge.onNext?.invoke()
-                        Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> SystemTransportBridge.onPrevious?.invoke()
+                        Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> moveQueue(1)
+                        Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> moveQueue(-1)
                     }
                     return SessionResult.RESULT_SUCCESS
                 }
             })
             .build()
+    }
+
+    private fun moveQueue(delta: Int) {
+        if (transportBusy) return
+        val saved = preferences.loadQueue() ?: return
+        val items = saved.first
+        val currentId = player?.currentMediaItem?.mediaId
+        val current = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
+        val target = current + delta
+        if (target !in items.indices) return
+        transportBusy = true
+        serviceScope.launch {
+            val media = items[target]
+            runCatching {
+                val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
+                AudioStreamSelector.select(streams, preferences.loadQuality()) ?: error("No playable audio stream")
+            }.onSuccess { stream ->
+                val metadata = MediaMetadata.Builder()
+                    .setTitle(media.title).setArtist(media.channel)
+                    .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }.build()
+                player?.apply {
+                    setMediaItem(MediaItem.Builder().setMediaId(media.id).setUri(stream.url).setMediaMetadata(metadata).build())
+                    prepare()
+                    setPlaybackSpeed(preferences.loadSpeed())
+                    play()
+                }
+                preferences.saveQueue(items, target)
+                preferences.save(media, 0L)
+            }
+            transportBusy = false
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
@@ -92,6 +138,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         SystemTransportBridge.clear()
+        serviceScope.cancel()
         session?.release()
         session = null
         player?.release()
