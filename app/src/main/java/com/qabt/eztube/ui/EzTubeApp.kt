@@ -853,14 +853,21 @@ private fun ChannelScreen(
     onBack: () -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit
 ) {
+    var section by remember(channel?.url) { mutableStateOf("Videos") }
+    var sort by remember(channel?.url) { mutableStateOf("Newest") }
+
+    val videos = remember(channel?.videos, sort) {
+        when (sort) {
+            "Most viewed" -> channel?.videos.orEmpty().sortedByDescending { it.viewCount }
+            "Oldest" -> channel?.videos.orEmpty().asReversed()
+            else -> channel?.videos.orEmpty()
+        }
+    }
+
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-        Row(
-            Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
-            }
+        Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
             Text(channel?.name ?: "Channel", style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -871,68 +878,71 @@ private fun ChannelScreen(
                 Text(error, color = MaterialTheme.colorScheme.error)
             }
         } else if (channel != null) {
-            LazyColumn(
-                Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 18.dp)
-            ) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 18.dp)) {
                 channel.bannerUrl?.let { banner ->
-                    item {
-                        AsyncImage(banner, null, Modifier.fillMaxWidth().aspectRatio(16f / 5f),
-                            contentScale = ContentScale.Crop)
-                    }
+                    item { AsyncImage(banner, null, Modifier.fillMaxWidth().aspectRatio(16f / 5f), contentScale = ContentScale.Crop) }
                 }
                 item {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AsyncImage(channel.avatarUrl, null,
-                            Modifier.size(72.dp).clip(RoundedCornerShape(50)),
-                            contentScale = ContentScale.Crop)
+                        AsyncImage(channel.avatarUrl, null, Modifier.size(72.dp).clip(RoundedCornerShape(50)), contentScale = ContentScale.Crop)
                         Spacer(Modifier.width(12.dp))
                         Column {
-                            Text(channel.name, style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold)
-                            if (channel.subscriberCount >= 0) {
-                                Text("%,d subscribers".format(channel.subscriberCount),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                            Text(channel.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            if (channel.subscriberCount >= 0) Text("%,d subscribers".format(channel.subscriberCount), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
-                if (channel.playlists.isNotEmpty()) {
-                    item {
-                        Text("Playlists", style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
-                    }
-                    items(channel.playlists, key = { "playlist-" + it.url }) { playlist ->
-                        PlaylistRow(playlist)
-                    }
-                }
                 item {
-                    Text("Videos", style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
-                }
-                items(channel.videos, key = { "channel-" + it.id }) { media ->
-                    Box(Modifier.padding(horizontal = 10.dp)) {
-                        SearchResult(
-                            media = media,
-                            resolving = resolvingId == media.id,
-                            enabled = resolvingId == null,
-                            onChannel = {},
-                            onPlay = { onPlay(media, channel.videos) }
-                        )
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = section == "Videos", onClick = { section = "Videos" }, label = { Text("Videos") })
+                        FilterChip(selected = section == "Playlists", onClick = { section = "Playlists" }, label = { Text("Playlists") })
                     }
                 }
-                if (channel.videos.isEmpty()) {
+                if (section == "Videos") {
                     item {
-                        Text("No videos found in this channel tab.",
-                            modifier = Modifier.padding(16.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("Newest", "Oldest", "Most viewed").forEach { option ->
+                                FilterChip(selected = sort == option, onClick = { sort = option }, label = { Text(option) })
+                            }
+                        }
+                    }
+                    items(videos, key = { "channel-" + it.id }) { media ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable(enabled = resolvingId == null) { onPlay(media, videos) }.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AsyncImage(media.thumbnailUrl, null, Modifier.size(width = 116.dp, height = 66.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentScale = ContentScale.Crop)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(media.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                val meta = buildList {
+                                    if (media.viewCount >= 0) add(formatViews(media.viewCount))
+                                    media.uploadDateText?.takeIf { it.isNotBlank() }?.let(::add)
+                                }.joinToString(" · ")
+                                if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            }
+                            if (resolvingId == media.id) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Outlined.PlayCircle, "Play")
+                        }
+                    }
+                    if (videos.isEmpty()) item { Text("No videos found.", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                } else {
+                    if (channel.playlists.isEmpty()) {
+                        item { Text("No playlists found.", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    } else {
+                        items(channel.playlists, key = { "playlist-" + it.url }) { PlaylistRow(it) }
                     }
                 }
             }
         }
     }
+}
+
+private fun formatViews(value: Long): String = when {
+    value >= 1_000_000_000 -> String.format("%.1fB views", value / 1_000_000_000.0)
+    value >= 1_000_000 -> String.format("%.1fM views", value / 1_000_000.0)
+    value >= 1_000 -> String.format("%.1fK views", value / 1_000.0)
+    else -> "$value views"
 }
 
 @Composable
