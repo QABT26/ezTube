@@ -327,6 +327,7 @@ fun EzTubeApp() {
     }
 
     MaterialTheme {
+        Box(Modifier.fillMaxSize()) {
         if (playlistDetail != null || playlistLoading || playlistError != null) {
             PlaylistDetailScreen(
                 playlist = playlistDetail,
@@ -540,6 +541,24 @@ fun EzTubeApp() {
                     )
                 }
             }
+        }
+        if (nowPlaying != null && !showPlayer && (playlistDetail != null || channelDetail != null)) {
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding(),
+                tonalElevation = 6.dp,
+                shadowElevation = 8.dp
+            ) {
+                MiniPlayer(
+                    media = requireNotNull(nowPlaying),
+                    isPlaying = isPlaying,
+                    onOpen = { showPlayer = true },
+                    onToggle = {
+                        if (controller?.currentMediaItem == null) nowPlaying?.let { playMedia(it, resumePositionMs) }
+                        else togglePlayback()
+                    }
+                )
+            }
+        }
         }
     }
 }
