@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [HistoryEntry::class, FavoriteEntry::class], version = 2, exportSchema = false)
+@Database(entities = [HistoryEntry::class, FavoriteEntry::class], version = 3, exportSchema = false)
 abstract class EzTubeDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
     abstract fun favoriteDao(): FavoriteDao
@@ -29,6 +29,13 @@ abstract class EzTubeDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE listening_history ADD COLUMN channelUrl TEXT")
+                db.execSQL("ALTER TABLE favorites ADD COLUMN channelUrl TEXT")
+            }
+        }
+
         fun get(context: Context): EzTubeDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -36,7 +43,7 @@ abstract class EzTubeDatabase : RoomDatabase() {
                     EzTubeDatabase::class.java,
                     "eztube.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { instance = it }
             }
