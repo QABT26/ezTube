@@ -209,6 +209,25 @@ fun EzTubeApp() {
                     resumePositionMs = 0L
                     playbackPrefs.save(media, startPositionMs)
                     withContext(Dispatchers.IO) { history.record(media) }
+                    val next = queue.getOrNull(queueIndex + 1)
+                    if (next != null) {
+                        launch {
+                            runCatching {
+                                val nextStreams = withContext(Dispatchers.IO) { source.audioStreams(next.id) }
+                                AudioStreamSelector.select(nextStreams, quality) ?: error("No next audio stream")
+                            }.onSuccess { nextStream ->
+                                if (nowPlaying?.id == media.id && controller?.currentMediaItem?.mediaId == media.id) {
+                                    val nextMetadata = MediaMetadata.Builder()
+                                        .setTitle(next.title).setArtist(next.channel)
+                                        .apply { next.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }.build()
+                                    controller?.addMediaItem(
+                                        MediaItem.Builder().setMediaId(next.id).setUri(nextStream.url)
+                                            .setMediaMetadata(nextMetadata).build()
+                                    )
+                                }
+                            }
+                        }
+                    }
                 } ?: run { errorMessage = "Playback service is not ready yet" }
             }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
             resolvingId = null
@@ -375,7 +394,7 @@ fun EzTubeApp() {
             }
         } else if (channelDetail != null || channelLoading || channelError != null) {
             Scaffold(bottomBar = {
-                nowPlaying?.let { media -> MiniPlayer(media, isPlaying, { showPlayer = true }) {
+                nowPlaying?.let { media -> MiniPlayer(media, isPlaying, { channelDetail = null; channelError = null; channelLoading = false; showPlayer = true }) {
                     if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs) else togglePlayback()
                 } }
             }) { detailPadding ->
