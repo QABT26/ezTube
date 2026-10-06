@@ -49,6 +49,10 @@ class PlaybackService : MediaSessionService() {
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         queueManager.onTransition(mediaItem)
                     }
+
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState == Player.STATE_ENDED) queueManager.onPlaybackEnded()
+                    }
                 })
             }
 
