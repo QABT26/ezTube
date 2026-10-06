@@ -6,6 +6,8 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaSession.ConnectionResult
+import androidx.media3.session.SessionResult
 
 class PlaybackService : MediaSessionService() {
     private var player: ExoPlayer? = null
@@ -28,7 +30,37 @@ class PlaybackService : MediaSessionService() {
                 setHandleAudioBecomingNoisy(true)
             }
 
-        session = MediaSession.Builder(this, requireNotNull(player)).build()
+        session = MediaSession.Builder(this, requireNotNull(player))
+            .setCallback(object : MediaSession.Callback {
+                override fun onConnect(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo
+                ): ConnectionResult {
+                    val sessionCommands = ConnectionResult.DEFAULT_SESSION_COMMANDS
+                    val playerCommands = ConnectionResult.DEFAULT_PLAYER_COMMANDS
+                        .buildUpon()
+                        .add(Player.COMMAND_SEEK_TO_NEXT)
+                        .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                        .build()
+                    return ConnectionResult.AcceptedResultBuilder(session)
+                        .setAvailableSessionCommands(sessionCommands)
+                        .setAvailablePlayerCommands(playerCommands)
+                        .build()
+                }
+
+                override fun onPlayerCommandRequest(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    playerCommand: Int
+                ): Int {
+                    when (playerCommand) {
+                        Player.COMMAND_SEEK_TO_NEXT -> SystemTransportBridge.onNext?.invoke()
+                        Player.COMMAND_SEEK_TO_PREVIOUS -> SystemTransportBridge.onPrevious?.invoke()
+                    }
+                    return SessionResult.RESULT_SUCCESS
+                }
+            })
+            .build()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
@@ -46,6 +78,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        SystemTransportBridge.clear()
         session?.release()
         session = null
         player?.release()
