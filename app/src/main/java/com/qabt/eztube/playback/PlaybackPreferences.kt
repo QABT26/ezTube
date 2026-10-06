@@ -63,6 +63,12 @@ class PlaybackPreferences(context: Context) {
 
     fun loadSpeed(): Float = prefs.getFloat("speed", 1f).takeIf { it in 0.5f..2f } ?: 1f
 
+    fun saveNextMode(mode: String) {
+        prefs.edit().putString("next_mode", if (mode == "RECOMMENDED") "RECOMMENDED" else "LIST").apply()
+    }
+
+    fun loadNextMode(): String = prefs.getString("next_mode", "LIST") ?: "LIST"
+
     fun saveAutoplay(enabled: Boolean) {
         prefs.edit().putBoolean("autoplay", enabled).apply()
     }
