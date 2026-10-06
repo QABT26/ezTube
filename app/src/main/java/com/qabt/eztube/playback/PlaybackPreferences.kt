@@ -54,6 +54,17 @@ class PlaybackPreferences(context: Context) {
 
     fun loadRepeatMode(): Int = prefs.getInt("repeat_mode", 0).coerceIn(0, 2)
 
+    fun saveSearch(query: String) {
+        val normalized = query.trim()
+        if (normalized.isEmpty()) return
+        val current = loadRecentSearches().filterNot { it.equals(normalized, ignoreCase = true) }
+        prefs.edit().putString("recent_searches", (listOf(normalized) + current).take(5).joinToString("\n")).apply()
+    }
+
+    fun loadRecentSearches(): List<String> =
+        prefs.getString("recent_searches", "").orEmpty().lineSequence().map { it.trim() }
+            .filter { it.isNotEmpty() }.take(5).toList()
+
     fun saveTrendingTopic(topic: String) { prefs.edit().putString("trending_topic", topic).apply() }
     fun loadTrendingTopic(): String = prefs.getString("trending_topic", "Music") ?: "Music"
     fun saveTrendingLanguage(language: String) { prefs.edit().putString("trending_language", language).apply() }
