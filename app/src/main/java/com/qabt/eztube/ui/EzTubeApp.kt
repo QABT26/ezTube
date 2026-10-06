@@ -201,6 +201,11 @@ fun EzTubeApp() {
                     setPlaybackSpeed(playbackSpeed)
                     play()
                     nowPlaying = media
+                    if (queue.isNotEmpty()) {
+                        val idx = queue.indexOfFirst { it.id == media.id }
+                        if (idx >= 0) queueIndex = idx
+                        playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
+                    }
                     resumePositionMs = 0L
                     playbackPrefs.save(media, startPositionMs)
                     withContext(Dispatchers.IO) { history.record(media) }
@@ -252,6 +257,10 @@ fun EzTubeApp() {
     }
 
     LaunchedEffect(Unit) {
+        playbackPrefs.loadQueue()?.let { (savedQueue, savedIndex) ->
+            queue = savedQueue
+            queueIndex = savedIndex
+        }
         playbackPrefs.load()?.let { (media, position) ->
             if (nowPlaying == null) {
                 nowPlaying = media
@@ -544,7 +553,7 @@ fun EzTubeApp() {
         }
         if (nowPlaying != null && !showPlayer && (playlistDetail != null || channelDetail != null)) {
             Surface(
-                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding(),
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
                 tonalElevation = 6.dp,
                 shadowElevation = 8.dp
             ) {
