@@ -84,6 +84,10 @@ fun EzTubeApp() {
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showPlayer by remember { mutableStateOf(false) }
     var playbackEndedToken by remember { mutableIntStateOf(0) }
+    var searchQuery by remember { mutableStateOf("") }
+    var searchResults by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
+    var homeSuggestions by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
+    var homeLoading by remember { mutableStateOf(false) }
 
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -206,6 +210,19 @@ fun EzTubeApp() {
         sleepMinutes = null
     }
 
+    LaunchedEffect(recent.firstOrNull()?.mediaId, favorites.firstOrNull()?.mediaId) {
+        val seed = favorites.firstOrNull()?.channel?.takeIf { it.isNotBlank() }
+            ?: recent.firstOrNull()?.channel?.takeIf { it.isNotBlank() }
+            ?: return@LaunchedEffect
+        homeLoading = true
+        runCatching { withContext(Dispatchers.IO) { source.search(seed) } }
+            .onSuccess { items ->
+                val played = recent.mapTo(mutableSetOf()) { it.mediaId }
+                homeSuggestions = items.filterNot { it.id in played }.take(12)
+            }
+        homeLoading = false
+    }
+
     MaterialTheme {
         if (showSettings) {
             SettingsScreen(
@@ -312,6 +329,10 @@ fun EzTubeApp() {
                         source = source,
                         resolvingId = resolvingId,
                         playbackError = errorMessage,
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        results = searchResults,
+                        onResultsChange = { searchResults = it },
                         onPlay = { media, resultQueue ->
                             queue = resultQueue
                             queueIndex = resultQueue.indexOfFirst { it.id == media.id }
@@ -320,18 +341,13 @@ fun EzTubeApp() {
                     )
                     Tab.HOME -> HomeScreen(
                         modifier = Modifier.fillMaxSize().padding(padding),
-                        recent = recent.take(10),
-                        favorites = favorites.take(10),
+                        suggestions = homeSuggestions,
+                        loading = homeLoading,
                         resolvingId = resolvingId,
-                        onPlayRecent = { entry ->
-                            queue = recent.take(10).map { it.toMediaSummary() }
-                            queueIndex = queue.indexOfFirst { it.id == entry.mediaId }
-                            playMedia(entry.toMediaSummary())
-                        },
-                        onPlayFavorite = { entry ->
-                            queue = favorites.take(10).map { it.toMediaSummary() }
-                            queueIndex = queue.indexOfFirst { it.id == entry.mediaId }
-                            playMedia(entry.toMediaSummary())
+                        onPlay = { media ->
+                            queue = homeSuggestions
+                            queueIndex = queue.indexOfFirst { it.id == media.id }
+                            playMedia(media)
                         },
                         onSearch = { selected = Tab.SEARCH }
                     )
@@ -465,12 +481,14 @@ private fun SearchScreen(
     source: NewPipeYouTubeSource,
     resolvingId: String?,
     playbackError: String?,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    results: List<MediaSummary>,
+    onResultsChange: (List<MediaSummary>) -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
-    var results by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var searchError by remember { mutableStateOf<String?>(null) }
 
     fun submit() {
@@ -479,7 +497,7 @@ private fun SearchScreen(
             loading = true
             searchError = null
             runCatching { withContext(Dispatchers.IO) { source.search(query) } }
-                .onSuccess { results = it }
+                .onSuccess { onResultsChange(it) }
                 .onFailure { searchError = it.message ?: "Search failed" }
             loading = false
         }
@@ -488,11 +506,11 @@ private fun SearchScreen(
     Column(modifier.padding(horizontal = 14.dp)) {
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
-            value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(),
+            value = query, onValueChange = onQueryChange, modifier = Modifier.fillMaxWidth(),
             singleLine = true, placeholder = { Text("Search songs, artists, podcasts…") },
             leadingIcon = { Icon(Icons.Outlined.Search, null) },
             trailingIcon = {
-                if (query.isNotEmpty()) IconButton(onClick = { query = "" }) {
+                if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) {
                     Icon(Icons.Outlined.Close, "Clear")
                 }
             },
@@ -577,19 +595,21 @@ private fun MiniPlayer(
 @Composable
 private fun HomeScreen(
     modifier: Modifier,
-    recent: List<HistoryEntry>,
-    favorites: List<FavoriteEntry>,
+    suggestions: List<MediaSummary>,
+    loading: Boolean,
     resolvingId: String?,
-    onPlayRecent: (HistoryEntry) -> Unit,
-    onPlayFavorite: (FavoriteEntry) -> Unit,
+    onPlay: (MediaSummary) -> Unit,
     onSearch: () -> Unit
 ) {
-    LazyColumn(modifier.padding(horizontal = 14.dp), contentPadding = PaddingValues(vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(
+        modifier.padding(horizontal = 14.dp),
+        contentPadding = PaddingValues(vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         item {
-            Text("Listen without the video", style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold)
-            Text("Audio-first YouTube listening", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("For you", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Suggestions shaped by what you listen to",
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(10.dp))
             FilledTonalButton(onClick = onSearch) {
                 Icon(Icons.Outlined.Search, null)
@@ -597,23 +617,22 @@ private fun HomeScreen(
                 Text("Search YouTube")
             }
         }
-        if (recent.isNotEmpty()) {
-            item { Text("Recently played", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-            items(recent, key = { "home-r-" + it.mediaId }) { entry ->
-                CompactMediaRow(entry.title, entry.channel, entry.thumbnailUrl,
-                    resolvingId == entry.mediaId) { onPlayRecent(entry) }
+        if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        if (suggestions.isNotEmpty()) {
+            item { Text("Recommended", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            items(suggestions, key = { "home-s-" + it.id }) { media ->
+                CompactMediaRow(media.title, media.channel, media.thumbnailUrl,
+                    resolvingId == media.id) { onPlay(media) }
             }
-        }
-        if (favorites.isNotEmpty()) {
-            item { Text("Favorites", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-            items(favorites, key = { "home-f-" + it.mediaId }) { entry ->
-                CompactMediaRow(entry.title, entry.channel, entry.thumbnailUrl,
-                    resolvingId == entry.mediaId) { onPlayFavorite(entry) }
-            }
-        }
-        if (recent.isEmpty() && favorites.isEmpty()) {
             item {
-                Text("Play a few tracks and your listening shortcuts will appear here.",
+                Spacer(Modifier.height(6.dp))
+                Text("More personalized topics, channels and playlists will improve as you listen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else if (!loading) {
+            item {
+                Text("Listen to a few tracks or add favorites to start building recommendations.",
                     modifier = Modifier.padding(top = 24.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
