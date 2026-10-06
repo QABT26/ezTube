@@ -1242,7 +1242,7 @@ private fun FullPlayer(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 AudioQuality.entries.forEach { option ->
                     FilterChip(
-                        modifier = Modifier.weight(1f).height(48.dp),
+                        modifier = Modifier.weight(1f),
                         selected = quality == option,
                         onClick = { onQuality(option) },
                         label = {
@@ -1323,7 +1323,7 @@ private fun FullPlayer(
                         Text("Auto next", modifier = Modifier.fillMaxWidth(),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
                     },
-                    modifier = Modifier.weight(1f).height(48.dp)
+                    modifier = Modifier.weight(1f).height(32.dp)
                 )
                 FilterChip(
                     selected = repeatMode != RepeatMode.OFF,
@@ -1437,7 +1437,7 @@ private fun CompactPresetButton(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = modifier.height(48.dp).clickable(onClick = onClick),
+        modifier = modifier.height(32.dp).clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
         border = if (selected) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
