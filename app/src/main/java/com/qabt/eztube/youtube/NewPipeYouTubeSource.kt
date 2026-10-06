@@ -6,6 +6,7 @@ import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
 import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 
@@ -57,9 +58,9 @@ class NewPipeYouTubeSource : YouTubeSource {
                         title = item.name,
                         channel = item.uploaderName.orEmpty().ifBlank { info.name },
                         thumbnailUrl = item.thumbnails.firstOrNull()?.url,
-                        channelUrl = item.uploaderUrl,
-                    viewCount = item.viewCount,
-                    uploadDateText = item.textualUploadDate ?: info.url
+                        channelUrl = item.uploaderUrl ?: info.url,
+                        viewCount = item.viewCount,
+                        uploadDateText = item.textualUploadDate
                     )
                 }
                 .toList()
@@ -88,6 +89,32 @@ class NewPipeYouTubeSource : YouTubeSource {
             subscriberCount = info.subscriberCount,
             videos = videos,
             playlists = playlists
+        )
+    }
+
+    override suspend fun playlist(playlistUrl: String): PlaylistDetail {
+        val info = PlaylistInfo.getInfo(ServiceList.YouTube, playlistUrl)
+        val items = info.relatedItems
+            .asSequence()
+            .filterNot { it.isShortFormContent }
+            .map { item ->
+                MediaSummary(
+                    id = item.url,
+                    title = item.name,
+                    channel = item.uploaderName.orEmpty(),
+                    thumbnailUrl = item.thumbnails.firstOrNull()?.url,
+                    channelUrl = item.uploaderUrl,
+                    viewCount = item.viewCount,
+                    uploadDateText = item.textualUploadDate
+                )
+            }
+            .toList()
+        return PlaylistDetail(
+            url = info.url,
+            title = info.name,
+            thumbnailUrl = info.thumbnails.firstOrNull()?.url,
+            uploaderName = info.uploaderName.orEmpty(),
+            items = items
         )
     }
 
