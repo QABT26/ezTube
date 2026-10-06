@@ -5,6 +5,7 @@ import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 
@@ -39,6 +40,10 @@ class NewPipeYouTubeSource : YouTubeSource {
             handler.contentFilters.any { it.equals("videos", ignoreCase = true) }
         } ?: info.tabs.firstOrNull()
 
+        val playlistsTab = info.tabs.firstOrNull { handler ->
+            handler.contentFilters.any { it.equals("playlists", ignoreCase = true) }
+        }
+
         val videos = videosTab?.let { handler ->
             ChannelTabInfo.getInfo(service, handler).relatedItems
                 .asSequence()
@@ -56,13 +61,29 @@ class NewPipeYouTubeSource : YouTubeSource {
                 .toList()
         }.orEmpty()
 
+        val playlists = playlistsTab?.let { handler ->
+            ChannelTabInfo.getInfo(service, handler).relatedItems
+                .asSequence()
+                .filterIsInstance<PlaylistInfoItem>()
+                .map { item ->
+                    PlaylistSummary(
+                        url = item.url,
+                        title = item.name,
+                        thumbnailUrl = item.thumbnails.firstOrNull()?.url,
+                        streamCount = item.streamCount
+                    )
+                }
+                .toList()
+        }.orEmpty()
+
         return ChannelSummary(
             url = info.url,
             name = info.name,
             avatarUrl = info.avatars.firstOrNull()?.url,
             bannerUrl = info.banners.firstOrNull()?.url,
             subscriberCount = info.subscriberCount,
-            videos = videos
+            videos = videos,
+            playlists = playlists
         )
     }
 
