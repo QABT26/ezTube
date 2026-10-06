@@ -236,8 +236,7 @@ fun EzTubeApp() {
             scope.launch {
                 if (queueIndex > 0) {
                     queueIndex -= 1
-                    seekToNextMediaItem()
-                    seekToPreviousMediaItem()
+                    controller?.seekToPreviousMediaItem()
                     playMedia(queue[queueIndex], installQueue = false)
                 }
             }
@@ -246,6 +245,7 @@ fun EzTubeApp() {
             scope.launch {
                 if (queueIndex >= 0 && queueIndex < queue.lastIndex) {
                     queueIndex += 1
+                    controller?.seekToNextMediaItem()
                     playMedia(queue[queueIndex], installQueue = false)
                 }
             }
