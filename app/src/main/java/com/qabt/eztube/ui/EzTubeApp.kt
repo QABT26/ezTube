@@ -288,7 +288,11 @@ fun EzTubeApp() {
             .filter { it.isNotBlank() }
             .distinct()
             .take(3)
-        if (seeds.isEmpty()) return@LaunchedEffect
+        if (seeds.isEmpty()) {
+            homeSuggestions = emptyList()
+            homeLoading = false
+            return@LaunchedEffect
+        }
         homeLoading = true
         val played = recent.mapTo(mutableSetOf()) { it.mediaId }
         val recommended = withContext(Dispatchers.IO) {
@@ -1298,7 +1302,7 @@ private fun FullPlayer(
                             Text(when (option) {
                                 AudioQuality.DATA_SAVER -> "Saver 64"
                                 AudioQuality.STANDARD -> "Std 128"
-                                AudioQuality.HIGH -> "High"
+                                AudioQuality.HIGH -> "High 160+"
                             }, maxLines = 1)
                         }
                     )
