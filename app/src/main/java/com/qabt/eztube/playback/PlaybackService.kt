@@ -30,7 +30,7 @@ class PlaybackService : MediaSessionService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var preferences: PlaybackPreferences
     private val source by lazy { NewPipeYouTubeSource() }
-    @Volatile private var transportBusy = false
+    private lateinit var queueManager: PlaybackQueueManager
 
     override fun onCreate() {
         super.onCreate()
@@ -50,17 +50,12 @@ class PlaybackService : MediaSessionService() {
                 setHandleAudioBecomingNoisy(true)
                 addListener(object : Player.Listener {
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                        val id = mediaItem?.mediaId ?: return
-                        val saved = preferences.loadQueue() ?: return
-                        val index = saved.first.indexOfFirst { it.id == id }
-                        if (index >= 0) {
-                            preferences.saveQueue(saved.first, index)
-                            preferences.save(saved.first[index], 0L)
-                            ensureNextTimelineItem(saved.first, index)
-                        }
+                        queueManager.onTransition(mediaItem)
                     }
                 })
             }
+
+        queueManager = PlaybackQueueManager(requireNotNull(player), preferences, source, serviceScope)
 
         setMediaNotificationProvider(object : MediaNotification.Provider {
             private val delegate = androidx.media3.session.DefaultMediaNotificationProvider(this@PlaybackService)
@@ -106,64 +101,14 @@ class PlaybackService : MediaSessionService() {
                     playerCommand: Int
                 ): Int {
                     when (playerCommand) {
-                        Player.COMMAND_SEEK_TO_NEXT -> moveQueue(1)
-                        Player.COMMAND_SEEK_TO_PREVIOUS -> moveQueue(-1)
+                        Player.COMMAND_SEEK_TO_NEXT -> queueManager.move(1)
+                        Player.COMMAND_SEEK_TO_PREVIOUS -> queueManager.move(-1)
                         // MEDIA_ITEM commands are handled by ExoPlayer's real timeline.
                     }
                     return SessionResult.RESULT_SUCCESS
                 }
             })
             .build()
-    }
-
-    private fun ensureNextTimelineItem(items: List<com.qabt.eztube.youtube.MediaSummary>, index: Int) {
-        val next = items.getOrNull(index + 1) ?: return
-        val active = player ?: return
-        if (active.mediaItemCount > active.currentMediaItemIndex + 1) return
-        serviceScope.launch {
-            runCatching {
-                val streams = withContext(Dispatchers.IO) { source.audioStreams(next.id) }
-                AudioStreamSelector.select(streams, preferences.loadQuality()) ?: error("No next audio stream")
-            }.onSuccess { stream ->
-                if (active.mediaItemCount <= active.currentMediaItemIndex + 1) {
-                    val metadata = MediaMetadata.Builder().setTitle(next.title).setArtist(next.channel)
-                        .apply { next.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }.build()
-                    active.addMediaItem(MediaItem.Builder().setMediaId(next.id).setUri(stream.url)
-                        .setMediaMetadata(metadata).build())
-                }
-            }
-        }
-    }
-
-    private fun moveQueue(delta: Int) {
-        if (transportBusy) return
-        val saved = preferences.loadQueue() ?: return
-        val items = saved.first
-        val currentId = player?.currentMediaItem?.mediaId
-        val current = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
-        val target = current + delta
-        if (target !in items.indices) return
-        transportBusy = true
-        serviceScope.launch {
-            val media = items[target]
-            runCatching {
-                val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
-                AudioStreamSelector.select(streams, preferences.loadQuality()) ?: error("No playable audio stream")
-            }.onSuccess { stream ->
-                val metadata = MediaMetadata.Builder()
-                    .setTitle(media.title).setArtist(media.channel)
-                    .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }.build()
-                player?.apply {
-                    setMediaItem(MediaItem.Builder().setMediaId(media.id).setUri(stream.url).setMediaMetadata(metadata).build())
-                    prepare()
-                    setPlaybackSpeed(preferences.loadSpeed())
-                    play()
-                }
-                preferences.saveQueue(items, target)
-                preferences.save(media, 0L)
-            }
-            transportBusy = false
-        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
