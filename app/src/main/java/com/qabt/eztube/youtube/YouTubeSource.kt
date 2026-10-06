@@ -39,7 +39,7 @@ data class ChannelSummary(
 
 interface YouTubeSource {
     suspend fun search(query: String): List<MediaSummary>
-    suspend fun trending(): List<MediaSummary>
+    suspend fun trending(topic: String = "Music", language: String = "Vietnamese"): List<MediaSummary>
     suspend fun audioStreams(mediaId: String): List<AudioStream>
     suspend fun channel(channelUrl: String): ChannelSummary
     suspend fun playlist(playlistUrl: String): PlaylistDetail
