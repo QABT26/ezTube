@@ -807,6 +807,7 @@ private fun HomeScreen(
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
     onSearch: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     PullToRefreshBox(
         isRefreshing = loading || trendingLoading,
         onRefresh = onRefresh,
@@ -823,10 +824,19 @@ private fun HomeScreen(
             Text("Suggestions shaped by what you listen to",
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(10.dp))
-            FilledTonalButton(onClick = onSearch) {
-                Icon(Icons.Outlined.Search, null)
-                Spacer(Modifier.width(6.dp))
-                Text("Search YouTube")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = onSearch, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Outlined.Search, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Search YouTube", maxLines = 1)
+                }
+                FilledTonalButton(
+                    onClick = { scope.launch { listState.animateScrollToItem(if (suggestions.isNotEmpty()) suggestions.size + 3 else 2) } }
+                ) {
+                    Icon(Icons.Outlined.TrendingUp, null)
+                    Spacer(Modifier.width(5.dp))
+                    Text("Trending")
+                }
             }
         }
         if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
