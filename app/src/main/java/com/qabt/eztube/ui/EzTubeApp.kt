@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -102,6 +103,7 @@ fun EzTubeApp() {
     var homeLoading by remember { mutableStateOf(false) }
     var trending by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var trendingLoading by remember { mutableStateOf(false) }
+    var homeRefreshToken by remember { mutableIntStateOf(0) }
     val searchListState = rememberLazyListState()
     val homeListState = rememberLazyListState()
     var channelDetail by remember { mutableStateOf<ChannelSummary?>(null) }
@@ -270,14 +272,14 @@ fun EzTubeApp() {
         sleepMinutes = null
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(homeRefreshToken) {
         trendingLoading = true
         runCatching { withContext(Dispatchers.IO) { source.trending() } }
             .onSuccess { trending = it }
         trendingLoading = false
     }
 
-    LaunchedEffect(recent.firstOrNull()?.mediaId, favorites.firstOrNull()?.mediaId) {
+    LaunchedEffect(recent.firstOrNull()?.mediaId, favorites.firstOrNull()?.mediaId, homeRefreshToken) {
         val seeds = (favorites.map { it.channel } + recent.map { it.channel })
             .filter { it.isNotBlank() }
             .distinct()
@@ -493,6 +495,7 @@ fun EzTubeApp() {
                         trendingLoading = trendingLoading,
                         listState = homeListState,
                         loading = homeLoading,
+                        onRefresh = { homeRefreshToken += 1 },
                         resolvingId = resolvingId,
                         onPlay = { media, items ->
                             queue = items
@@ -771,12 +774,18 @@ private fun HomeScreen(
     trendingLoading: Boolean,
     listState: androidx.compose.foundation.lazy.LazyListState,
     loading: Boolean,
+    onRefresh: () -> Unit,
     resolvingId: String?,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
     onSearch: () -> Unit
 ) {
+    PullToRefreshBox(
+        isRefreshing = loading || trendingLoading,
+        onRefresh = onRefresh,
+        modifier = modifier
+    ) {
     LazyColumn(
-        modifier.padding(horizontal = 14.dp),
+        Modifier.fillMaxSize().padding(horizontal = 14.dp),
         state = listState,
         contentPadding = PaddingValues(vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -861,6 +870,7 @@ private fun CompactMediaRow(
         }
         if (resolving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         else Icon(Icons.Outlined.PlayArrow, "Play")
+    }
     }
 }
 
