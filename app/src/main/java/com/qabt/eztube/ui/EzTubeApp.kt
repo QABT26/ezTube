@@ -1450,10 +1450,16 @@ private fun FullPlayer(
                     onClick = {
                         onNextMode(if (nextMode == NextMode.LIST) NextMode.RECOMMENDED else NextMode.LIST)
                     },
-                    leadingIcon = { Icon(Icons.Outlined.Shuffle, null, Modifier.size(18.dp)) },
+                    leadingIcon = {
+                        Icon(
+                            if (nextMode == NextMode.LIST) Icons.AutoMirrored.Outlined.PlaylistPlay else Icons.Outlined.Shuffle,
+                            null,
+                            Modifier.size(18.dp)
+                        )
+                    },
                     label = {
                         Text(
-                            if (nextMode == NextMode.LIST) "Next: List" else "Next: Mix",
+                            "Next",
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             maxLines = 1
