@@ -429,6 +429,35 @@ fun EzTubeApp() {
                         playMedia(queue[index])
                     }
                 },
+                onQueueRemove = { index ->
+                    if (index in queue.indices && index != queueIndex) {
+                        val updated = queue.toMutableList().also { it.removeAt(index) }
+                        queueIndex = if (index < queueIndex) queueIndex - 1 else queueIndex
+                        queue = updated
+                        playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
+                    }
+                },
+                onQueueMove = { from, to ->
+                    if (from in queue.indices && to in queue.indices && from != to) {
+                        val updated = queue.toMutableList()
+                        val moved = updated.removeAt(from)
+                        updated.add(to, moved)
+                        queueIndex = when {
+                            queueIndex == from -> to
+                            from < queueIndex && to >= queueIndex -> queueIndex - 1
+                            from > queueIndex && to <= queueIndex -> queueIndex + 1
+                            else -> queueIndex
+                        }
+                        queue = updated
+                        playbackPrefs.saveQueue(queue, queueIndex)
+                    }
+                },
+                onQueueClearUpcoming = {
+                    if (queueIndex in queue.indices && queueIndex < queue.lastIndex) {
+                        queue = queue.take(queueIndex + 1)
+                        playbackPrefs.saveQueue(queue, queueIndex)
+                    }
+                },
                 onPrevious = {
                     controller?.let { mc ->
                         if (mc.hasPreviousMediaItem()) mc.seekToPreviousMediaItem()
@@ -1318,6 +1347,9 @@ private fun FullPlayer(
     queue: List<MediaSummary>,
     queueIndex: Int,
     onQueueItem: (Int) -> Unit,
+    onQueueRemove: (Int) -> Unit,
+    onQueueMove: (Int, Int) -> Unit,
+    onQueueClearUpcoming: () -> Unit,
     hasPrevious: Boolean,
     hasNext: Boolean,
     onPrevious: () -> Unit,
@@ -1577,7 +1609,12 @@ private fun FullPlayer(
                     Text(if (showQueue) "Hide queue" else "Up next")
                 }
                 Spacer(Modifier.weight(1f))
-                if (queue.isNotEmpty()) {
+                if (showQueue && queueIndex >= 0 && queueIndex < queue.lastIndex) {
+                    TextButton(
+                        onClick = onQueueClearUpcoming,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) { Text("Clear upcoming", style = MaterialTheme.typography.labelMedium) }
+                } else if (queue.isNotEmpty()) {
                     Text(
                         "${(queueIndex + 1).coerceAtLeast(1)} / ${queue.size}",
                         style = MaterialTheme.typography.labelMedium,
@@ -1627,8 +1664,19 @@ private fun FullPlayer(
                                     Icon(Icons.Outlined.GraphicEq, "Playing", Modifier.size(19.dp),
                                         tint = MaterialTheme.colorScheme.primary)
                                 } else {
-                                    Text("${index + 1}", style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    IconButton(
+                                        onClick = { onQueueMove(index, index - 1) },
+                                        enabled = index > 0,
+                                        modifier = Modifier.size(30.dp)
+                                    ) { Icon(Icons.Outlined.KeyboardArrowUp, "Move up", Modifier.size(18.dp)) }
+                                    IconButton(
+                                        onClick = { onQueueMove(index, index + 1) },
+                                        enabled = index < queue.lastIndex,
+                                        modifier = Modifier.size(30.dp)
+                                    ) { Icon(Icons.Outlined.KeyboardArrowDown, "Move down", Modifier.size(18.dp)) }
+                                    IconButton(onClick = { onQueueRemove(index) }, modifier = Modifier.size(30.dp)) {
+                                        Icon(Icons.Outlined.Close, "Remove from queue", Modifier.size(18.dp))
+                                    }
                                 }
                             }
                         }
