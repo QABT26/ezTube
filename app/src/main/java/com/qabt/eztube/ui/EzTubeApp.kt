@@ -1279,37 +1279,52 @@ private fun FullPlayer(
                 }
             }
 
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 listOf(1f, 1.25f, 1.5f, 2f).forEach { speed ->
                     FilterChip(
                         selected = playbackSpeed == speed,
                         onClick = { onSpeed(speed) },
-                        label = { Text("${speed}×") },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(null, 15, 30, 60).forEach { minutes ->
-                    FilterChip(
-                        selected = sleepMinutes == minutes,
-                        onClick = { onSleep(minutes) },
-                        label = { Text(minutes?.let { "${it}m" } ?: "Sleep off") },
-                        modifier = Modifier.weight(1f)
+                        label = { Text("${speed}×", modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
+                        modifier = Modifier.weight(1f).height(48.dp)
                     )
                 }
             }
             Row(
-                Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                Modifier.fillMaxWidth().padding(top = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(null, 15, 30, 60).forEach { minutes ->
+                    FilterChip(
+                        selected = sleepMinutes == minutes,
+                        onClick = { onSleep(minutes) },
+                        label = {
+                            Text(
+                                minutes?.let { "${it}m" } ?: "Off",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                maxLines = 1
+                            )
+                        },
+                        modifier = Modifier.weight(1f).height(48.dp)
+                    )
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
                     selected = autoplay,
                     onClick = { onAutoplay(!autoplay) },
                     leadingIcon = { Icon(Icons.Outlined.SkipNext, null, Modifier.size(18.dp)) },
-                    label = { Text("Auto next") },
-                    modifier = Modifier.weight(1f)
+                    label = {
+                        Text("Auto next", modifier = Modifier.fillMaxWidth(),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
+                    },
+                    modifier = Modifier.weight(1f).height(48.dp)
                 )
                 FilterChip(
                     selected = repeatMode != RepeatMode.OFF,
@@ -1335,14 +1350,17 @@ private fun FullPlayer(
                                 RepeatMode.OFF -> "Repeat off"
                                 RepeatMode.ONE -> "Repeat 1"
                                 RepeatMode.ALL -> "Repeat all"
-                            }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            maxLines = 1
                         )
                     },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).height(48.dp)
                 )
             }
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(12.dp))
             val progress = if (duration > 0) {
                 (position.toFloat() / duration).coerceIn(0f, 1f)
             } else 0f
