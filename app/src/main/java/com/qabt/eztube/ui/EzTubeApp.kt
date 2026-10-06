@@ -580,6 +580,14 @@ fun EzTubeApp() {
                             queueIndex = queue.indexOfFirst { it.id == entry.mediaId }
                             playMedia(entry.toMediaSummary())
                         },
+                        onPlayAllFavorites = {
+                            val items = favorites.map { it.toMediaSummary() }
+                            if (items.isNotEmpty()) {
+                                queue = items
+                                queueIndex = 0
+                                playMedia(items.first())
+                            }
+                        },
                         onRemoveFavorite = { entry -> scope.launch(Dispatchers.IO) { favoritesRepo.remove(entry.mediaId) } },
                         onDelete = { entry -> scope.launch(Dispatchers.IO) { history.delete(entry.mediaId) } },
                         onClear = { scope.launch(Dispatchers.IO) { history.clear() } }
@@ -991,6 +999,7 @@ private fun LibraryScreen(
     resolvingId: String?,
     onPlay: (HistoryEntry) -> Unit,
     onPlayFavorite: (FavoriteEntry) -> Unit,
+    onPlayAllFavorites: () -> Unit,
     onRemoveFavorite: (FavoriteEntry) -> Unit,
     onDelete: (HistoryEntry) -> Unit,
     onClear: () -> Unit
@@ -1000,7 +1009,23 @@ private fun LibraryScreen(
         contentPadding = PaddingValues(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        item { Text("Favorites", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Favorites", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f))
+                if (favorites.isNotEmpty()) {
+                    FilledTonalButton(
+                        onClick = onPlayAllFavorites,
+                        enabled = resolvingId == null,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(Icons.Outlined.PlayArrow, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Play all")
+                    }
+                }
+            }
+        }
         if (favorites.isEmpty()) {
             item { Text("Favorite tracks will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
         } else {
