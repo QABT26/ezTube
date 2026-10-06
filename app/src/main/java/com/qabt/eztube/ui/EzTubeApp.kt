@@ -874,7 +874,6 @@ private fun CompactMediaRow(
         if (resolving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         else Icon(Icons.Outlined.PlayArrow, "Play")
     }
-    }
 }
 
 @Composable
