@@ -360,6 +360,7 @@ fun EzTubeApp() {
                 loading = channelLoading,
                 error = channelError,
                 resolvingId = resolvingId,
+                nowPlayingId = nowPlaying?.id,
                 onBack = {
                     channelDetail = null
                     channelError = null
@@ -1112,6 +1113,7 @@ private fun ChannelScreen(
     loading: Boolean,
     error: String?,
     resolvingId: String?,
+    nowPlayingId: String?,
     onBack: () -> Unit,
     onPlaylist: (PlaylistSummary) -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit
@@ -1170,10 +1172,20 @@ private fun ChannelScreen(
                         }
                     }
                     items(videos, key = { "channel-" + it.id }) { media ->
+                        val isCurrent = nowPlayingId == media.id
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                        ) {
                         Row(
-                            Modifier.fillMaxWidth().clickable(enabled = resolvingId == null) { onPlay(media, videos) }.padding(horizontal = 12.dp, vertical = 6.dp),
+                            Modifier.fillMaxWidth().clickable(enabled = resolvingId == null) { onPlay(media, videos) }.padding(horizontal = 4.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (isCurrent) {
+                                Icon(Icons.Outlined.GraphicEq, "Now playing", tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(start = 4.dp, end = 6.dp).size(20.dp))
+                            }
                             AsyncImage(media.thumbnailUrl, null, Modifier.size(width = 116.dp, height = 66.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentScale = ContentScale.Crop)
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
@@ -1185,7 +1197,10 @@ private fun ChannelScreen(
                                 if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                             }
                             if (resolvingId == media.id) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                            else Icon(Icons.Outlined.PlayCircle, "Play")
+                            else Icon(if (isCurrent) Icons.Outlined.GraphicEq else Icons.Outlined.PlayCircle,
+                                if (isCurrent) "Now playing" else "Play",
+                                tint = if (isCurrent) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+                        }
                         }
                     }
                     if (videos.isEmpty()) item { Text("No videos found.", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
