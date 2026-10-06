@@ -5,6 +5,9 @@ import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.MediaNotification
+import com.google.common.collect.ImmutableList
 import android.net.Uri
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import kotlinx.coroutines.CoroutineScope
@@ -20,6 +23,7 @@ import androidx.media3.session.MediaSessionService
 import androidx.media3.session.MediaSession.ConnectionResult
 import androidx.media3.session.SessionResult
 
+@UnstableApi
 class PlaybackService : MediaSessionService() {
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
@@ -45,6 +49,14 @@ class PlaybackService : MediaSessionService() {
                 setAudioAttributes(audioAttributes, true)
                 setHandleAudioBecomingNoisy(true)
             }
+
+        setMediaNotificationProvider(object : MediaNotification.Provider {
+            private val delegate = androidx.media3.session.DefaultMediaNotificationProvider(this@PlaybackService)
+            override fun createNotification(mediaSession: MediaSession, customLayout: ImmutableList<CommandButton>, actionFactory: MediaNotification.ActionFactory, onNotificationChangedCallback: MediaNotification.Provider.Callback): MediaNotification =
+                delegate.createNotification(mediaSession, customLayout, actionFactory, onNotificationChangedCallback)
+            override fun handleCustomCommand(session: MediaSession, action: String, extras: android.os.Bundle): Boolean =
+                delegate.handleCustomCommand(session, action, extras)
+        })
 
         session = MediaSession.Builder(this, requireNotNull(player))
             .setCallback(object : MediaSession.Callback {
