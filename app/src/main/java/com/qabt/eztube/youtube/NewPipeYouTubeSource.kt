@@ -3,6 +3,8 @@ package com.qabt.eztube.youtube
 import com.qabt.eztube.playback.AudioStream
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.search.SearchInfo
+import org.schabi.newpipe.extractor.channel.ChannelInfo
+import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 
@@ -28,6 +30,40 @@ class NewPipeYouTubeSource : YouTubeSource {
                 )
             }
             .toList()
+    }
+
+    override suspend fun channel(channelUrl: String): ChannelSummary {
+        val service = ServiceList.YouTube
+        val info = ChannelInfo.getInfo(service, channelUrl)
+        val videosTab = info.tabs.firstOrNull { handler ->
+            handler.contentFilters.any { it.equals("videos", ignoreCase = true) }
+        } ?: info.tabs.firstOrNull()
+
+        val videos = videosTab?.let { handler ->
+            ChannelTabInfo.getInfo(service, handler).relatedItems
+                .asSequence()
+                .filterIsInstance<StreamInfoItem>()
+                .filterNot { it.isShortFormContent }
+                .map { item ->
+                    MediaSummary(
+                        id = item.url,
+                        title = item.name,
+                        channel = item.uploaderName.orEmpty().ifBlank { info.name },
+                        thumbnailUrl = item.thumbnails.firstOrNull()?.url,
+                        channelUrl = item.uploaderUrl ?: info.url
+                    )
+                }
+                .toList()
+        }.orEmpty()
+
+        return ChannelSummary(
+            url = info.url,
+            name = info.name,
+            avatarUrl = info.avatars.firstOrNull()?.url,
+            bannerUrl = info.banners.firstOrNull()?.url,
+            subscriberCount = info.subscriberCount,
+            videos = videos
+        )
     }
 
     override suspend fun audioStreams(mediaId: String): List<AudioStream> {
