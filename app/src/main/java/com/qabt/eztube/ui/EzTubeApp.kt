@@ -61,6 +61,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private enum class Tab(val label: String) { HOME("Home"), SEARCH("Search"), LIBRARY("Library") }
+private enum class RepeatMode { OFF, ONE, ALL }
 
 @Composable
 fun EzTubeApp() {
@@ -87,6 +88,9 @@ fun EzTubeApp() {
     var isPlaying by remember { mutableStateOf(false) }
     var quality by remember { mutableStateOf(playbackPrefs.loadQuality()) }
     var autoplay by remember { mutableStateOf(playbackPrefs.loadAutoplay()) }
+    var repeatMode by remember {
+        mutableStateOf(RepeatMode.entries.getOrElse(playbackPrefs.loadRepeatMode()) { RepeatMode.OFF })
+    }
     var showSettings by remember { mutableStateOf(false) }
     var resolvingId by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -221,9 +225,23 @@ fun EzTubeApp() {
     }
 
     LaunchedEffect(playbackEndedToken) {
-        if (autoplay && playbackEndedToken > 0 && queueIndex >= 0 && queueIndex < queue.lastIndex) {
-            queueIndex += 1
-            playMedia(queue[queueIndex])
+        if (playbackEndedToken <= 0) return@LaunchedEffect
+        when (repeatMode) {
+            RepeatMode.ONE -> nowPlaying?.let { playMedia(it) }
+            RepeatMode.ALL -> {
+                if (queue.isNotEmpty()) {
+                    queueIndex = if (queueIndex >= 0 && queueIndex < queue.lastIndex) queueIndex + 1 else 0
+                    playMedia(queue[queueIndex])
+                } else {
+                    nowPlaying?.let { playMedia(it) }
+                }
+            }
+            RepeatMode.OFF -> {
+                if (autoplay && queueIndex >= 0 && queueIndex < queue.lastIndex) {
+                    queueIndex += 1
+                    playMedia(queue[queueIndex])
+                }
+            }
         }
     }
 
@@ -374,6 +392,13 @@ fun EzTubeApp() {
                 playerError = playerError,
                 sleepMinutes = sleepMinutes,
                 onSleep = { sleepMinutes = it },
+                autoplay = autoplay,
+                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) },
+                repeatMode = repeatMode,
+                onRepeatMode = {
+                    repeatMode = it
+                    playbackPrefs.saveRepeatMode(it.ordinal)
+                },
                 hasPrevious = queueIndex > 0,
                 hasNext = queueIndex >= 0 && queueIndex < queue.lastIndex,
                 onPrevious = {
@@ -1143,6 +1168,10 @@ private fun FullPlayer(
     playerError: String?,
     sleepMinutes: Int?,
     onSleep: (Int?) -> Unit,
+    autoplay: Boolean,
+    onAutoplay: (Boolean) -> Unit,
+    repeatMode: RepeatMode,
+    onRepeatMode: (RepeatMode) -> Unit,
     hasPrevious: Boolean,
     hasNext: Boolean,
     onPrevious: () -> Unit,
@@ -1270,6 +1299,47 @@ private fun FullPlayer(
                         modifier = Modifier.weight(1f)
                     )
                 }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                FilterChip(
+                    selected = autoplay,
+                    onClick = { onAutoplay(!autoplay) },
+                    leadingIcon = { Icon(Icons.Outlined.SkipNext, null, Modifier.size(18.dp)) },
+                    label = { Text("Auto next") },
+                    modifier = Modifier.weight(1f)
+                )
+                FilterChip(
+                    selected = repeatMode != RepeatMode.OFF,
+                    onClick = {
+                        onRepeatMode(
+                            when (repeatMode) {
+                                RepeatMode.OFF -> RepeatMode.ONE
+                                RepeatMode.ONE -> RepeatMode.ALL
+                                RepeatMode.ALL -> RepeatMode.OFF
+                            }
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            if (repeatMode == RepeatMode.ONE) Icons.Outlined.RepeatOne else Icons.Outlined.Repeat,
+                            null,
+                            Modifier.size(18.dp)
+                        )
+                    },
+                    label = {
+                        Text(
+                            when (repeatMode) {
+                                RepeatMode.OFF -> "Repeat off"
+                                RepeatMode.ONE -> "Repeat 1"
+                                RepeatMode.ALL -> "Repeat all"
+                            }
+                        )
+                    },
+                    modifier = Modifier.weight(1f)
+                )
             }
 
             Spacer(Modifier.height(10.dp))
