@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.foundation.layout.*
@@ -441,7 +442,7 @@ fun EzTubeApp() {
             )
         } else {
             Scaffold(
-                topBar = { AppHeader(onSettings = { showSettings = true }) },
+                topBar = { AppHeader(onSettings = { showSettings = true }, onDoubleTapCenter = { scope.launch { when (selected) { Tab.HOME -> homeListState.animateScrollToItem(0); Tab.SEARCH -> searchListState.animateScrollToItem(0); Tab.LIBRARY -> Unit } } }) },
                 bottomBar = {
                     Column {
                         nowPlaying?.let { media ->
@@ -537,7 +538,7 @@ fun EzTubeApp() {
 }
 
 @Composable
-private fun AppHeader(onSettings: () -> Unit) {
+private fun AppHeader(onSettings: () -> Unit, onDoubleTapCenter: () -> Unit) {
     Surface(tonalElevation = 1.dp) {
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().height(58.dp).padding(horizontal = 16.dp),
@@ -546,7 +547,7 @@ private fun AppHeader(onSettings: () -> Unit) {
             Text("ez", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary)
             Text("Tube", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.weight(1f).fillMaxHeight().pointerInput(Unit) { detectTapGestures(onDoubleTap = { onDoubleTapCenter() }) })
             Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surfaceVariant) {
                 Text("AUDIO ONLY", Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                     style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
