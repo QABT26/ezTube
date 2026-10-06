@@ -52,7 +52,7 @@ class NewPipeYouTubeSource : YouTubeSource {
             .toList()
     }
 
-    suspend fun trending(topic: String = "Music", language: String = "Vietnamese"): List<MediaSummary> {
+    override suspend fun trending(topic: String, language: String): List<MediaSummary> {
         val service = ServiceList.YouTube
 
         // YouTube removed the old general Trending page in July 2025.
