@@ -48,6 +48,7 @@ import com.qabt.eztube.playback.SystemTransportBridge
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.ChannelSummary
 import com.qabt.eztube.youtube.PlaylistSummary
+import com.qabt.eztube.youtube.PlaylistDetail
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -93,6 +94,9 @@ fun EzTubeApp() {
     var channelDetail by remember { mutableStateOf<ChannelSummary?>(null) }
     var channelLoading by remember { mutableStateOf(false) }
     var channelError by remember { mutableStateOf<String?>(null) }
+    var playlistDetail by remember { mutableStateOf<PlaylistDetail?>(null) }
+    var playlistLoading by remember { mutableStateOf(false) }
+    var playlistError by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -128,6 +132,18 @@ fun EzTubeApp() {
                 .onSuccess { channelDetail = it }
                 .onFailure { channelError = it.message ?: "Unable to load channel" }
             channelLoading = false
+        }
+    }
+
+    fun openPlaylist(playlistUrl: String) {
+        if (playlistLoading) return
+        scope.launch {
+            playlistLoading = true
+            playlistError = null
+            runCatching { withContext(Dispatchers.IO) { source.playlist(playlistUrl) } }
+                .onSuccess { playlistDetail = it }
+                .onFailure { playlistError = it.message ?: "Unable to load playlist" }
+            playlistLoading = false
         }
     }
 
@@ -241,7 +257,32 @@ fun EzTubeApp() {
     }
 
     MaterialTheme {
-        if (channelDetail != null || channelLoading || channelError != null) {
+        if (playlistDetail != null || playlistLoading || playlistError != null) {
+            PlaylistDetailScreen(
+                playlist = playlistDetail,
+                loading = playlistLoading,
+                error = playlistError,
+                resolvingId = resolvingId,
+                onBack = {
+                    playlistDetail = null
+                    playlistError = null
+                    playlistLoading = false
+                },
+                onPlaylist = { openPlaylist(it.url) },
+                onPlay = { media, items ->
+                    queue = items
+                    queueIndex = items.indexOfFirst { it.id == media.id }
+                    playMedia(media)
+                },
+                onPlayAll = { items ->
+                    if (items.isNotEmpty()) {
+                        queue = items
+                        queueIndex = 0
+                        playMedia(items.first())
+                    }
+                }
+            )
+        } else if (channelDetail != null || channelLoading || channelError != null) {
             ChannelScreen(
                 channel = channelDetail,
                 loading = channelLoading,
@@ -832,8 +873,8 @@ private fun LibraryScreen(
 }
 
 @Composable
-private fun PlaylistRow(playlist: PlaylistSummary) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun PlaylistRow(playlist: PlaylistSummary, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         AsyncImage(playlist.thumbnailUrl, null, Modifier.size(width = 104.dp, height = 60.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentScale = ContentScale.Crop)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
@@ -845,12 +886,55 @@ private fun PlaylistRow(playlist: PlaylistSummary) {
 }
 
 @Composable
+private fun PlaylistDetailScreen(
+    playlist: PlaylistDetail?,
+    loading: Boolean,
+    error: String?,
+    resolvingId: String?,
+    onBack: () -> Unit,
+    onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
+    onPlayAll: (List<MediaSummary>) -> Unit
+) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
+            Text(playlist?.title ?: "Playlist", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        else if (error != null) Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { Text(error, color = MaterialTheme.colorScheme.error) }
+        else if (playlist != null) LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 18.dp)) {
+            item {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AsyncImage(playlist.thumbnailUrl, null, Modifier.size(96.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Crop)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(playlist.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        if (playlist.uploaderName.isNotBlank()) Text(playlist.uploaderName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(playlist.items.size.toString() + " videos", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = { onPlayAll(playlist.items) }, enabled = playlist.items.isNotEmpty() && resolvingId == null) {
+                            Icon(Icons.Outlined.PlayArrow, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Play all")
+                        }
+                    }
+                }
+            }
+            items(playlist.items, key = { "pl-item-" + it.id }) { media ->
+                SearchResult(media, resolvingId == media.id, resolvingId == null, onChannel = {}, onPlay = { onPlay(media, playlist.items) })
+            }
+        }
+    }
+}
+
+@Composable
 private fun ChannelScreen(
     channel: ChannelSummary?,
     loading: Boolean,
     error: String?,
     resolvingId: String?,
     onBack: () -> Unit,
+    onPlaylist: (PlaylistSummary) -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit
 ) {
     var section by remember(channel?.url) { mutableStateOf("Videos") }
@@ -930,7 +1014,7 @@ private fun ChannelScreen(
                     if (channel.playlists.isEmpty()) {
                         item { Text("No playlists found.", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     } else {
-                        items(channel.playlists, key = { "playlist-" + it.url }) { PlaylistRow(it) }
+                        items(channel.playlists, key = { "playlist-" + it.url }) { PlaylistRow(it, onClick = { onPlaylist(it) }) }
                     }
                 }
             }
