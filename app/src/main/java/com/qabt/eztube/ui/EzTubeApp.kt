@@ -821,7 +821,7 @@ private fun MiniPlayer(
                     style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                     softWrap = false,
-                    overflow = TextOverflow.StartEllipsis,
+                    overflow = TextOverflow.Clip,
                     modifier = Modifier.basicMarquee(
                         iterations = Int.MAX_VALUE,
                         repeatDelayMillis = 1_200,
