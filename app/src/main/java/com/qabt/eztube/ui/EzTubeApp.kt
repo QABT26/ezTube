@@ -1281,45 +1281,33 @@ private fun FullPlayer(
 
             Row(
                 Modifier.fillMaxWidth().padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 listOf(0.5f, 1f, 1.25f, 1.5f, 2f).forEach { speed ->
-                    FilterChip(
+                    CompactPresetButton(
+                        text = when (speed) {
+                            0.5f -> "0.5×"
+                            1f -> "1×"
+                            1.25f -> "1.25×"
+                            1.5f -> "1.5×"
+                            else -> "2×"
+                        },
                         selected = playbackSpeed == speed,
                         onClick = { onSpeed(speed) },
-                        label = {
-                            Text(
-                                when (speed) {
-                                    0.5f -> "0.5×"
-                                    1f -> "1×"
-                                    1.25f -> "1.25×"
-                                    1.5f -> "1.5×"
-                                    else -> "2×"
-                                },
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                        },
                         modifier = Modifier.weight(1f)
                     )
                 }
             }
             Row(
-                Modifier.fillMaxWidth().padding(top = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 listOf(null, 15, 30, 60, 120).forEach { minutes ->
-                    FilterChip(
+                    CompactPresetButton(
+                        text = minutes?.let { "${it}m" } ?: "Off",
                         selected = sleepMinutes == minutes,
                         onClick = { onSleep(minutes) },
-                        label = {
-                            Text(
-                                minutes?.let { "${it}m" } ?: "Off",
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                        },
-                        modifier = Modifier.weight(1f).height(44.dp)
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
@@ -1439,6 +1427,25 @@ private fun FullPlayer(
 private fun formatTime(ms: Long): String {
     val total = (ms / 1000).coerceAtLeast(0)
     return "%d:%02d".format(total / 60, total % 60)
+}
+
+@Composable
+private fun CompactPresetButton(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.height(40.dp).clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+        border = if (selected) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(text, style = MaterialTheme.typography.labelLarge, maxLines = 1, softWrap = false)
+        }
+    }
 }
 
 @Composable
