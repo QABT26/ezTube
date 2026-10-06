@@ -583,7 +583,13 @@ private fun SearchScreen(
 }
 
 @Composable
-private fun SearchResult(media: MediaSummary, resolving: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun SearchResult(
+    media: MediaSummary,
+    resolving: Boolean,
+    enabled: Boolean,
+    onChannel: () -> Unit,
+    onPlay: () -> Unit
+) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = enabled, onClick = onPlay)
             .padding(7.dp), verticalAlignment = Alignment.CenterVertically
