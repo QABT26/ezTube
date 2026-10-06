@@ -454,6 +454,7 @@ fun EzTubeApp() {
                 onQuality = { quality = it; playbackPrefs.saveQuality(it) }, playbackSpeed = playbackSpeed,
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 compatibilityFallback = compatibilityFallback, isBuffering = isBuffering, playerError = playerError,
+                onRetry = { playerError = null; nowPlaying?.let { playMedia(it, controller?.currentPosition ?: 0L) } },
                 sleepMinutes = sleepMinutes, onSleep = { sleepMinutes = it }, autoplay = autoplay,
                 onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) }, nextMode = nextMode,
                 onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) }, repeatMode = repeatMode,
@@ -1298,6 +1299,7 @@ private fun FullPlayer(
     compatibilityFallback: Boolean,
     isBuffering: Boolean,
     playerError: String?,
+    onRetry: () -> Unit,
     sleepMinutes: Int?,
     onSleep: (Int?) -> Unit,
     autoplay: Boolean,
@@ -1406,10 +1408,7 @@ private fun FullPlayer(
                 ) {
                     Text(it, color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    TextButton(onClick = {
-                        playerError = null
-                        nowPlaying?.let { playMedia(it, controller?.currentPosition ?: 0L) }
-                    }) { Text("Retry") }
+                    TextButton(onClick = onRetry) { Text("Retry") }
                 }
             }
 
