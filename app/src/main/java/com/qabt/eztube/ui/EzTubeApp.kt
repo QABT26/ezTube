@@ -444,8 +444,18 @@ fun EzTubeApp() {
                 onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) }, repeatMode = repeatMode,
                 onRepeatMode = { repeatMode = it; playbackPrefs.saveRepeatMode(it.ordinal) },
                 hasPrevious = queueIndex > 0, hasNext = queueIndex >= 0 && queueIndex < queue.lastIndex,
-                onPrevious = { if (queueIndex > 0) { queueIndex -= 1; playMedia(queue[queueIndex]) } },
-                onNext = { if (queueIndex >= 0 && queueIndex < queue.lastIndex) { queueIndex += 1; playMedia(queue[queueIndex]) } },
+                onPrevious = {
+                    controller?.let { mc ->
+                        if (mc.hasPreviousMediaItem()) mc.seekToPreviousMediaItem()
+                        else if (queueIndex > 0) { queueIndex -= 1; playMedia(queue[queueIndex]) }
+                    }
+                },
+                onNext = {
+                    controller?.let { mc ->
+                        if (mc.hasNextMediaItem()) mc.seekToNextMediaItem()
+                        else if (queueIndex >= 0 && queueIndex < queue.lastIndex) { queueIndex += 1; playMedia(queue[queueIndex]) }
+                    }
+                },
                 isFavorite = favorites.any { it.mediaId == nowPlaying?.id }, onChannel = { openChannel(nowPlaying?.channelUrl) },
                 onFavorite = { nowPlaying?.let { media -> scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } } },
                 onToggle = { if (controller?.currentMediaItem == null) nowPlaying?.let { playMedia(it, resumePositionMs) } else togglePlayback() },
