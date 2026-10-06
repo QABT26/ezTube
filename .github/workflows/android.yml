@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feat/newpipe-media3-v1
+      - feat/beta-v2
   pull_request:
     branches:
       - main
