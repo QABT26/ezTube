@@ -9,5 +9,6 @@ data class FavoriteEntry(
     val title: String,
     val channel: String,
     val thumbnailUrl: String?,
+    val channelUrl: String?,
     val addedAt: Long
 )
