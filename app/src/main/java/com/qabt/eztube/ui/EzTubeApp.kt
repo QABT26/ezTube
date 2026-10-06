@@ -341,7 +341,7 @@ fun EzTubeApp() {
         Box(Modifier.fillMaxSize()) {
         if (playlistDetail != null || playlistLoading || playlistError != null) {
             Scaffold(bottomBar = {
-                nowPlaying?.let { media -> MiniPlayer(media, isPlaying, { showPlayer = true }) {
+                nowPlaying?.let { media -> MiniPlayer(media, isPlaying, { channelDetail = null; playlistDetail = null; showPlayer = true }) {
                     if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs) else togglePlayback()
                 } }
             }) { detailPadding ->
@@ -482,7 +482,7 @@ fun EzTubeApp() {
                             MiniPlayer(
                                 media = media,
                                 isPlaying = isPlaying,
-                                onOpen = { showPlayer = true },
+                                onOpen = { channelDetail = null; playlistDetail = null; showPlayer = true },
                                 onToggle = {
                                     if (controller?.currentMediaItem == null) {
                                         nowPlaying?.let { playMedia(it, resumePositionMs) }
