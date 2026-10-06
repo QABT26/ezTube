@@ -2,6 +2,7 @@ package com.qabt.eztube.ui
 
 import android.content.ComponentName
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -256,6 +257,27 @@ fun EzTubeApp() {
                 homeSuggestions = items.filterNot { it.id in played }.take(12)
             }
         homeLoading = false
+    }
+
+    BackHandler(
+        enabled = playlistDetail != null || playlistLoading || playlistError != null ||
+            channelDetail != null || channelLoading || channelError != null ||
+            showSettings || showPlayer
+    ) {
+        when {
+            playlistDetail != null || playlistLoading || playlistError != null -> {
+                playlistDetail = null
+                playlistError = null
+                playlistLoading = false
+            }
+            channelDetail != null || channelLoading || channelError != null -> {
+                channelDetail = null
+                channelError = null
+                channelLoading = false
+            }
+            showSettings -> showSettings = false
+            showPlayer -> showPlayer = false
+        }
     }
 
     MaterialTheme {
