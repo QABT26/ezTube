@@ -4,6 +4,8 @@ import android.content.ComponentName
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -814,8 +816,19 @@ private fun MiniPlayer(
                 contentScale = ContentScale.Crop)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(media.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = media.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.StartEllipsis,
+                    modifier = Modifier.basicMarquee(
+                        iterations = Int.MAX_VALUE,
+                        repeatDelayMillis = 1_200,
+                        initialDelayMillis = 900,
+                        spacing = MarqueeSpacing(32.dp)
+                    )
+                )
                 Text(media.channel, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
