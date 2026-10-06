@@ -251,13 +251,14 @@ fun EzTubeApp() {
     }
 
     LaunchedEffect(controller, autoplay, repeatMode) {
+        val media3RepeatMode = when (repeatMode) {
+            RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+            RepeatMode.ALL -> Player.REPEAT_MODE_ALL
+        }
         controller?.apply {
             setPauseAtEndOfMediaItems(!autoplay)
-            repeatMode = when (repeatMode) {
-                RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-                RepeatMode.ALL -> Player.REPEAT_MODE_ALL
-            }
+            repeatMode = media3RepeatMode
         }
     }
 
