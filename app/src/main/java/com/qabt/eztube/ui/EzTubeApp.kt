@@ -1360,14 +1360,6 @@ private fun FullPlayer(
 
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip(modifier = Modifier.weight(1f), selected = nextMode == NextMode.LIST,
-                    onClick = { onNextMode(NextMode.LIST) }, label = { Text("Next: List") })
-                FilterChip(modifier = Modifier.weight(1f), selected = nextMode == NextMode.RECOMMENDED,
-                    onClick = { onNextMode(NextMode.RECOMMENDED) }, label = { Text("Next: Mix") })
-            }
-
-            Spacer(Modifier.height(6.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 AudioQuality.entries.forEach { option ->
                     FilterChip(
                         modifier = Modifier.weight(1f),
@@ -1450,6 +1442,22 @@ private fun FullPlayer(
                     label = {
                         Text("Auto next", modifier = Modifier.fillMaxWidth(),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
+                    },
+                    modifier = Modifier.weight(1f).height(32.dp)
+                )
+                FilterChip(
+                    selected = nextMode == NextMode.RECOMMENDED,
+                    onClick = {
+                        onNextMode(if (nextMode == NextMode.LIST) NextMode.RECOMMENDED else NextMode.LIST)
+                    },
+                    leadingIcon = { Icon(Icons.Outlined.Shuffle, null, Modifier.size(18.dp)) },
+                    label = {
+                        Text(
+                            if (nextMode == NextMode.LIST) "Next: List" else "Next: Mix",
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            maxLines = 1
+                        )
                     },
                     modifier = Modifier.weight(1f).height(32.dp)
                 )
