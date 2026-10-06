@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -263,6 +264,7 @@ fun EzTubeApp() {
                 loading = playlistLoading,
                 error = playlistError,
                 resolvingId = resolvingId,
+                nowPlayingId = nowPlaying?.id,
                 onBack = {
                     playlistDetail = null
                     playlistError = null
@@ -891,10 +893,20 @@ private fun PlaylistDetailScreen(
     loading: Boolean,
     error: String?,
     resolvingId: String?,
+    nowPlayingId: String?,
     onBack: () -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
     onPlayAll: (List<MediaSummary>) -> Unit
 ) {
+    val listState = rememberLazyListState()
+    val playingIndex = playlist?.items?.indexOfFirst { it.id == nowPlayingId } ?: -1
+    LaunchedEffect(nowPlayingId, playlist?.url) {
+        if (playingIndex >= 0) {
+            // Header is item 0. Keep the active row around the visual center.
+            listState.animateScrollToItem((playingIndex + 1).coerceAtLeast(0), scrollOffset = -280)
+        }
+    }
+
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
@@ -902,7 +914,7 @@ private fun PlaylistDetailScreen(
         }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         else if (error != null) Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { Text(error, color = MaterialTheme.colorScheme.error) }
-        else if (playlist != null) LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 18.dp)) {
+        else if (playlist != null) LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 18.dp)) {
             item {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     AsyncImage(playlist.thumbnailUrl, null, Modifier.size(96.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Crop)
@@ -921,7 +933,32 @@ private fun PlaylistDetailScreen(
                 }
             }
             items(playlist.items, key = { "pl-item-" + it.id }) { media ->
-                SearchResult(media, resolvingId == media.id, resolvingId == null, onChannel = {}, onPlay = { onPlay(media, playlist.items) })
+                val isCurrent = media.id == nowPlayingId
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        if (isCurrent) {
+                            Icon(
+                                Icons.Outlined.GraphicEq,
+                                "Now playing",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 8.dp).size(20.dp)
+                            )
+                        }
+                        Box(Modifier.weight(1f)) {
+                            SearchResult(
+                                media,
+                                resolvingId == media.id,
+                                resolvingId == null,
+                                onChannel = {},
+                                onPlay = { onPlay(media, playlist.items) }
+                            )
+                        }
+                    }
+                }
             }
         }
     }
