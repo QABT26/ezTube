@@ -53,7 +53,6 @@ import com.qabt.eztube.playback.AudioQuality
 import com.qabt.eztube.playback.AudioStreamSelector
 import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
-import com.qabt.eztube.playback.SystemTransportBridge
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.ChannelSummary
 import com.qabt.eztube.youtube.PlaylistSummary
@@ -101,7 +100,6 @@ fun EzTubeApp() {
     var resolvingId by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showPlayer by remember { mutableStateOf(false) }
-    var playbackEndedToken by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var recentSearches by remember { mutableStateOf(playbackPrefs.loadRecentSearches()) }
@@ -149,7 +147,6 @@ fun EzTubeApp() {
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         isBuffering = state == Player.STATE_BUFFERING
-                        if (state == Player.STATE_ENDED) playbackEndedToken += 1
                     }
                 })
             }.onFailure { errorMessage = it.message ?: "Playback service unavailable" }
@@ -253,23 +250,13 @@ fun EzTubeApp() {
         }
     }
 
-    LaunchedEffect(playbackEndedToken) {
-        if (playbackEndedToken <= 0) return@LaunchedEffect
-        when (repeatMode) {
-            RepeatMode.ONE -> nowPlaying?.let { playMedia(it) }
-            RepeatMode.ALL -> {
-                if (queue.isNotEmpty()) {
-                    queueIndex = if (queueIndex >= 0 && queueIndex < queue.lastIndex) queueIndex + 1 else 0
-                    playMedia(queue[queueIndex])
-                } else {
-                    nowPlaying?.let { playMedia(it) }
-                }
-            }
-            RepeatMode.OFF -> {
-                if (autoplay && queueIndex >= 0 && queueIndex < queue.lastIndex) {
-                    queueIndex += 1
-                    playMedia(queue[queueIndex])
-                }
+    LaunchedEffect(controller, autoplay, repeatMode) {
+        controller?.apply {
+            setPauseAtEndOfMediaItems(!autoplay)
+            repeatMode = when (repeatMode) {
+                RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+                RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+                RepeatMode.ALL -> Player.REPEAT_MODE_ALL
             }
         }
     }
