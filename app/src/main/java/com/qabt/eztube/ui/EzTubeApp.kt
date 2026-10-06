@@ -441,7 +441,8 @@ fun EzTubeApp() {
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 compatibilityFallback = compatibilityFallback, isBuffering = isBuffering, playerError = playerError,
                 sleepMinutes = sleepMinutes, onSleep = { sleepMinutes = it }, autoplay = autoplay,
-                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) }, repeatMode = repeatMode,
+                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) }, nextMode = nextMode,
+                onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) }, repeatMode = repeatMode,
                 onRepeatMode = { repeatMode = it; playbackPrefs.saveRepeatMode(it.ordinal) },
                 hasPrevious = queueIndex > 0, hasNext = queueIndex >= 0 && queueIndex < queue.lastIndex,
                 onPrevious = {
@@ -469,8 +470,6 @@ fun EzTubeApp() {
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 autoplay = autoplay,
                 onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) },
-                nextMode = nextMode,
-                onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) },
                 trendingTopic = trendingTopic,
                 onTrendingTopic = { trendingTopic = it; playbackPrefs.saveTrendingTopic(it) },
                 trendingLanguage = trendingLanguage,
