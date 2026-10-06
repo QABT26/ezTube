@@ -47,4 +47,10 @@ class PlaybackPreferences(context: Context) {
     }
 
     fun loadAutoplay(): Boolean = prefs.getBoolean("autoplay", true)
+
+    fun saveRepeatMode(mode: Int) {
+        prefs.edit().putInt("repeat_mode", mode.coerceIn(0, 2)).apply()
+    }
+
+    fun loadRepeatMode(): Int = prefs.getInt("repeat_mode", 0).coerceIn(0, 2)
 }
