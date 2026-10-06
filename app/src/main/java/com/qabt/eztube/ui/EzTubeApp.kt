@@ -47,6 +47,7 @@ import com.qabt.eztube.playback.PlaybackPreferences
 import com.qabt.eztube.playback.SystemTransportBridge
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.ChannelSummary
+import com.qabt.eztube.youtube.PlaylistSummary
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -768,8 +769,8 @@ private fun LibraryScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Recently played", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("${recent.size} items", style = MaterialTheme.typography.bodySmall,
+                Text("History", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Recent listening · ${recent.size} items", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (recent.isNotEmpty()) {
@@ -819,7 +820,27 @@ private fun LibraryScreen(
                     }
                 }
             }
+            item {
+                Column(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 10.dp)) {
+                    Text("Downloads", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Offline downloads will appear here when the download engine is enabled.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun PlaylistRow(playlist: PlaylistSummary) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        AsyncImage(playlist.thumbnailUrl, null, Modifier.size(width = 104.dp, height = 60.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentScale = ContentScale.Crop)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(playlist.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (playlist.streamCount > 0) Text(playlist.streamCount.toString() + " videos", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.Outlined.PlaylistPlay, null)
     }
 }
 
@@ -874,6 +895,16 @@ private fun ChannelScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
+                    }
+                }
+                if (channel.playlists.isNotEmpty()) {
+                    item {
+                        Text("Playlists", style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                    }
+                    items(channel.playlists, key = { "playlist-" + it.url }) { playlist ->
+                        PlaylistRow(playlist)
                     }
                 }
                 item {
