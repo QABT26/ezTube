@@ -172,7 +172,7 @@ fun EzTubeApp() {
         controller?.let { if (it.isPlaying) it.pause() else it.play() }
     }
 
-    fun playMedia(media: MediaSummary, startPositionMs: Long = 0L, installQueue: Boolean = true) {
+    fun playMedia(media: MediaSummary, startPositionMs: Long = 0L) {
         if (resolvingId != null) return
         scope.launch {
             resolvingId = media.id
@@ -189,35 +189,13 @@ fun EzTubeApp() {
                         .setArtist(media.channel)
                         .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
                         .build()
-                    val playableItem = MediaItem.Builder()
-                        .setMediaId(media.id)
-                        .setUri(stream.url)
-                        .setMediaMetadata(metadata)
-                        .build()
-                    if (installQueue && queue.isNotEmpty() && queueIndex >= 0) {
-                        // Keep a real Media3 queue in the service. The current item has the
-                        // resolved stream URL; neighbours are placeholders handled by the UI
-                        // transport bridge while the app process is alive.
-                        val mediaItems = queue.mapIndexed { index, item ->
-                            if (index == queueIndex) playableItem
-                            else MediaItem.Builder()
-                                .setMediaId(item.id)
-                                .setMediaMetadata(
-                                    MediaMetadata.Builder()
-                                        .setTitle(item.title)
-                                        .setArtist(item.channel)
-                                        .apply { item.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
-                                        .build()
-                                )
-                                .build()
-                        }
-                        setMediaItems(mediaItems, queueIndex, startPositionMs)
-                    } else if (currentMediaItem?.mediaId == media.id) {
-                        replaceMediaItem(currentMediaItemIndex.coerceAtLeast(0), playableItem)
-                        seekTo(currentMediaItemIndex.coerceAtLeast(0), startPositionMs)
-                    } else {
-                        setMediaItem(playableItem)
-                    }
+                    setMediaItem(
+                        MediaItem.Builder()
+                            .setMediaId(media.id)
+                            .setUri(stream.url)
+                            .setMediaMetadata(metadata)
+                            .build()
+                    )
                     prepare()
                     if (startPositionMs > 0) seekTo(startPositionMs)
                     setPlaybackSpeed(playbackSpeed)
@@ -237,8 +215,7 @@ fun EzTubeApp() {
             scope.launch {
                 if (queueIndex > 0) {
                     queueIndex -= 1
-                    controller?.seekToPreviousMediaItem()
-                    playMedia(queue[queueIndex], installQueue = false)
+                    playMedia(queue[queueIndex])
                 }
             }
         }
@@ -246,14 +223,11 @@ fun EzTubeApp() {
             scope.launch {
                 if (queueIndex >= 0 && queueIndex < queue.lastIndex) {
                     queueIndex += 1
-                    controller?.seekToNextMediaItem()
-                    playMedia(queue[queueIndex], installQueue = false)
+                    playMedia(queue[queueIndex])
                 }
             }
         }
-        onDispose {
-            SystemTransportBridge.clear()
-        }
+        onDispose { SystemTransportBridge.clear() }
     }
 
     LaunchedEffect(playbackEndedToken) {
