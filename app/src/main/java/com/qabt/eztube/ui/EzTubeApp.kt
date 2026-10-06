@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.foundation.layout.*
@@ -259,15 +260,20 @@ fun EzTubeApp() {
     }
 
     LaunchedEffect(recent.firstOrNull()?.mediaId, favorites.firstOrNull()?.mediaId) {
-        val seed = favorites.firstOrNull()?.channel?.takeIf { it.isNotBlank() }
-            ?: recent.firstOrNull()?.channel?.takeIf { it.isNotBlank() }
-            ?: return@LaunchedEffect
+        val seeds = (favorites.map { it.channel } + recent.map { it.channel })
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(3)
+        if (seeds.isEmpty()) return@LaunchedEffect
         homeLoading = true
-        runCatching { withContext(Dispatchers.IO) { source.search(seed) } }
-            .onSuccess { items ->
-                val played = recent.mapTo(mutableSetOf()) { it.mediaId }
-                homeSuggestions = items.filterNot { it.id in played }.take(12)
-            }
+        val played = recent.mapTo(mutableSetOf()) { it.mediaId }
+        val recommended = withContext(Dispatchers.IO) {
+            seeds.flatMap { seed -> runCatching { source.search(seed) }.getOrDefault(emptyList()) }
+        }
+        homeSuggestions = recommended
+            .distinctBy { it.id }
+            .filterNot { it.id in played }
+            .take(18)
         homeLoading = false
     }
 
@@ -653,7 +659,7 @@ private fun SearchScreen(
         } else {
             LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(results, key = { it.id }) { media ->
+                itemsIndexed(results, key = { index, media -> "search-" + index + "-" + media.id }) { _, media ->
                     SearchResult(
                         media = media,
                         resolving = resolvingId == media.id,
@@ -764,7 +770,7 @@ private fun HomeScreen(
         if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         if (suggestions.isNotEmpty()) {
             item { Text("Recommended", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-            items(suggestions, key = { "home-s-" + it.id }) { media ->
+            itemsIndexed(suggestions, key = { index, media -> "home-s-" + index + "-" + media.id }) { _, media ->
                 CompactMediaRow(media.title, media.channel, media.thumbnailUrl,
                     resolvingId == media.id) { onPlay(media, suggestions) }
             }
