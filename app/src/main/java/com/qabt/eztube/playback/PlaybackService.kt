@@ -77,11 +77,11 @@ class PlaybackService : MediaSessionService() {
                         .setAvailablePlayerCommands(playerCommands)
 
                     val previousButton = CommandButton.Builder(CommandButton.ICON_PREVIOUS)
-                        .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
+                        .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
                         .setSlots(CommandButton.SLOT_BACK)
                         .build()
                     val nextButton = CommandButton.Builder(CommandButton.ICON_NEXT)
-                        .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
+                        .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
                         .setSlots(CommandButton.SLOT_FORWARD)
                         .build()
                     result.setMediaButtonPreferences(listOf(previousButton, nextButton))
