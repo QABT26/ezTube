@@ -1287,8 +1287,20 @@ private fun FullPlayer(
                     FilterChip(
                         selected = playbackSpeed == speed,
                         onClick = { onSpeed(speed) },
-                        label = { Text("${speed}×", modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
-                        modifier = Modifier.weight(1f).height(48.dp)
+                        label = {
+                            Text(
+                                when (speed) {
+                                    0.5f -> "0.5×"
+                                    1f -> "1×"
+                                    1.25f -> "1.25×"
+                                    1.5f -> "1.5×"
+                                    else -> "2×"
+                                },
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        },
+                        modifier = Modifier.weight(1f).height(44.dp)
                     )
                 }
             }
@@ -1303,12 +1315,11 @@ private fun FullPlayer(
                         label = {
                             Text(
                                 minutes?.let { "${it}m" } ?: "Off",
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                maxLines = 1
+                                maxLines = 1,
+                                softWrap = false
                             )
                         },
-                        modifier = Modifier.weight(1f).height(48.dp)
+                        modifier = Modifier.weight(1f).height(44.dp)
                     )
                 }
             }
