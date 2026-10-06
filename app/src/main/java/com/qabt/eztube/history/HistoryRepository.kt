@@ -13,6 +13,7 @@ class HistoryRepository(private val dao: HistoryDao) {
                 title = media.title,
                 channel = media.channel,
                 thumbnailUrl = media.thumbnailUrl,
+                channelUrl = media.channelUrl,
                 playedAt = System.currentTimeMillis()
             )
         )
@@ -26,5 +27,6 @@ fun HistoryEntry.toMediaSummary() = MediaSummary(
     id = mediaId,
     title = title,
     channel = channel,
-    thumbnailUrl = thumbnailUrl
+    thumbnailUrl = thumbnailUrl,
+    channelUrl = channelUrl
 )
