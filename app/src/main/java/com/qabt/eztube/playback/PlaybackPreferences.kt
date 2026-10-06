@@ -12,6 +12,7 @@ class PlaybackPreferences(context: Context) {
             .putString("title", media.title)
             .putString("channel", media.channel)
             .putString("thumbnail", media.thumbnailUrl)
+            .putString("channel_url", media.channelUrl)
             .putLong("position", positionMs.coerceAtLeast(0L))
             .apply()
     }
@@ -22,7 +23,8 @@ class PlaybackPreferences(context: Context) {
             id = id,
             title = prefs.getString("title", "").orEmpty(),
             channel = prefs.getString("channel", "").orEmpty(),
-            thumbnailUrl = prefs.getString("thumbnail", null)
+            thumbnailUrl = prefs.getString("thumbnail", null),
+            channelUrl = prefs.getString("channel_url", null)
         ) to prefs.getLong("position", 0L)
     }
 
