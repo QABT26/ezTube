@@ -851,98 +851,81 @@ private fun LibraryScreen(
     onDelete: (HistoryEntry) -> Unit,
     onClear: () -> Unit
 ) {
-    Column(modifier.padding(horizontal = 14.dp)) {
-        if (favorites.isNotEmpty()) {
-            Text("Favorites", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 220.dp)) {
-                items(favorites, key = { "fav-" + it.mediaId }) { entry ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                            .clickable(enabled = resolvingId == null) { onPlayFavorite(entry) }
-                            .padding(7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AsyncImage(entry.thumbnailUrl, null,
-                            Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)),
-                            contentScale = ContentScale.Crop)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(entry.title, style = MaterialTheme.typography.titleSmall,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(entry.channel, style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                        }
-                        IconButton(onClick = { onRemoveFavorite(entry) }) {
-                            Icon(Icons.Outlined.Favorite, "Remove favorite")
-                        }
+    LazyColumn(
+        modifier = modifier.padding(horizontal = 14.dp),
+        contentPadding = PaddingValues(vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        item { Text("Favorites", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+        if (favorites.isEmpty()) {
+            item { Text("Favorite tracks will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+        } else {
+            items(favorites, key = { "fav-" + it.mediaId }) { entry ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        .clickable(enabled = resolvingId == null) { onPlayFavorite(entry) }.padding(7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AsyncImage(entry.thumbnailUrl, null, Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(entry.channel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                     }
+                    IconButton(onClick = { onRemoveFavorite(entry) }) { Icon(Icons.Outlined.Favorite, "Remove favorite") }
                 }
             }
         }
-        Row(
-            Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("History", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("Recent listening · ${recent.size} items", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (recent.isNotEmpty()) {
-                TextButton(onClick = onClear) { Text("Clear all") }
-            }
+
+        item {
+            Spacer(Modifier.height(10.dp))
+            Text("Recent", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("Jump back into your latest listening", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (recent.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Songs you play will appear here.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            item { Text("Nothing played yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
         } else {
-            LazyColumn(
-                Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                items(recent, key = { it.mediaId }) { entry ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                            .clickable(enabled = resolvingId == null) { onPlay(entry) }
-                            .padding(7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AsyncImage(
-                            entry.thumbnailUrl, null,
-                            Modifier.size(58.dp).clip(RoundedCornerShape(9.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                            contentScale = ContentScale.Crop
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(entry.title, style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold, maxLines = 2,
-                                overflow = TextOverflow.Ellipsis)
-                            Text(entry.channel, style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        if (resolvingId == entry.mediaId) {
-                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            IconButton(onClick = { onDelete(entry) }) {
-                                Icon(Icons.Outlined.Close, "Remove from history")
-                            }
-                        }
-                    }
-                }
-                item {
-                    Column(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 10.dp)) {
-                        Text("Downloads", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(4.dp))
-                        Text("Offline downloads will appear here when the download engine is enabled.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
+            items(recent.take(5), key = { "recent-" + it.mediaId }) { entry ->
+                CompactMediaRow(entry.title, entry.channel, entry.thumbnailUrl, resolvingId == entry.mediaId) { onPlay(entry) }
             }
+        }
+
+        item {
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("History", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(recent.size.toString() + " items", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (recent.isNotEmpty()) TextButton(onClick = onClear) { Text("Clear all") }
+            }
+        }
+        items(recent, key = { "history-" + it.mediaId }) { entry ->
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                    .clickable(enabled = resolvingId == null) { onPlay(entry) }.padding(7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AsyncImage(entry.thumbnailUrl, null,
+                    Modifier.size(58.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentScale = ContentScale.Crop)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(entry.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(entry.channel, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (resolvingId == entry.mediaId) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                else IconButton(onClick = { onDelete(entry) }) { Icon(Icons.Outlined.Close, "Remove from history") }
+            }
+        }
+
+        item {
+            Spacer(Modifier.height(12.dp))
+            Text("Downloads", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("Offline downloads are not enabled in this beta.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
