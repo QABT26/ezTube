@@ -252,13 +252,14 @@ fun EzTubeApp() {
         playMedia(media, startPositionMs)
     }
 
-    LaunchedEffect(controller, autoplay, repeatMode) {
-        val media3RepeatMode = when (repeatMode) {
-            RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-            RepeatMode.ALL -> Player.REPEAT_MODE_ALL
+    LaunchedEffect(controller, repeatMode) {
+        // Repeat ONE is safe natively. Repeat ALL is owned by PlaybackQueueManager so it
+        // wraps the complete persisted logical queue, not only Media3's small resolved window.
+        controller?.repeatMode = if (repeatMode == RepeatMode.ONE) {
+            Player.REPEAT_MODE_ONE
+        } else {
+            Player.REPEAT_MODE_OFF
         }
-        controller?.repeatMode = media3RepeatMode
     }
 
     LaunchedEffect(Unit) {
