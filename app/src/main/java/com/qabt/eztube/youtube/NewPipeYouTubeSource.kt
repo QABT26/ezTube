@@ -27,7 +27,9 @@ class NewPipeYouTubeSource : YouTubeSource {
                     title = item.name,
                     channel = item.uploaderName.orEmpty(),
                     thumbnailUrl = item.thumbnails.firstOrNull()?.url,
-                    channelUrl = item.uploaderUrl
+                    channelUrl = item.uploaderUrl,
+                    viewCount = item.viewCount,
+                    uploadDateText = item.textualUploadDate
                 )
             }
             .toList()
@@ -55,7 +57,9 @@ class NewPipeYouTubeSource : YouTubeSource {
                         title = item.name,
                         channel = item.uploaderName.orEmpty().ifBlank { info.name },
                         thumbnailUrl = item.thumbnails.firstOrNull()?.url,
-                        channelUrl = item.uploaderUrl ?: info.url
+                        channelUrl = item.uploaderUrl,
+                    viewCount = item.viewCount,
+                    uploadDateText = item.textualUploadDate ?: info.url
                     )
                 }
                 .toList()
