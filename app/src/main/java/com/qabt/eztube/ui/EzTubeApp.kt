@@ -137,6 +137,7 @@ fun EzTubeApp() {
                             ?: playbackPrefs.load()?.first?.takeIf { it.id == id }
                             ?: return
                         nowPlaying = media
+                        playerError = null
                         saved?.let { (items, _) ->
                             val index = items.indexOfFirst { it.id == id }
                             if (index >= 0) queueIndex = index
@@ -1406,8 +1407,8 @@ private fun FullPlayer(
                     Text(it, color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                     TextButton(onClick = {
-                        controller?.prepare()
-                        controller?.play()
+                        playerError = null
+                        nowPlaying?.let { playMedia(it, controller?.currentPosition ?: 0L) }
                     }) { Text("Retry") }
                 }
             }
