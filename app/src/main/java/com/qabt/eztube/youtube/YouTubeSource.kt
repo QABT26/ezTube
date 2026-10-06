@@ -6,7 +6,8 @@ data class MediaSummary(
     val id: String,
     val title: String,
     val channel: String,
-    val thumbnailUrl: String?
+    val thumbnailUrl: String?,
+    val channelUrl: String? = null
 )
 
 interface YouTubeSource {
