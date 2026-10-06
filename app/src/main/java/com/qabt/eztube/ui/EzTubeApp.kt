@@ -4,8 +4,10 @@ import android.content.ComponentName
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -237,7 +239,7 @@ fun EzTubeApp() {
                     }
                 },
                 onToggle = {
-                    if (controller?.currentMediaItem == null && resumePositionMs > 0) {
+                    if (controller?.currentMediaItem == null) {
                         nowPlaying?.let { playMedia(it, resumePositionMs) }
                     } else togglePlayback()
                 },
@@ -254,7 +256,7 @@ fun EzTubeApp() {
                                 isPlaying = isPlaying,
                                 onOpen = { showPlayer = true },
                                 onToggle = {
-                                    if (controller?.currentMediaItem == null && resumePositionMs > 0) {
+                                    if (controller?.currentMediaItem == null) {
                                         nowPlaying?.let { playMedia(it, resumePositionMs) }
                                     } else togglePlayback()
                                 }
@@ -298,8 +300,16 @@ fun EzTubeApp() {
                         recent = recent.take(10),
                         favorites = favorites.take(10),
                         resolvingId = resolvingId,
-                        onPlayRecent = { playMedia(it.toMediaSummary()) },
-                        onPlayFavorite = { playMedia(it.toMediaSummary()) },
+                        onPlayRecent = { entry ->
+                            queue = recent.take(10).map { it.toMediaSummary() }
+                            queueIndex = queue.indexOfFirst { it.id == entry.mediaId }
+                            playMedia(entry.toMediaSummary())
+                        },
+                        onPlayFavorite = { entry ->
+                            queue = favorites.take(10).map { it.toMediaSummary() }
+                            queueIndex = queue.indexOfFirst { it.id == entry.mediaId }
+                            playMedia(entry.toMediaSummary())
+                        },
                         onSearch = { selected = Tab.SEARCH }
                     )
                     Tab.LIBRARY -> LibraryScreen(
@@ -307,8 +317,16 @@ fun EzTubeApp() {
                         recent = recent,
                         favorites = favorites,
                         resolvingId = resolvingId,
-                        onPlay = { playMedia(it.toMediaSummary()) },
-                        onPlayFavorite = { playMedia(it.toMediaSummary()) },
+                        onPlay = { entry ->
+                            queue = recent.map { it.toMediaSummary() }
+                            queueIndex = queue.indexOfFirst { it.id == entry.mediaId }
+                            playMedia(entry.toMediaSummary())
+                        },
+                        onPlayFavorite = { entry ->
+                            queue = favorites.map { it.toMediaSummary() }
+                            queueIndex = queue.indexOfFirst { it.id == entry.mediaId }
+                            playMedia(entry.toMediaSummary())
+                        },
                         onRemoveFavorite = { entry -> scope.launch(Dispatchers.IO) { favoritesRepo.remove(entry.mediaId) } },
                         onDelete = { entry -> scope.launch(Dispatchers.IO) { history.delete(entry.mediaId) } },
                         onClear = { scope.launch(Dispatchers.IO) { history.clear() } }
@@ -857,10 +875,18 @@ private fun FullPlayer(
                                 controller?.seekTo((duration * fraction).toLong())
                             }
                         }
-                        detectDragGestures(
-                            onDragStart = { seek(it.x) },
-                            onDrag = { change, _ -> seek(change.position.x) }
-                        )
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            seek(down.position.x)
+                            do {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull() ?: break
+                                if (change.positionChanged()) {
+                                    seek(change.position.x)
+                                    change.consume()
+                                }
+                            } while (!change.changedToUpIgnoreConsumed())
+                        }
                     },
                 contentAlignment = Alignment.Center
             ) {
