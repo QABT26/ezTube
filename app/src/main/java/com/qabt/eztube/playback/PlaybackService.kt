@@ -9,8 +9,6 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.MediaSession.ConnectionResult
 import androidx.media3.session.SessionResult
-import com.google.common.util.concurrent.Futures
-import com.google.common.util.concurrent.ListenableFuture
 
 class PlaybackService : MediaSessionService() {
     private var player: ExoPlayer? = null
@@ -49,31 +47,16 @@ class PlaybackService : MediaSessionService() {
                         .setAvailableSessionCommands(sessionCommands)
                         .setAvailablePlayerCommands(playerCommands)
 
-                    if (session.isMediaNotificationController(controller)) {
-                        val previousButton = CommandButton.Builder(CommandButton.ICON_PREVIOUS)
-                            .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
-                            .setSlots(CommandButton.SLOT_BACK)
-                            .build()
-                        val nextButton = CommandButton.Builder(CommandButton.ICON_NEXT)
-                            .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
-                            .setSlots(CommandButton.SLOT_FORWARD)
-                            .build()
-                        result.setMediaButtonPreferences(listOf(previousButton, nextButton))
-                    }
-
+                    val previousButton = CommandButton.Builder(CommandButton.ICON_PREVIOUS)
+                        .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
+                        .setSlots(CommandButton.SLOT_BACK)
+                        .build()
+                    val nextButton = CommandButton.Builder(CommandButton.ICON_NEXT)
+                        .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
+                        .setSlots(CommandButton.SLOT_FORWARD)
+                        .build()
+                    result.setMediaButtonPreferences(listOf(previousButton, nextButton))
                     return result.build()
-                }
-
-                override fun onSetMediaItems(
-                    mediaSession: MediaSession,
-                    controller: MediaSession.ControllerInfo,
-                    mediaItems: MutableList<androidx.media3.common.MediaItem>,
-                    startIndex: Int,
-                    startPositionMs: Long
-                ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
-                    return Futures.immediateFuture(
-                        MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, startPositionMs)
-                    )
                 }
 
                 override fun onPlayerCommandRequest(
