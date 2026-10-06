@@ -52,19 +52,20 @@ class NewPipeYouTubeSource : YouTubeSource {
             .toList()
     }
 
-    override suspend fun trending(): List<MediaSummary> {
+    suspend fun trending(topic: String = "Music", language: String = "Vietnamese"): List<MediaSummary> {
         val service = ServiceList.YouTube
 
         // YouTube removed the old general Trending page in July 2025.
         // Prefer the still-supported Music chart for this audio-first app, then
         // fall back through other supported kiosks instead of returning nothing.
-        val kioskIds = listOf(
-            "trending_music",
-            "trending_podcasts_episodes",
-            "trending_gaming",
-            "trending_movies_and_shows",
-            "live"
-        )
+        val preferred = when (topic) {
+            "Podcasts" -> "trending_podcasts_episodes"
+            "Gaming" -> "trending_gaming"
+            "Movies" -> "trending_movies_and_shows"
+            "Live" -> "live"
+            else -> "trending_music"
+        }
+        val kioskIds = listOf(preferred, "trending_music", "trending_podcasts_episodes", "trending_gaming", "trending_movies_and_shows", "live").distinct()
 
         for (kioskId in kioskIds) {
             val items = runCatching {
@@ -79,7 +80,12 @@ class NewPipeYouTubeSource : YouTubeSource {
                     .toList()
             }.getOrDefault(emptyList())
 
-            if (items.isNotEmpty()) return items
+            if (items.isNotEmpty()) {
+                if (language == "All") return items
+                val languageQuery = when (language) { "Vietnamese" -> "Việt Nam"; "English" -> "English"; "Korean" -> "Korean"; "Japanese" -> "Japanese"; else -> language }
+                val localized = runCatching { search("$languageQuery $topic trending") }.getOrDefault(emptyList())
+                return (localized + items).distinctBy { it.id }.take(20)
+            }
         }
 
         return emptyList()
