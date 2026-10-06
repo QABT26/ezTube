@@ -66,6 +66,7 @@ import kotlinx.coroutines.withContext
 
 private enum class Tab(val label: String) { HOME("Home"), SEARCH("Search"), LIBRARY("Library") }
 private enum class RepeatMode { OFF, ONE, ALL }
+private enum class NextMode { LIST, RECOMMENDED }
 
 @Composable
 fun EzTubeApp() {
@@ -92,6 +93,7 @@ fun EzTubeApp() {
     var isPlaying by remember { mutableStateOf(false) }
     var quality by remember { mutableStateOf(playbackPrefs.loadQuality()) }
     var autoplay by remember { mutableStateOf(playbackPrefs.loadAutoplay()) }
+    var nextMode by remember { mutableStateOf(runCatching { NextMode.valueOf(playbackPrefs.loadNextMode()) }.getOrDefault(NextMode.LIST)) }
     var repeatMode by remember {
         mutableStateOf(RepeatMode.entries.getOrElse(playbackPrefs.loadRepeatMode()) { RepeatMode.OFF })
     }
@@ -172,11 +174,24 @@ fun EzTubeApp() {
         controller?.let { if (it.isPlaying) it.pause() else it.play() }
     }
 
+    fun activeQueueFor(media: MediaSummary): List<MediaSummary> {
+        if (nextMode == NextMode.LIST) return queue
+        val pool = (homeSuggestions + trending + searchResults + queue)
+            .distinctBy { it.id }.filterNot { it.id == media.id }
+        if (pool.isEmpty()) return queue
+        val seed = (media.id.hashCode().toLong() shl 32) xor System.nanoTime()
+        return listOf(media) + pool.shuffled(kotlin.random.Random(seed))
+    }
+
     fun playMedia(media: MediaSummary, startPositionMs: Long = 0L) {
         if (resolvingId != null) return
         scope.launch {
             resolvingId = media.id
             errorMessage = null
+            if (nextMode == NextMode.RECOMMENDED) {
+                queue = activeQueueFor(media)
+                queueIndex = 0
+            }
             runCatching {
                 val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
                 AudioStreamSelector.select(streams, quality) ?: error("No playable audio stream")
@@ -444,6 +459,8 @@ fun EzTubeApp() {
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 autoplay = autoplay,
                 onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) },
+                nextMode = nextMode,
+                onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) },
                 trendingTopic = trendingTopic,
                 onTrendingTopic = { trendingTopic = it; playbackPrefs.saveTrendingTopic(it) },
                 trendingLanguage = trendingLanguage,
@@ -1262,6 +1279,8 @@ private fun FullPlayer(
     onSleep: (Int?) -> Unit,
     autoplay: Boolean,
     onAutoplay: (Boolean) -> Unit,
+    nextMode: NextMode,
+    onNextMode: (NextMode) -> Unit,
     repeatMode: RepeatMode,
     onRepeatMode: (RepeatMode) -> Unit,
     hasPrevious: Boolean,
@@ -1328,6 +1347,14 @@ private fun FullPlayer(
                         if (isFavorite) "Remove favorite" else "Add favorite"
                     )
                 }
+            }
+
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(modifier = Modifier.weight(1f), selected = nextMode == NextMode.LIST,
+                    onClick = { onNextMode(NextMode.LIST) }, label = { Text("Next: List") })
+                FilterChip(modifier = Modifier.weight(1f), selected = nextMode == NextMode.RECOMMENDED,
+                    onClick = { onNextMode(NextMode.RECOMMENDED) }, label = { Text("Next: Mix") })
             }
 
             Spacer(Modifier.height(6.dp))
