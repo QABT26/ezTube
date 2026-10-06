@@ -819,12 +819,12 @@ private fun LibraryScreen(
                         }
                     }
                 }
-            }
-            item {
-                Column(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 10.dp)) {
-                    Text("Downloads", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(4.dp))
-                    Text("Offline downloads will appear here when the download engine is enabled.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                item {
+                    Column(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 10.dp)) {
+                        Text("Downloads", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(4.dp))
+                        Text("Offline downloads will appear here when the download engine is enabled.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
