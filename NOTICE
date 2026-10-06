@@ -1,0 +1,15 @@
+ezTube
+Copyright (C) 2026 QABT26
+
+ezTube is an independent, unofficial project and is not affiliated with,
+endorsed by, or sponsored by YouTube or Google.
+
+This application uses NewPipeExtractor:
+https://github.com/TeamNewPipe/NewPipeExtractor
+NewPipeExtractor is licensed under GPL-3.0-or-later.
+
+AndroidX, Jetpack Compose, Media3, Room, Coil, Kotlin, and their transitive
+dependencies remain subject to their respective copyright notices and
+licenses.
+
+SPDX-License-Identifier: GPL-3.0-or-later
