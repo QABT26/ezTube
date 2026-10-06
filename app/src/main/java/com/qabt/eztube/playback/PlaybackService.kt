@@ -41,7 +41,9 @@ class PlaybackService : MediaSessionService() {
                     val playerCommands = ConnectionResult.DEFAULT_PLAYER_COMMANDS
                         .buildUpon()
                         .add(Player.COMMAND_SEEK_TO_NEXT)
+                        .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
                         .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                        .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
                         .build()
                     val result = ConnectionResult.AcceptedResultBuilder(session)
                         .setAvailableSessionCommands(sessionCommands)
@@ -65,8 +67,8 @@ class PlaybackService : MediaSessionService() {
                     playerCommand: Int
                 ): Int {
                     when (playerCommand) {
-                        Player.COMMAND_SEEK_TO_NEXT -> SystemTransportBridge.onNext?.invoke()
-                        Player.COMMAND_SEEK_TO_PREVIOUS -> SystemTransportBridge.onPrevious?.invoke()
+                        Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> SystemTransportBridge.onNext?.invoke()
+                        Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> SystemTransportBridge.onPrevious?.invoke()
                     }
                     return SessionResult.RESULT_SUCCESS
                 }
