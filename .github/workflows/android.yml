@@ -33,7 +33,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build debug APK
-        run: ./gradlew clean assembleDebug --stacktrace
+        run: bash ./gradlew clean assembleDebug --stacktrace
 
       - name: Upload Beta APK
         uses: actions/upload-artifact@v4
