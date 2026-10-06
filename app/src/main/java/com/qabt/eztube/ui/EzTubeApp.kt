@@ -1300,7 +1300,7 @@ private fun FullPlayer(
                                 softWrap = false
                             )
                         },
-                        modifier = Modifier.weight(1f).height(44.dp)
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
