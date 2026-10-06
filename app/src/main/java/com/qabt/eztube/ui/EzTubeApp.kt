@@ -64,7 +64,7 @@ fun EzTubeApp() {
     val playbackPrefs = remember { PlaybackPreferences(context) }
     var queue by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var queueIndex by remember { mutableIntStateOf(-1) }
-    var playbackSpeed by remember { mutableFloatStateOf(1f) }
+    var playbackSpeed by remember { mutableFloatStateOf(playbackPrefs.loadSpeed()) }
     var compatibilityFallback by remember { mutableStateOf(false) }
     var playerError by remember { mutableStateOf<String?>(null) }
     var isBuffering by remember { mutableStateOf(false) }
@@ -73,7 +73,9 @@ fun EzTubeApp() {
     var controller by remember { mutableStateOf<MediaController?>(null) }
     var nowPlaying by remember { mutableStateOf<MediaSummary?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
-    var quality by remember { mutableStateOf(AudioQuality.STANDARD) }
+    var quality by remember { mutableStateOf(playbackPrefs.loadQuality()) }
+    var autoplay by remember { mutableStateOf(playbackPrefs.loadAutoplay()) }
+    var showSettings by remember { mutableStateOf(false) }
     var resolvingId by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showPlayer by remember { mutableStateOf(false) }
@@ -147,7 +149,7 @@ fun EzTubeApp() {
     }
 
     LaunchedEffect(playbackEndedToken) {
-        if (playbackEndedToken > 0 && queueIndex >= 0 && queueIndex < queue.lastIndex) {
+        if (autoplay && playbackEndedToken > 0 && queueIndex >= 0 && queueIndex < queue.lastIndex) {
             queueIndex += 1
             playMedia(queue[queueIndex])
         }
@@ -179,16 +181,30 @@ fun EzTubeApp() {
     }
 
     MaterialTheme {
-        if (showPlayer && nowPlaying != null) {
+        if (showSettings) {
+            SettingsScreen(
+                quality = quality,
+                onQuality = { quality = it; playbackPrefs.saveQuality(it) },
+                speed = playbackSpeed,
+                onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
+                autoplay = autoplay,
+                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) },
+                onClose = { showSettings = false }
+            )
+        } else if (showPlayer && nowPlaying != null) {
             FullPlayer(
                 media = requireNotNull(nowPlaying),
                 controller = controller,
                 isPlaying = isPlaying,
                 quality = quality,
-                onQuality = { quality = it },
+                onQuality = {
+                    quality = it
+                    playbackPrefs.saveQuality(it)
+                },
                 playbackSpeed = playbackSpeed,
                 onSpeed = {
                     playbackSpeed = it
+                    playbackPrefs.saveSpeed(it)
                     controller?.setPlaybackSpeed(it)
                 },
                 compatibilityFallback = compatibilityFallback,
@@ -228,7 +244,7 @@ fun EzTubeApp() {
             )
         } else {
             Scaffold(
-                topBar = { AppHeader() },
+                topBar = { AppHeader(onSettings = { showSettings = true }) },
                 bottomBar = {
                     Column {
                         nowPlaying?.let { media ->
@@ -303,7 +319,7 @@ fun EzTubeApp() {
 }
 
 @Composable
-private fun AppHeader() {
+private fun AppHeader(onSettings: () -> Unit) {
     Surface(tonalElevation = 1.dp) {
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().height(58.dp).padding(horizontal = 16.dp),
@@ -317,6 +333,86 @@ private fun AppHeader() {
                 Text("AUDIO ONLY", Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                     style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
             }
+            Spacer(Modifier.width(4.dp))
+            IconButton(onClick = onSettings) {
+                Icon(Icons.Outlined.Settings, "Settings")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(
+    quality: AudioQuality,
+    onQuality: (AudioQuality) -> Unit,
+    speed: Float,
+    onSpeed: (Float) -> Unit,
+    autoplay: Boolean,
+    onAutoplay: (Boolean) -> Unit,
+    onClose: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+        Row(
+            Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onClose) { Icon(Icons.Outlined.ArrowBack, "Back") }
+            Text("Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        }
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Text("Playback", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+
+            Column {
+                Text("Default audio quality", fontWeight = FontWeight.SemiBold)
+                Text("Used when a new track starts.", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AudioQuality.entries.forEach { option ->
+                        FilterChip(
+                            selected = quality == option,
+                            onClick = { onQuality(option) },
+                            label = { Text(when (option) {
+                                AudioQuality.DATA_SAVER -> "Saver 64"
+                                AudioQuality.STANDARD -> "Std 128"
+                                AudioQuality.HIGH -> "High"
+                            }) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Column {
+                Text("Default speed", fontWeight = FontWeight.SemiBold)
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(1f, 1.25f, 1.5f, 2f).forEach { option ->
+                        FilterChip(
+                            selected = speed == option,
+                            onClick = { onSpeed(option) },
+                            label = { Text("${option}×") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Autoplay queue", fontWeight = FontWeight.SemiBold)
+                    Text("Play the next search result automatically.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = autoplay, onCheckedChange = onAutoplay)
+            }
+
+            HorizontalDivider()
+            Text("ezTube plays audio streams only when available. Some YouTube videos require a compatibility stream, which may use more data.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
