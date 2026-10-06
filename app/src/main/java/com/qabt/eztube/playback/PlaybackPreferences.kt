@@ -28,6 +28,27 @@ class PlaybackPreferences(context: Context) {
         ) to prefs.getLong("position", 0L)
     }
 
+    fun saveQueue(items: List<MediaSummary>, index: Int) {
+        val encoded = items.joinToString("\u001e") { item ->
+            listOf(item.id, item.title, item.channel, item.thumbnailUrl.orEmpty(), item.channelUrl.orEmpty())
+                .joinToString("\u001f") { android.util.Base64.encodeToString(it.toByteArray(), android.util.Base64.NO_WRAP) }
+        }
+        prefs.edit().putString("queue_v1", encoded).putInt("queue_index", index).apply()
+    }
+
+    fun loadQueue(): Pair<List<MediaSummary>, Int>? {
+        val raw = prefs.getString("queue_v1", null) ?: return null
+        val items = raw.split("\u001e").mapNotNull { row ->
+            val p = row.split("\u001f")
+            if (p.size < 5) return@mapNotNull null
+            fun d(v: String) = runCatching { String(android.util.Base64.decode(v, android.util.Base64.NO_WRAP)) }.getOrDefault("")
+            val id = d(p[0])
+            if (id.isBlank()) null else MediaSummary(id, d(p[1]), d(p[2]), d(p[3]).ifBlank { null }, d(p[4]).ifBlank { null })
+        }
+        if (items.isEmpty()) return null
+        return items to prefs.getInt("queue_index", 0).coerceIn(items.indices)
+    }
+
     fun saveQuality(quality: AudioQuality) {
         prefs.edit().putString("quality", quality.name).apply()
     }
