@@ -1,62 +1,74 @@
 # ezTube
 
-An experimental Android **audio-first YouTube client** focused on reducing mobile data usage.
+ezTube is an experimental Android **audio-first YouTube client** focused on listening with less mobile data.
 
-ezTube is designed for people who mostly listen to long-form YouTube content. The app aims to request and play an available **audio-only stream** instead of downloading the video stream.
+> **Unofficial project:** ezTube is not affiliated with, endorsed by, or sponsored by YouTube or Google.
 
-> [!IMPORTANT]
-> ezTube is an independent, unofficial project. It is not affiliated with, endorsed by, or sponsored by YouTube or Google.
+## Beta V1
 
-## Goals
+Current Beta V1 includes:
 
-- Familiar feed and search experience
-- Audio-only playback
-- Data Saver / Standard / High audio quality modes
-- Background playback
-- Media notification and lock-screen controls
-- Queue, history, favorites, and playlists
-- Clean separation between extraction, playback, and UI
+- YouTube search through NewPipeExtractor
+- audio-only stream selection with Saver / Standard / High modes
+- compatibility fallback for videos where a separate audio stream is unavailable
+- Media3 / ExoPlayer background playback
+- media notification and lock-screen controls
+- queue, previous / next and autoplay
+- draggable seek bar and ±10 second controls
+- playback speed and sleep timer
+- resume last track and position
+- Room-backed listening history and favorites
+- persistent playback settings
+- Home, Search and Library screens
+
+When ezTube must use a muxed compatibility stream, the app explicitly warns that it may use more data.
 
 ## Architecture
 
 ```
-Compose UI
-    |
-YouTube source / extractor
-    |
+Jetpack Compose UI
+        |
+YouTubeSource / NewPipeExtractor
+        |
 AudioStreamSelector
-    |
+        |
 Media3 / ExoPlayer
-    |
+        |
 MediaSessionService
+
+Room -> History / Favorites
+SharedPreferences -> Playback state / Settings
 ```
 
-The source/extractor layer is intentionally isolated so it can be replaced without rewriting the player or UI.
+The extraction layer is intentionally isolated because upstream YouTube behavior can change.
 
-## Status
+## Build
 
-**Early development / bootstrap.** The first milestone establishes the Android + Jetpack Compose application shell. Audio extraction is not implemented yet.
-
-## Tech stack
-
-- Kotlin
-- Jetpack Compose
-- AndroidX Media3 (planned)
-- Room (planned)
-- NewPipeExtractor integration (planned; license compatibility will be reviewed before integration)
-
-## Development
-
-Open the project with a recent Android Studio and use JDK 17.
+Requirements: Android SDK 35 and JDK 17 or newer supported by the configured Android Gradle Plugin.
 
 ```bash
-./gradlew assembleDebug
+./gradlew clean assembleDebug
 ```
+
+Debug APK:
+
+```
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+## Beta limitations
+
+- YouTube can change extraction or streaming behavior without notice.
+- Some videos expose no direct audio-only URL and require a higher-data compatibility stream.
+- Queue is currently created from search results and is not yet a persistent playlist system.
+- Beta builds should be tested on-device before wider distribution.
 
 ## Legal / distribution
 
-This project is intended for research and personal/open-source development. Users and distributors are responsible for complying with YouTube's Terms of Service and applicable laws. The project does not ship Google/YouTube trademarks or claim to be an official client.
+This project is intended for research, personal use, and open-source development. Users and distributors are responsible for complying with applicable laws and service terms. The project does not claim to be an official YouTube client.
 
 ## License
 
-License decision is intentionally pending until third-party dependency and distribution requirements are finalized.
+ezTube source code is licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later). See `LICENSE` and `NOTICE`.
+
+NewPipeExtractor is a third-party project licensed under GPL-3.0-or-later. Other Android dependencies retain their respective licenses.
