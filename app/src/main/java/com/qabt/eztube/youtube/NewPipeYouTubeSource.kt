@@ -23,7 +23,8 @@ class NewPipeYouTubeSource : YouTubeSource {
                     id = item.url,
                     title = item.name,
                     channel = item.uploaderName.orEmpty(),
-                    thumbnailUrl = item.thumbnails.firstOrNull()?.url
+                    thumbnailUrl = item.thumbnails.firstOrNull()?.url,
+                    channelUrl = item.uploaderUrl
                 )
             }
             .toList()
