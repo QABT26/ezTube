@@ -1205,7 +1205,7 @@ private fun FullPlayer(
         }
 
         Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp)
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)
         ) {
             Spacer(Modifier.height(8.dp))
             AsyncImage(
@@ -1214,7 +1214,7 @@ private fun FullPlayer(
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentScale = ContentScale.Crop
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
             Text(media.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(3.dp))
@@ -1238,7 +1238,7 @@ private fun FullPlayer(
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 AudioQuality.entries.forEach { option ->
                     FilterChip(
@@ -1280,8 +1280,8 @@ private fun FullPlayer(
             }
 
             Row(
-                Modifier.fillMaxWidth().padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 listOf(0.5f, 1f, 1.25f, 1.5f, 2f).forEach { speed ->
                     CompactPresetButton(
@@ -1312,8 +1312,8 @@ private fun FullPlayer(
                 }
             }
             Row(
-                Modifier.fillMaxWidth().padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 FilterChip(
                     selected = autoplay,
@@ -1359,7 +1359,7 @@ private fun FullPlayer(
                 )
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             val progress = if (duration > 0) {
                 (position.toFloat() / duration).coerceIn(0f, 1f)
             } else 0f
@@ -1399,7 +1399,7 @@ private fun FullPlayer(
                 Text(formatTime(duration), style = MaterialTheme.typography.labelSmall)
             }
             Row(
-                Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 20.dp),
+                Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
