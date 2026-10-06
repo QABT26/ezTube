@@ -46,6 +46,7 @@ import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
 import com.qabt.eztube.playback.SystemTransportBridge
 import com.qabt.eztube.youtube.MediaSummary
+import com.qabt.eztube.youtube.ChannelSummary
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -88,6 +89,9 @@ fun EzTubeApp() {
     var searchResults by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var homeSuggestions by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var homeLoading by remember { mutableStateOf(false) }
+    var channelDetail by remember { mutableStateOf<ChannelSummary?>(null) }
+    var channelLoading by remember { mutableStateOf(false) }
+    var channelError by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -111,6 +115,18 @@ fun EzTubeApp() {
         onDispose {
             controller = null
             MediaController.releaseFuture(future)
+        }
+    }
+
+    fun openChannel(channelUrl: String?) {
+        if (channelUrl.isNullOrBlank() || channelLoading) return
+        scope.launch {
+            channelLoading = true
+            channelError = null
+            runCatching { withContext(Dispatchers.IO) { source.channel(channelUrl) } }
+                .onSuccess { channelDetail = it }
+                .onFailure { channelError = it.message ?: "Unable to load channel" }
+            channelLoading = false
         }
     }
 
@@ -224,7 +240,24 @@ fun EzTubeApp() {
     }
 
     MaterialTheme {
-        if (showSettings) {
+        if (channelDetail != null || channelLoading || channelError != null) {
+            ChannelScreen(
+                channel = channelDetail,
+                loading = channelLoading,
+                error = channelError,
+                resolvingId = resolvingId,
+                onBack = {
+                    channelDetail = null
+                    channelError = null
+                    channelLoading = false
+                },
+                onPlay = { media, items ->
+                    queue = items
+                    queueIndex = items.indexOfFirst { it.id == media.id }
+                    playMedia(media)
+                }
+            )
+        } else if (showSettings) {
             SettingsScreen(
                 quality = quality,
                 onQuality = { quality = it; playbackPrefs.saveQuality(it) },
@@ -270,6 +303,7 @@ fun EzTubeApp() {
                     }
                 },
                 isFavorite = favorites.any { it.mediaId == nowPlaying?.id },
+                onChannel = { openChannel(nowPlaying?.channelUrl) },
                 onFavorite = {
                     nowPlaying?.let { media ->
                         scope.launch(Dispatchers.IO) {
@@ -333,6 +367,7 @@ fun EzTubeApp() {
                         onQueryChange = { searchQuery = it },
                         results = searchResults,
                         onResultsChange = { searchResults = it },
+                        onChannel = { openChannel(it.channelUrl) },
                         onPlay = { media, resultQueue ->
                             queue = resultQueue
                             queueIndex = resultQueue.indexOfFirst { it.id == media.id }
@@ -485,6 +520,7 @@ private fun SearchScreen(
     onQueryChange: (String) -> Unit,
     results: List<MediaSummary>,
     onResultsChange: (List<MediaSummary>) -> Unit,
+    onChannel: (MediaSummary) -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -533,7 +569,13 @@ private fun SearchScreen(
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 items(results, key = { it.id }) { media ->
-                    SearchResult(media, resolvingId == media.id, resolvingId == null) { onPlay(media, results) }
+                    SearchResult(
+                        media = media,
+                        resolving = resolvingId == media.id,
+                        enabled = resolvingId == null,
+                        onChannel = { onChannel(media) },
+                        onPlay = { onPlay(media, results) }
+                    )
                 }
             }
         }
@@ -543,7 +585,7 @@ private fun SearchScreen(
 @Composable
 private fun SearchResult(media: MediaSummary, resolving: Boolean, enabled: Boolean, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = enabled, onClick = onClick)
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = enabled, onClick = onPlay)
             .padding(7.dp), verticalAlignment = Alignment.CenterVertically
     ) {
         AsyncImage(media.thumbnailUrl, null,
@@ -554,8 +596,15 @@ private fun SearchResult(media: MediaSummary, resolving: Boolean, enabled: Boole
             Text(media.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(3.dp))
-            Text(media.channel.ifBlank { "YouTube" }, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                media.channel.ifBlank { "YouTube" },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (media.channelUrl != null) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = if (media.channelUrl != null) Modifier.clickable(onClick = onChannel) else Modifier
+            )
         }
         Spacer(Modifier.width(6.dp))
         if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
@@ -769,6 +818,87 @@ private fun LibraryScreen(
 }
 
 @Composable
+private fun ChannelScreen(
+    channel: ChannelSummary?,
+    loading: Boolean,
+    error: String?,
+    resolvingId: String?,
+    onBack: () -> Unit,
+    onPlay: (MediaSummary, List<MediaSummary>) -> Unit
+) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+        Row(
+            Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
+            }
+            Text(channel?.name ?: "Channel", style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (loading) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        } else if (error != null) {
+            Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                Text(error, color = MaterialTheme.colorScheme.error)
+            }
+        } else if (channel != null) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 18.dp)
+            ) {
+                channel.bannerUrl?.let { banner ->
+                    item {
+                        AsyncImage(banner, null, Modifier.fillMaxWidth().aspectRatio(16f / 5f),
+                            contentScale = ContentScale.Crop)
+                    }
+                }
+                item {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AsyncImage(channel.avatarUrl, null,
+                            Modifier.size(72.dp).clip(RoundedCornerShape(50)),
+                            contentScale = ContentScale.Crop)
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(channel.name, style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold)
+                            if (channel.subscriberCount >= 0) {
+                                Text("%,d subscribers".format(channel.subscriberCount),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+                item {
+                    Text("Videos", style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                }
+                items(channel.videos, key = { "channel-" + it.id }) { media ->
+                    Box(Modifier.padding(horizontal = 10.dp)) {
+                        SearchResult(
+                            media = media,
+                            resolving = resolvingId == media.id,
+                            enabled = resolvingId == null,
+                            onChannel = {},
+                            onPlay = { onPlay(media, channel.videos) }
+                        )
+                    }
+                }
+                if (channel.videos.isEmpty()) {
+                    item {
+                        Text("No videos found in this channel tab.",
+                            modifier = Modifier.padding(16.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun FullPlayer(
     media: MediaSummary,
     controller: MediaController?,
@@ -787,6 +917,7 @@ private fun FullPlayer(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     isFavorite: Boolean,
+    onChannel: () -> Unit,
     onFavorite: () -> Unit,
     onToggle: () -> Unit,
     onClose: () -> Unit
@@ -828,9 +959,17 @@ private fun FullPlayer(
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(3.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(media.channel, style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Text(
+                    media.channel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (media.channelUrl != null) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).then(
+                        if (media.channelUrl != null) Modifier.clickable(onClick = onChannel) else Modifier
+                    )
+                )
                 IconButton(onClick = onFavorite) {
                     Icon(
                         if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
