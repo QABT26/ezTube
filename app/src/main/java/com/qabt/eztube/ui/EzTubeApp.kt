@@ -211,6 +211,9 @@ fun EzTubeApp() {
                                 .build()
                         }
                         setMediaItems(mediaItems, queueIndex, startPositionMs)
+                    } else if (currentMediaItem?.mediaId == media.id) {
+                        replaceMediaItem(currentMediaItemIndex.coerceAtLeast(0), playableItem)
+                        seekTo(currentMediaItemIndex.coerceAtLeast(0), startPositionMs)
                     } else {
                         setMediaItem(playableItem)
                     }
@@ -233,6 +236,8 @@ fun EzTubeApp() {
             scope.launch {
                 if (queueIndex > 0) {
                     queueIndex -= 1
+                    seekToNextMediaItem()
+                    seekToPreviousMediaItem()
                     playMedia(queue[queueIndex], installQueue = false)
                 }
             }
