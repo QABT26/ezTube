@@ -585,7 +585,7 @@ private fun SettingsScreen(
                             label = { Text(when (option) {
                                 AudioQuality.DATA_SAVER -> "Saver 64"
                                 AudioQuality.STANDARD -> "Std 128"
-                                AudioQuality.HIGH -> "High"
+                                AudioQuality.HIGH -> "High 160+"
                             }) },
                             modifier = Modifier.weight(1f)
                         )
@@ -1283,7 +1283,7 @@ private fun FullPlayer(
                 Modifier.fillMaxWidth().padding(top = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf(1f, 1.25f, 1.5f, 2f).forEach { speed ->
+                listOf(0.5f, 1f, 1.25f, 1.5f, 2f).forEach { speed ->
                     FilterChip(
                         selected = playbackSpeed == speed,
                         onClick = { onSpeed(speed) },
@@ -1296,7 +1296,7 @@ private fun FullPlayer(
                 Modifier.fillMaxWidth().padding(top = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf(null, 15, 30, 60).forEach { minutes ->
+                listOf(null, 15, 30, 60, 120).forEach { minutes ->
                     FilterChip(
                         selected = sleepMinutes == minutes,
                         onClick = { onSleep(minutes) },
