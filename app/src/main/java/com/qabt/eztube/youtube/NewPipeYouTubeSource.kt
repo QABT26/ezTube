@@ -54,15 +54,35 @@ class NewPipeYouTubeSource : YouTubeSource {
 
     override suspend fun trending(): List<MediaSummary> {
         val service = ServiceList.YouTube
-        val factory = service.kioskList.getListLinkHandlerFactoryByType("Trending")
-        val url = factory.fromId("Trending").url
-        return KioskInfo.getInfo(service, url).relatedItems
-            .asSequence()
-            .filterIsInstance<StreamInfoItem>()
-            .filterNot { it.isShortFormContent }
-            .map { it.toSummary() }
-            .take(20)
-            .toList()
+
+        // YouTube removed the old general Trending page in July 2025.
+        // Prefer the still-supported Music chart for this audio-first app, then
+        // fall back through other supported kiosks instead of returning nothing.
+        val kioskIds = listOf(
+            "trending_music",
+            "trending_podcasts_episodes",
+            "trending_gaming",
+            "trending_movies_and_shows",
+            "live"
+        )
+
+        for (kioskId in kioskIds) {
+            val items = runCatching {
+                val factory = service.kioskList.getListLinkHandlerFactoryByType(kioskId)
+                val url = factory.fromId(kioskId).url
+                KioskInfo.getInfo(service, url).relatedItems
+                    .asSequence()
+                    .filterIsInstance<StreamInfoItem>()
+                    .filterNot { it.isShortFormContent }
+                    .map { it.toSummary() }
+                    .take(20)
+                    .toList()
+            }.getOrDefault(emptyList())
+
+            if (items.isNotEmpty()) return items
+        }
+
+        return emptyList()
     }
 
     override suspend fun channel(channelUrl: String): ChannelSummary {
