@@ -195,13 +195,6 @@ fun EzTubeApp() {
         return listOf(media) + pool.shuffled(kotlin.random.Random(seed))
     }
 
-    fun startQueue(media: MediaSummary, sourceItems: List<MediaSummary>, startPositionMs: Long = 0L) {
-        queue = queueForStart(media, sourceItems)
-        queueIndex = queue.indexOfFirst { it.id == media.id }.coerceAtLeast(0)
-        playbackPrefs.saveQueue(queue, queueIndex)
-        playMedia(media, startPositionMs)
-    }
-
     fun playMedia(media: MediaSummary, startPositionMs: Long = 0L) {
         if (resolvingId != null) return
         scope.launch {
@@ -250,16 +243,20 @@ fun EzTubeApp() {
         }
     }
 
+    fun startQueue(media: MediaSummary, sourceItems: List<MediaSummary>, startPositionMs: Long = 0L) {
+        queue = queueForStart(media, sourceItems)
+        queueIndex = queue.indexOfFirst { it.id == media.id }.coerceAtLeast(0)
+        playbackPrefs.saveQueue(queue, queueIndex)
+        playMedia(media, startPositionMs)
+    }
+
     LaunchedEffect(controller, autoplay, repeatMode) {
         val media3RepeatMode = when (repeatMode) {
             RepeatMode.OFF -> Player.REPEAT_MODE_OFF
             RepeatMode.ONE -> Player.REPEAT_MODE_ONE
             RepeatMode.ALL -> Player.REPEAT_MODE_ALL
         }
-        controller?.apply {
-            setPauseAtEndOfMediaItems(!autoplay)
-            repeatMode = media3RepeatMode
-        }
+        controller?.repeatMode = media3RepeatMode
     }
 
     LaunchedEffect(Unit) {
