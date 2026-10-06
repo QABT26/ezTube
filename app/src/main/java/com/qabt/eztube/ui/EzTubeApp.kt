@@ -344,9 +344,14 @@ fun EzTubeApp() {
         Box(Modifier.fillMaxSize()) {
         if (playlistDetail != null || playlistLoading || playlistError != null) {
             Scaffold(bottomBar = {
-                nowPlaying?.let { media -> MiniPlayer(media, isPlaying, { channelDetail = null; playlistDetail = null; showPlayer = true }) {
-                    if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs) else togglePlayback()
-                } }
+                nowPlaying?.let { media -> MiniPlayer(
+                    media = media,
+                    isPlaying = isPlaying,
+                    isFavorite = favorites.any { it.mediaId == media.id },
+                    onOpen = { channelDetail = null; playlistDetail = null; showPlayer = true },
+                    onFavorite = { scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } },
+                    onToggle = { if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs) else togglePlayback() }
+                ) }
             }) { detailPadding ->
             Box(Modifier.fillMaxSize().padding(detailPadding)) {
             PlaylistDetailScreen(
@@ -374,9 +379,14 @@ fun EzTubeApp() {
             }
         } else if (channelDetail != null || channelLoading || channelError != null) {
             Scaffold(bottomBar = {
-                nowPlaying?.let { media -> MiniPlayer(media, isPlaying, { channelDetail = null; channelError = null; channelLoading = false; showPlayer = true }) {
-                    if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs) else togglePlayback()
-                } }
+                nowPlaying?.let { media -> MiniPlayer(
+                    media = media,
+                    isPlaying = isPlaying,
+                    isFavorite = favorites.any { it.mediaId == media.id },
+                    onOpen = { channelDetail = null; channelError = null; channelLoading = false; showPlayer = true },
+                    onFavorite = { scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } },
+                    onToggle = { if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs) else togglePlayback() }
+                ) }
             }) { detailPadding ->
             Box(Modifier.fillMaxSize().padding(detailPadding)) {
             ChannelScreen(
@@ -449,7 +459,9 @@ fun EzTubeApp() {
                             MiniPlayer(
                                 media = media,
                                 isPlaying = isPlaying,
+                                isFavorite = favorites.any { it.mediaId == media.id },
                                 onOpen = { channelDetail = null; playlistDetail = null; showPlayer = true },
+                                onFavorite = { scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } },
                                 onToggle = {
                                     if (controller?.currentMediaItem == null) {
                                         nowPlaying?.let { playMedia(it, resumePositionMs) }
@@ -788,7 +800,9 @@ private fun SearchResult(
 private fun MiniPlayer(
     media: MediaSummary,
     isPlaying: Boolean,
+    isFavorite: Boolean,
     onOpen: () -> Unit,
+    onFavorite: () -> Unit,
     onToggle: () -> Unit
 ) {
     Surface(tonalElevation = 4.dp) {
@@ -804,6 +818,12 @@ private fun MiniPlayer(
                     overflow = TextOverflow.Ellipsis)
                 Text(media.channel, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+            IconButton(onClick = onFavorite) {
+                Icon(
+                    if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                    if (isFavorite) "Remove from favorites" else "Add to favorites"
+                )
             }
             IconButton(onClick = onToggle) {
                 Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
