@@ -268,7 +268,6 @@ fun EzTubeApp() {
                     playlistError = null
                     playlistLoading = false
                 },
-                onPlaylist = { openPlaylist(it.url) },
                 onPlay = { media, items ->
                     queue = items
                     queueIndex = items.indexOfFirst { it.id == media.id }
@@ -293,6 +292,7 @@ fun EzTubeApp() {
                     channelError = null
                     channelLoading = false
                 },
+                onPlaylist = { openPlaylist(it.url) },
                 onPlay = { media, items ->
                     queue = items
                     queueIndex = items.indexOfFirst { it.id == media.id }
