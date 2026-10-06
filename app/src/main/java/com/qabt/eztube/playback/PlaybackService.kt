@@ -9,6 +9,8 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.MediaSession.ConnectionResult
 import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 
 class PlaybackService : MediaSessionService() {
     private var player: ExoPlayer? = null
@@ -60,6 +62,18 @@ class PlaybackService : MediaSessionService() {
                     }
 
                     return result.build()
+                }
+
+                override fun onSetMediaItems(
+                    mediaSession: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    mediaItems: MutableList<androidx.media3.common.MediaItem>,
+                    startIndex: Int,
+                    startPositionMs: Long
+                ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+                    return Futures.immediateFuture(
+                        MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, startPositionMs)
+                    )
                 }
 
                 override fun onPlayerCommandRequest(
