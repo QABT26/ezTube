@@ -53,4 +53,9 @@ class PlaybackPreferences(context: Context) {
     }
 
     fun loadRepeatMode(): Int = prefs.getInt("repeat_mode", 0).coerceIn(0, 2)
+
+    fun saveTrendingTopic(topic: String) { prefs.edit().putString("trending_topic", topic).apply() }
+    fun loadTrendingTopic(): String = prefs.getString("trending_topic", "Music") ?: "Music"
+    fun saveTrendingLanguage(language: String) { prefs.edit().putString("trending_language", language).apply() }
+    fun loadTrendingLanguage(): String = prefs.getString("trending_language", "Vietnamese") ?: "Vietnamese"
 }
