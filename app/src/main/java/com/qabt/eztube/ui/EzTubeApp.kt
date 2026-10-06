@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -94,6 +95,10 @@ fun EzTubeApp() {
     var searchResults by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var homeSuggestions by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var homeLoading by remember { mutableStateOf(false) }
+    var trending by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
+    var trendingLoading by remember { mutableStateOf(false) }
+    val searchListState = rememberLazyListState()
+    val homeListState = rememberLazyListState()
     var channelDetail by remember { mutableStateOf<ChannelSummary?>(null) }
     var channelLoading by remember { mutableStateOf(false) }
     var channelError by remember { mutableStateOf<String?>(null) }
@@ -246,6 +251,13 @@ fun EzTubeApp() {
         sleepMinutes = null
     }
 
+    LaunchedEffect(Unit) {
+        trendingLoading = true
+        runCatching { withContext(Dispatchers.IO) { source.trending() } }
+            .onSuccess { trending = it }
+        trendingLoading = false
+    }
+
     LaunchedEffect(recent.firstOrNull()?.mediaId, favorites.firstOrNull()?.mediaId) {
         val seed = favorites.firstOrNull()?.channel?.takeIf { it.isNotBlank() }
             ?: recent.firstOrNull()?.channel?.takeIf { it.isNotBlank() }
@@ -298,6 +310,7 @@ fun EzTubeApp() {
                     queueIndex = items.indexOfFirst { it.id == media.id }
                     playMedia(media)
                 },
+                onChannel = { openChannel(it.channelUrl) },
                 onPlayAll = { items ->
                     if (items.isNotEmpty()) {
                         queue = items
@@ -433,6 +446,7 @@ fun EzTubeApp() {
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
                         results = searchResults,
+                        listState = searchListState,
                         onResultsChange = { searchResults = it },
                         onChannel = { openChannel(it.channelUrl) },
                         onPlay = { media, resultQueue ->
@@ -444,10 +458,13 @@ fun EzTubeApp() {
                     Tab.HOME -> HomeScreen(
                         modifier = Modifier.fillMaxSize().padding(padding),
                         suggestions = homeSuggestions,
+                        trending = trending,
+                        trendingLoading = trendingLoading,
+                        listState = homeListState,
                         loading = homeLoading,
                         resolvingId = resolvingId,
-                        onPlay = { media ->
-                            queue = homeSuggestions
+                        onPlay = { media, items ->
+                            queue = items
                             queueIndex = queue.indexOfFirst { it.id == media.id }
                             playMedia(media)
                         },
@@ -586,6 +603,7 @@ private fun SearchScreen(
     query: String,
     onQueryChange: (String) -> Unit,
     results: List<MediaSummary>,
+    listState: androidx.compose.foundation.lazy.LazyListState,
     onResultsChange: (List<MediaSummary>) -> Unit,
     onChannel: (MediaSummary) -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit
@@ -633,7 +651,7 @@ private fun SearchScreen(
                 Text("Search YouTube, play the audio.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 10.dp),
+            LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 items(results, key = { it.id }) { media ->
                     SearchResult(
@@ -718,13 +736,17 @@ private fun MiniPlayer(
 private fun HomeScreen(
     modifier: Modifier,
     suggestions: List<MediaSummary>,
+    trending: List<MediaSummary>,
+    trendingLoading: Boolean,
+    listState: androidx.compose.foundation.lazy.LazyListState,
     loading: Boolean,
     resolvingId: String?,
-    onPlay: (MediaSummary) -> Unit,
+    onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
     onSearch: () -> Unit
 ) {
     LazyColumn(
         modifier.padding(horizontal = 14.dp),
+        state = listState,
         contentPadding = PaddingValues(vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -744,7 +766,7 @@ private fun HomeScreen(
             item { Text("Recommended", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             items(suggestions, key = { "home-s-" + it.id }) { media ->
                 CompactMediaRow(media.title, media.channel, media.thumbnailUrl,
-                    resolvingId == media.id) { onPlay(media) }
+                    resolvingId == media.id) { onPlay(media, suggestions) }
             }
             item {
                 Spacer(Modifier.height(6.dp))
@@ -758,6 +780,28 @@ private fun HomeScreen(
                     modifier = Modifier.padding(top = 24.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+        }
+        item {
+            Spacer(Modifier.height(10.dp))
+            Text("Trending now", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Popular on YouTube right now", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (trendingLoading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        itemsIndexed(trending, key = { index, media -> "trend-" + index + "-" + media.id }) { index, media ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text((index + 1).toString(), style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.width(28.dp))
+                Box(Modifier.weight(1f)) {
+                    CompactMediaRow(media.title, media.channel, media.thumbnailUrl,
+                        resolvingId == media.id) { onPlay(media, trending) }
+                }
+            }
+        }
+        if (!trendingLoading && trending.isEmpty()) {
+            item { Text("Trending is temporarily unavailable.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall) }
         }
     }
 }
@@ -906,7 +950,7 @@ private fun PlaylistRow(playlist: PlaylistSummary, onClick: () -> Unit) {
             Text(playlist.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (playlist.streamCount > 0) Text(playlist.streamCount.toString() + " videos", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Icon(Icons.Outlined.PlaylistPlay, null)
+        Icon(Icons.AutoMirrored.Outlined.PlaylistPlay, null)
     }
 }
 
@@ -919,14 +963,21 @@ private fun PlaylistDetailScreen(
     nowPlayingId: String?,
     onBack: () -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
+    onChannel: (MediaSummary) -> Unit,
     onPlayAll: (List<MediaSummary>) -> Unit
 ) {
     val listState = rememberLazyListState()
     val playingIndex = playlist?.items?.indexOfFirst { it.id == nowPlayingId } ?: -1
     LaunchedEffect(nowPlayingId, playlist?.url) {
         if (playingIndex >= 0) {
-            // Header is item 0. Keep the active row around the visual center.
-            listState.animateScrollToItem((playingIndex + 1).coerceAtLeast(0))
+            val target = playingIndex + 1
+            listState.animateScrollToItem(target)
+            val visible = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == target }
+            if (visible != null) {
+                val viewportCenter = (listState.layoutInfo.viewportStartOffset + listState.layoutInfo.viewportEndOffset) / 2
+                val itemCenter = visible.offset + visible.size / 2
+                listState.animateScrollBy((itemCenter - viewportCenter).toFloat())
+            }
         }
     }
 
@@ -976,7 +1027,7 @@ private fun PlaylistDetailScreen(
                                 media,
                                 resolvingId == media.id,
                                 resolvingId == null,
-                                onChannel = {},
+                                onChannel = { onChannel(media) },
                                 onPlay = { onPlay(media, playlist.items) }
                             )
                         }
