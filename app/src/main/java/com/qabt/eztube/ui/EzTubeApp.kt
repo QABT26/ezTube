@@ -105,6 +105,8 @@ fun EzTubeApp() {
     var trending by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var trendingLoading by remember { mutableStateOf(false) }
     var homeRefreshToken by remember { mutableIntStateOf(0) }
+    var trendingTopic by remember { mutableStateOf(playbackPrefs.loadTrendingTopic()) }
+    var trendingLanguage by remember { mutableStateOf(playbackPrefs.loadTrendingLanguage()) }
     val searchListState = rememberLazyListState()
     val homeListState = rememberLazyListState()
     var channelDetail by remember { mutableStateOf<ChannelSummary?>(null) }
@@ -273,9 +275,9 @@ fun EzTubeApp() {
         sleepMinutes = null
     }
 
-    LaunchedEffect(homeRefreshToken) {
+    LaunchedEffect(homeRefreshToken, trendingTopic, trendingLanguage) {
         trendingLoading = true
-        runCatching { withContext(Dispatchers.IO) { source.trending() } }
+        runCatching { withContext(Dispatchers.IO) { source.trending(trendingTopic, trendingLanguage) } }
             .onSuccess { trending = it }
         trendingLoading = false
     }
@@ -372,6 +374,10 @@ fun EzTubeApp() {
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 autoplay = autoplay,
                 onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) },
+                trendingTopic = trendingTopic,
+                onTrendingTopic = { trendingTopic = it; playbackPrefs.saveTrendingTopic(it) },
+                trendingLanguage = trendingLanguage,
+                onTrendingLanguage = { trendingLanguage = it; playbackPrefs.saveTrendingLanguage(it) },
                 onClose = { showSettings = false }
             )
         } else if (showPlayer && nowPlaying != null) {
@@ -561,6 +567,10 @@ private fun SettingsScreen(
     onSpeed: (Float) -> Unit,
     autoplay: Boolean,
     onAutoplay: (Boolean) -> Unit,
+    trendingTopic: String,
+    onTrendingTopic: (String) -> Unit,
+    trendingLanguage: String,
+    onTrendingLanguage: (String) -> Unit,
     onClose: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
@@ -619,6 +629,22 @@ private fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = autoplay, onCheckedChange = onAutoplay)
+            }
+
+            HorizontalDivider()
+            Text("Trending", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Topic", fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                listOf("Music", "Podcasts", "Gaming", "Movies", "Live").forEach { option ->
+                    CompactPresetButton(option, trendingTopic == option, { onTrendingTopic(option) }, Modifier.weight(1f))
+                }
+            }
+            Text("Language", fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                listOf("Vietnamese", "English", "Korean", "Japanese", "All").forEach { option ->
+                    val label = when(option) { "Vietnamese" -> "VI"; "English" -> "EN"; "Korean" -> "KO"; "Japanese" -> "JA"; else -> "All" }
+                    CompactPresetButton(label, trendingLanguage == option, { onTrendingLanguage(option) }, Modifier.weight(1f))
+                }
             }
 
             HorizontalDivider()
