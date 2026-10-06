@@ -37,6 +37,23 @@ class PlaybackQueueManager(
         ensureNext(saved.first, index)
     }
 
+    fun onPlaybackEnded() {
+        if (busy || !preferences.loadAutoplay()) return
+        val saved = preferences.loadQueue() ?: return
+        val items = saved.first
+        if (items.isEmpty()) return
+        val currentId = player.currentMediaItem?.mediaId
+        val current = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
+        val repeat = preferences.loadRepeatMode()
+        val target = when {
+            repeat == 1 -> current
+            current < items.lastIndex -> current + 1
+            repeat == 2 -> 0
+            else -> return
+        }
+        resolveAndPlay(items, target)
+    }
+
     fun move(delta: Int) {
         if (busy) return
         val saved = preferences.loadQueue() ?: return
@@ -58,6 +75,7 @@ class PlaybackQueueManager(
     }
 
     fun ensureNext(items: List<MediaSummary>, index: Int) {
+        if (!preferences.loadAutoplay()) return
         val next = items.getOrNull(index + 1) ?: return
         if (player.hasNextMediaItem()) return
         if (preloadId == next.id) return
