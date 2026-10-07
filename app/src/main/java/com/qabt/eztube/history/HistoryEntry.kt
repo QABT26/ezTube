@@ -10,5 +10,12 @@ data class HistoryEntry(
     val channel: String,
     val thumbnailUrl: String?,
     val channelUrl: String?,
-    val playedAt: Long
-)
+    val playedAt: Long,
+    val positionMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val updatedAt: Long = playedAt,
+    val syncState: String = "LOCAL"
+) {
+    val progress: Float
+        get() = if (durationMs > 0L) (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
+}
