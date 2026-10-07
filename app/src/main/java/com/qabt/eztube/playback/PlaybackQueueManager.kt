@@ -92,6 +92,9 @@ class PlaybackQueueManager(
         if (loadedNext != null) {
             player.removeMediaItems(current + 1, player.mediaItemCount)
         }
+        // A queue edit can invalidate an in-flight preload for the old next item.
+        // Never let that stale marker block resolving the new logical next item.
+        if (preloadId != next.id) preloadId = null
         if (preloadId == next.id) return
         preloadId = next.id
         scope.launch {
