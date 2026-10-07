@@ -58,6 +58,16 @@ class PlaybackQueueManager(
         val saved = preferences.loadQueue() ?: return
         val currentId = player.currentMediaItem?.mediaId
         val index = saved.first.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
+
+        if (!preferences.loadAutoplay()) {
+            preloadId = null
+            val playerIndex = player.currentMediaItemIndex
+            if (playerIndex >= 0 && playerIndex + 1 < player.mediaItemCount) {
+                player.removeMediaItems(playerIndex + 1, player.mediaItemCount)
+            }
+            return
+        }
+
         if (index in saved.first.indices) ensureNext(saved.first, index)
     }
 
