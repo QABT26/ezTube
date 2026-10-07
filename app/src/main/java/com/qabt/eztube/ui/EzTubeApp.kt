@@ -253,6 +253,31 @@ fun EzTubeApp() {
         playMedia(media, startPositionMs)
     }
 
+    fun playNext(media: MediaSummary) {
+        if (queue.isEmpty() || queueIndex !in queue.indices) {
+            startQueue(media, listOf(media))
+            return
+        }
+        val currentId = queue[queueIndex].id
+        val updated = queue.filterNot { it.id == media.id }.toMutableList()
+        val current = updated.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+        updated.add((current + 1).coerceAtMost(updated.size), media)
+        queue = updated
+        queueIndex = current
+        playbackPrefs.saveQueue(queue, queueIndex)
+    }
+
+    fun addToQueue(media: MediaSummary) {
+        if (queue.isEmpty() || queueIndex !in queue.indices) {
+            startQueue(media, listOf(media))
+            return
+        }
+        if (queue.none { it.id == media.id }) {
+            queue = queue + media
+            playbackPrefs.saveQueue(queue, queueIndex)
+        }
+    }
+
     LaunchedEffect(controller, repeatMode) {
         // Repeat ONE is safe natively. Repeat ALL is owned by PlaybackQueueManager so it
         // wraps the complete persisted logical queue, not only Media3's small resolved window.
@@ -545,9 +570,9 @@ fun EzTubeApp() {
                         recentSearches = recentSearches,
                         onSearchSubmitted = { q -> playbackPrefs.saveSearch(q); recentSearches = playbackPrefs.loadRecentSearches() },
                         onChannel = { openChannel(it.channelUrl) },
-                        onPlay = { media, resultQueue ->
-                            startQueue(media, resultQueue)
-                        }
+                        onPlay = { media, resultQueue -> startQueue(media, resultQueue) },
+                        onPlayNext = { playNext(it) },
+                        onAddToQueue = { addToQueue(it) }
                     )
                     Tab.HOME -> HomeScreen(
                         modifier = Modifier.fillMaxSize().padding(padding),
@@ -727,7 +752,9 @@ private fun SearchScreen(
     recentSearches: List<String>,
     onSearchSubmitted: (String) -> Unit,
     onChannel: (MediaSummary) -> Unit,
-    onPlay: (MediaSummary, List<MediaSummary>) -> Unit
+    onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
+    onPlayNext: (MediaSummary) -> Unit,
+    onAddToQueue: (MediaSummary) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(false) }
@@ -793,7 +820,9 @@ private fun SearchScreen(
                         resolving = resolvingId == media.id,
                         enabled = resolvingId == null,
                         onChannel = { onChannel(media) },
-                        onPlay = { onPlay(media, results) }
+                        onPlay = { onPlay(media, results) },
+                        onPlayNext = { onPlayNext(media) },
+                        onAddToQueue = { onAddToQueue(media) }
                     )
                 }
             }
@@ -807,8 +836,11 @@ private fun SearchResult(
     resolving: Boolean,
     enabled: Boolean,
     onChannel: () -> Unit,
-    onPlay: () -> Unit
+    onPlay: () -> Unit,
+    onPlayNext: (() -> Unit)? = null,
+    onAddToQueue: (() -> Unit)? = null
 ) {
+    var showMenu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = enabled, onClick = onPlay)
             .padding(7.dp), verticalAlignment = Alignment.CenterVertically
@@ -833,7 +865,27 @@ private fun SearchResult(
         }
         Spacer(Modifier.width(6.dp))
         if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-        else Icon(Icons.Outlined.PlayCircle, "Play")
+        else if (onPlayNext != null || onAddToQueue != null) {
+            Box {
+                IconButton(onClick = { showMenu = true }) { Icon(Icons.Outlined.MoreVert, "Queue actions") }
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    onPlayNext?.let { action ->
+                        DropdownMenuItem(
+                            text = { Text("Play next") },
+                            leadingIcon = { Icon(Icons.Outlined.SkipNext, null) },
+                            onClick = { showMenu = false; action() }
+                        )
+                    }
+                    onAddToQueue?.let { action ->
+                        DropdownMenuItem(
+                            text = { Text("Add to queue") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Outlined.PlaylistPlay, null) },
+                            onClick = { showMenu = false; action() }
+                        )
+                    }
+                }
+            }
+        } else Icon(Icons.Outlined.PlayCircle, "Play")
     }
 }
 
