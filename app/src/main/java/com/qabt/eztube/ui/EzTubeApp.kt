@@ -226,9 +226,9 @@ fun EzTubeApp() {
                 val streams = withContext(Dispatchers.IO) {
                     if (videoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
                 }
-                if (videoMode) streams.firstOrNull()
-                else AudioStreamSelector.select(streams, quality)
-                    ?: error("No playable audio stream")
+                (if (videoMode) streams.firstOrNull()
+                else AudioStreamSelector.select(streams, quality))
+                    ?: error(if (videoMode) "No playable video stream" else "No playable audio stream")
             }.onSuccess { stream ->
                 compatibilityFallback = !videoMode && stream.isFallbackMuxed
                 playerError = null
