@@ -77,7 +77,14 @@ class PlaybackQueueManager(
     fun ensureNext(items: List<MediaSummary>, index: Int) {
         if (!preferences.loadAutoplay()) return
         val next = items.getOrNull(index + 1) ?: return
-        if (player.hasNextMediaItem()) return
+        val current = player.currentMediaItemIndex
+        val loadedNext = if (current >= 0 && current + 1 < player.mediaItemCount) {
+            player.getMediaItemAt(current + 1)
+        } else null
+        if (loadedNext?.mediaId == next.id) return
+        if (loadedNext != null) {
+            player.removeMediaItems(current + 1, player.mediaItemCount)
+        }
         if (preloadId == next.id) return
         preloadId = next.id
         scope.launch {
@@ -86,7 +93,13 @@ class PlaybackQueueManager(
                 val latest = preferences.loadQueue()
                 val latestIndex = latest?.first?.indexOfFirst { it.id == currentId } ?: -1
                 val expected = latest?.first?.getOrNull(latestIndex + 1)?.id
-                if (expected == next.id && !player.hasNextMediaItem()) player.addMediaItem(item)
+                if (expected == next.id) {
+                    val playerIndex = player.currentMediaItemIndex
+                    if (playerIndex >= 0 && playerIndex + 1 < player.mediaItemCount) {
+                        player.removeMediaItems(playerIndex + 1, player.mediaItemCount)
+                    }
+                    player.addMediaItem(item)
+                }
             }
             if (preloadId == next.id) preloadId = null
         }
