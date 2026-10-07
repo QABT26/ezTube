@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.foundation.layout.*
@@ -1665,16 +1666,34 @@ private fun FullPlayer(
                                     Icon(Icons.Outlined.GraphicEq, "Playing", Modifier.size(19.dp),
                                         tint = MaterialTheme.colorScheme.primary)
                                 } else {
-                                    IconButton(
-                                        onClick = { onQueueMove(index, index - 1) },
-                                        enabled = index > 0,
-                                        modifier = Modifier.size(30.dp)
-                                    ) { Icon(Icons.Outlined.KeyboardArrowUp, "Move up", Modifier.size(18.dp)) }
-                                    IconButton(
-                                        onClick = { onQueueMove(index, index + 1) },
-                                        enabled = index < queue.lastIndex,
-                                        modifier = Modifier.size(30.dp)
-                                    ) { Icon(Icons.Outlined.KeyboardArrowDown, "Move down", Modifier.size(18.dp)) }
+                                    var dragY by remember(item.id) { mutableFloatStateOf(0f) }
+                                    Icon(
+                                        Icons.Outlined.DragHandle,
+                                        "Drag to reorder",
+                                        Modifier
+                                            .size(32.dp)
+                                            .pointerInput(item.id, index, queue.size) {
+                                                detectDragGesturesAfterLongPress(
+                                                    onDragStart = { dragY = 0f },
+                                                    onDragCancel = { dragY = 0f },
+                                                    onDragEnd = { dragY = 0f },
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        dragY += dragAmount.y
+                                                        val threshold = 36.dp.toPx()
+                                                        if (dragY > threshold && index < queue.lastIndex) {
+                                                            onQueueMove(index, index + 1)
+                                                            dragY = 0f
+                                                        } else if (dragY < -threshold && index > 0) {
+                                                            onQueueMove(index, index - 1)
+                                                            dragY = 0f
+                                                        }
+                                                    }
+                                                )
+                                            }
+                                            .padding(6.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                     IconButton(onClick = { onQueueRemove(index) }, modifier = Modifier.size(30.dp)) {
                                         Icon(Icons.Outlined.Close, "Remove from queue", Modifier.size(18.dp))
                                     }
