@@ -198,6 +198,13 @@ fun EzTubeApp() {
         return listOf(media) + pool.shuffled(kotlin.random.Random(seed))
     }
 
+    fun notifyQueueChanged() {
+        controller?.sendCustomCommand(
+            androidx.media3.session.SessionCommand(PlaybackService.COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY),
+            android.os.Bundle.EMPTY
+        )
+    }
+
     fun playMedia(media: MediaSummary, startPositionMs: Long = 0L) {
         if (resolvingId != null) return
         scope.launch {
@@ -246,14 +253,6 @@ fun EzTubeApp() {
             resolvingId = null
         }
     }
-
-    fun notifyQueueChanged() {
-        controller?.sendCustomCommand(
-            androidx.media3.session.SessionCommand(PlaybackService.COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY),
-            android.os.Bundle.EMPTY
-        )
-    }
-
     fun startQueue(media: MediaSummary, sourceItems: List<MediaSummary>, startPositionMs: Long = 0L) {
         queue = queueForStart(media, sourceItems)
         queueIndex = queue.indexOfFirst { it.id == media.id }.coerceAtLeast(0)
