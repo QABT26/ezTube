@@ -465,6 +465,16 @@ fun EzTubeApp() {
         } else if (showPlayer && nowPlaying != null) {
             FullPlayer(
                 media = requireNotNull(nowPlaying), controller = controller, isPlaying = isPlaying, quality = quality,
+                videoMode = videoMode,
+                onVideoMode = { enabled ->
+                    if (videoMode != enabled) {
+                        val resumeAt = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
+                        videoMode = enabled
+                        playbackPrefs.saveVideoMode(enabled)
+                        notifyQueueChanged()
+                        nowPlaying?.let { playMedia(it, resumeAt) }
+                    }
+                },
                 onQuality = { quality = it; playbackPrefs.saveQuality(it) }, playbackSpeed = playbackSpeed,
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 compatibilityFallback = compatibilityFallback, isBuffering = isBuffering, playerError = playerError,
@@ -515,10 +525,10 @@ fun EzTubeApp() {
                     }
                 },
                 onPrevious = {
-                    controller?.seekToPreviousMediaItem()
+                    controller?.seekToPrevious()
                 },
                 onNext = {
-                    controller?.seekToNextMediaItem()
+                    controller?.seekToNext()
                 },
                 isFavorite = favorites.any { it.mediaId == nowPlaying?.id }, onChannel = { openChannel(nowPlaying?.channelUrl) },
                 onFavorite = { nowPlaying?.let { media -> scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } } },
@@ -670,6 +680,8 @@ private fun AppHeader(onSettings: () -> Unit, onDoubleTapCenter: () -> Unit) {
 @Composable
 private fun SettingsScreen(
     quality: AudioQuality,
+    videoMode: Boolean,
+    onVideoMode: (Boolean) -> Unit,
     onQuality: (AudioQuality) -> Unit,
     speed: Float,
     onSpeed: (Float) -> Unit,
