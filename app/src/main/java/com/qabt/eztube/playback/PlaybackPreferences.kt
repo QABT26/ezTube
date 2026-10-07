@@ -49,6 +49,12 @@ class PlaybackPreferences(context: Context) {
         return items to prefs.getInt("queue_index", 0).coerceIn(items.indices)
     }
 
+    fun saveVideoMode(enabled: Boolean) {
+        prefs.edit().putBoolean("video_mode", enabled).apply()
+    }
+
+    fun loadVideoMode(): Boolean = prefs.getBoolean("video_mode", false)
+
     fun saveQuality(quality: AudioQuality) {
         prefs.edit().putString("quality", quality.name).apply()
     }
