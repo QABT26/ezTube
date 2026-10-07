@@ -1,5 +1,6 @@
 package com.qabt.eztube.history
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -11,6 +12,6 @@ data class FavoriteEntry(
     val thumbnailUrl: String?,
     val channelUrl: String?,
     val addedAt: Long,
-    val updatedAt: Long = addedAt,
-    val syncState: String = "LOCAL"
+    @ColumnInfo(defaultValue = "0") val updatedAt: Long = addedAt,
+    @ColumnInfo(defaultValue = "'LOCAL'") val syncState: String = "LOCAL"
 )
