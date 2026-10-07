@@ -1591,6 +1591,7 @@ private fun FullPlayer(
     var draggedQueueId by remember { mutableStateOf<String?>(null) }
     var draggedQueueIndex by remember { mutableIntStateOf(-1) }
     var dragQueueY by remember { mutableFloatStateOf(0f) }
+    var dragQueuePointerY by remember { mutableFloatStateOf(0f) }
     val playerScrollState = rememberScrollState()
     val dragScope = rememberCoroutineScope()
     LaunchedEffect(controller, media.id) {
@@ -1935,38 +1936,43 @@ private fun FullPlayer(
                                                         draggedQueueId = item.id
                                                         draggedQueueIndex = queue.indexOfFirst { it.id == item.id }
                                                         dragQueueY = 0f
+                                                        dragQueuePointerY = 0f
                                                     },
                                                     onDragCancel = {
                                                         draggedQueueId = null
                                                         draggedQueueIndex = -1
                                                         dragQueueY = 0f
+                                                        dragQueuePointerY = 0f
                                                     },
                                                     onDragEnd = {
                                                         draggedQueueId = null
                                                         draggedQueueIndex = -1
                                                         dragQueueY = 0f
+                                                        dragQueuePointerY = 0f
                                                     },
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
                                                         if (draggedQueueId != item.id) return@detectDragGesturesAfterLongPress
                                                         dragQueueY += dragAmount.y
-                                                        val edge = 18.dp.toPx()
-                                                        val scrollStep = 30.dp.toPx()
-                                                        when {
-                                                            change.position.y < -edge && playerScrollState.value > 0 ->
-                                                                dragScope.launch {
-                                                                    playerScrollState.scrollTo(
-                                                                        (playerScrollState.value - scrollStep.toInt()).coerceAtLeast(0)
-                                                                    )
-                                                                }
-                                                            change.position.y > size.height + edge && playerScrollState.value < playerScrollState.maxValue ->
-                                                                dragScope.launch {
-                                                                    playerScrollState.scrollTo(
-                                                                        (playerScrollState.value + scrollStep.toInt()).coerceAtMost(playerScrollState.maxValue)
-                                                                    )
-                                                                }
-                                                        }
+                                                        dragQueuePointerY += dragAmount.y
                                                         val threshold = 36.dp.toPx()
+                                                         // Pointer coordinates are local to the drag handle. Use the
+                                                        // accumulated gesture displacement for continuous multi-row
+                                                        // movement; outer scrolling is driven by drag direction once
+                                                        // the gesture has crossed several row heights.
+                                                        if (dragQueueY > threshold * 2 && playerScrollState.value < playerScrollState.maxValue) {
+                                                            dragScope.launch {
+                                                                playerScrollState.scrollTo(
+                                                                    (playerScrollState.value + threshold.toInt()).coerceAtMost(playerScrollState.maxValue)
+                                                                )
+                                                            }
+                                                        } else if (dragQueueY < -threshold * 2 && playerScrollState.value > 0) {
+                                                            dragScope.launch {
+                                                                playerScrollState.scrollTo(
+                                                                    (playerScrollState.value - threshold.toInt()).coerceAtLeast(0)
+                                                                )
+                                                            }
+                                                        }
                                                         while (dragQueueY > threshold && draggedQueueIndex in 0 until queue.lastIndex) {
                                                             val from = draggedQueueIndex
                                                             onQueueMove(from, from + 1)
