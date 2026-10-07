@@ -797,6 +797,15 @@ private fun SearchScreen(
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
+    var searchSort by remember { mutableStateOf(SearchSort.RELEVANCE) }
+    val displayResults = remember(results, searchSort) {
+        when (searchSort) {
+            SearchSort.RELEVANCE -> results
+            SearchSort.NEWEST -> results.sortedBy { searchAgeRank(it.uploadDateText) }
+            SearchSort.VIEWS -> results.sortedByDescending { it.viewCount }
+            SearchSort.DURATION -> results.sortedByDescending { it.durationSeconds }
+        }
+    }
 
     fun submit(searchText: String = query) {
         val normalized = searchText.trim()
@@ -831,12 +840,12 @@ private fun SearchScreen(
             shape = RoundedCornerShape(18.dp)
         )
         if (query.isBlank() && recentSearches.isNotEmpty()) {
-            androidx.compose.foundation.lazy.LazyRow(
+            androidx.compose.foundation.layout.FlowRow(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                contentPadding = PaddingValues(end = 8.dp)
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                items(recentSearches.take(5), key = { "recent-search-" + it }) { recent ->
+                recentSearches.take(5).forEach { recent ->
                     AssistChip(
                         onClick = { submit(recent) },
                         label = {
@@ -844,9 +853,24 @@ private fun SearchScreen(
                                 recent,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(min = 88.dp, max = 220.dp)
+                                modifier = Modifier.widthIn(max = 280.dp)
                             )
                         }
+                    )
+                }
+            }
+        }
+        if (results.isNotEmpty()) {
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                SearchSort.entries.forEach { option ->
+                    FilterChip(
+                        selected = searchSort == option,
+                        onClick = { searchSort = option },
+                        label = { Text(option.label, maxLines = 1) }
                     )
                 }
             }
@@ -863,14 +887,14 @@ private fun SearchScreen(
         } else {
             LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                itemsIndexed(results, key = { index, media -> "search-" + index + "-" + media.id }) { _, media ->
+                itemsIndexed(displayResults, key = { index, media -> "search-" + index + "-" + media.id }) { _, media ->
                     SearchResult(
                         media = media,
                         progressEntry = historyEntries.firstOrNull { it.mediaId == media.id },
                         resolving = resolvingId == media.id,
                         enabled = resolvingId == null,
                         onChannel = { onChannel(media) },
-                        onPlay = { onPlay(media, results) },
+                        onPlay = { onPlay(media, displayResults) },
                         onPlayNext = { onPlayNext(media) },
                         onAddToQueue = { onAddToQueue(media) }
                     )
@@ -878,6 +902,22 @@ private fun SearchScreen(
             }
         }
     }
+}
+
+private fun searchAgeRank(text: String?): Long {
+    val value = text?.lowercase()?.trim().orEmpty()
+    if (value.isBlank()) return Long.MAX_VALUE
+    val number = Regex("""\d+""").find(value)?.value?.toLongOrNull() ?: 1L
+    val unit = when {
+        "minute" in value || "phút" in value -> 60L
+        "hour" in value || "giờ" in value -> 3_600L
+        "day" in value || "ngày" in value -> 86_400L
+        "week" in value || "tuần" in value -> 604_800L
+        "month" in value || "tháng" in value -> 2_629_800L
+        "year" in value || "năm" in value -> 31_557_600L
+        else -> Long.MAX_VALUE / 4
+    }
+    return if (unit >= Long.MAX_VALUE / 4) unit else number * unit
 }
 
 @Composable
