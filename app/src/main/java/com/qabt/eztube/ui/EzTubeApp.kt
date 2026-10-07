@@ -1128,6 +1128,7 @@ private fun ProgressMediaRow(entry: HistoryEntry, resolving: Boolean, onClick: (
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryScreen(
     modifier: Modifier,
