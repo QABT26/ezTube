@@ -115,6 +115,7 @@ fun EzTubeApp() {
     var trendingLanguage by remember { mutableStateOf(playbackPrefs.loadTrendingLanguage()) }
     val searchListState = rememberLazyListState()
     val homeListState = rememberLazyListState()
+    val libraryListState = rememberLazyListState()
     var channelDetail by remember { mutableStateOf<ChannelSummary?>(null) }
     var channelLoading by remember { mutableStateOf(false) }
     var channelError by remember { mutableStateOf<String?>(null) }
@@ -247,7 +248,7 @@ fun EzTubeApp() {
                     }
                     resumePositionMs = 0L
                     playbackPrefs.save(media, startPositionMs)
-                    withContext(Dispatchers.IO) { history.record(media) }
+                    withContext(Dispatchers.IO) { history.record(media, startPositionMs, controller?.duration?.takeIf { it > 0 } ?: 0L) }
                 } ?: run { errorMessage = "Playback service is not ready yet" }
             }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
             resolvingId = null
@@ -315,6 +316,8 @@ fun EzTubeApp() {
             val media = nowPlaying ?: continue
             val position = controller?.currentPosition?.takeIf { it >= 0 } ?: resumePositionMs
             playbackPrefs.save(media, position)
+            val duration = controller?.duration?.takeIf { it > 0 } ?: 0L
+            withContext(Dispatchers.IO) { history.updateProgress(media, position, duration) }
         }
     }
 
@@ -523,7 +526,7 @@ fun EzTubeApp() {
             )
         } else {
             Scaffold(
-                topBar = { AppHeader(onSettings = { showSettings = true }, onDoubleTapCenter = { scope.launch { when (selected) { Tab.HOME -> homeListState.animateScrollToItem(0); Tab.SEARCH -> searchListState.animateScrollToItem(0); Tab.LIBRARY -> Unit } } }) },
+                topBar = { AppHeader(onSettings = { showSettings = true }, onDoubleTapCenter = { scope.launch { when (selected) { Tab.HOME -> homeListState.animateScrollToItem(0); Tab.SEARCH -> searchListState.animateScrollToItem(0); Tab.LIBRARY -> libraryListState.animateScrollToItem(0) } } }) },
                 bottomBar = {
                     Column {
                         nowPlaying?.let { media ->
@@ -570,6 +573,7 @@ fun EzTubeApp() {
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
                         results = searchResults,
+                        historyEntries = recent,
                         listState = searchListState,
                         onResultsChange = { searchResults = it },
                         recentSearches = recentSearches,
@@ -597,6 +601,7 @@ fun EzTubeApp() {
                         modifier = Modifier.fillMaxSize().padding(padding),
                         recent = recent,
                         favorites = favorites,
+                        listState = libraryListState,
                         resolvingId = resolvingId,
                         onPlay = { entry ->
                             val items = recent.map { it.toMediaSummary() }
@@ -752,6 +757,7 @@ private fun SearchScreen(
     query: String,
     onQueryChange: (String) -> Unit,
     results: List<MediaSummary>,
+    historyEntries: List<HistoryEntry>,
     listState: androidx.compose.foundation.lazy.LazyListState,
     onResultsChange: (List<MediaSummary>) -> Unit,
     recentSearches: List<String>,
@@ -822,6 +828,7 @@ private fun SearchScreen(
                 itemsIndexed(results, key = { index, media -> "search-" + index + "-" + media.id }) { _, media ->
                     SearchResult(
                         media = media,
+                        progressEntry = historyEntries.firstOrNull { it.mediaId == media.id },
                         resolving = resolvingId == media.id,
                         enabled = resolvingId == null,
                         onChannel = { onChannel(media) },
@@ -838,6 +845,7 @@ private fun SearchScreen(
 @Composable
 private fun SearchResult(
     media: MediaSummary,
+    progressEntry: HistoryEntry? = null,
     resolving: Boolean,
     enabled: Boolean,
     onChannel: () -> Unit,
@@ -867,6 +875,9 @@ private fun SearchResult(
                 overflow = TextOverflow.Ellipsis,
                 modifier = if (media.channelUrl != null) Modifier.clickable(onClick = onChannel) else Modifier
             )
+            progressEntry?.let { entry ->
+                PlaybackProgress(progress = entry.progress)
+            }
         }
         Spacer(Modifier.width(6.dp))
         if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
@@ -1062,10 +1073,50 @@ private fun CompactMediaRow(
 }
 
 @Composable
+private fun PlaybackProgress(progress: Float) {
+    if (progress <= 0f) return
+    val percent = (progress * 100).toInt().coerceIn(1, 100)
+    Column(Modifier.fillMaxWidth().padding(top = 3.dp)) {
+        LinearProgressIndicator(
+            progress = { progress.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(50))
+        )
+        Text(
+            if (progress >= 0.95f) "Watched" else "Watched $percent%",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun ProgressMediaRow(entry: HistoryEntry, resolving: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+            .clickable(enabled = !resolving, onClick = onClick).padding(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AsyncImage(entry.thumbnailUrl, null, Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)),
+            contentScale = ContentScale.Crop)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            Text(entry.channel, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            PlaybackProgress(entry.progress)
+        }
+        if (resolving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        else Icon(Icons.Outlined.PlayArrow, "Play")
+    }
+}
+
+@Composable
 private fun LibraryScreen(
     modifier: Modifier,
     recent: List<HistoryEntry>,
     favorites: List<FavoriteEntry>,
+    listState: androidx.compose.foundation.lazy.LazyListState,
     resolvingId: String?,
     onPlay: (HistoryEntry) -> Unit,
     onPlayFavorite: (FavoriteEntry) -> Unit,
@@ -1080,6 +1131,7 @@ private fun LibraryScreen(
 
     LazyColumn(
         modifier = modifier.padding(horizontal = 14.dp),
+        state = listState,
         contentPadding = PaddingValues(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -1143,7 +1195,7 @@ private fun LibraryScreen(
             item { Text("Nothing played yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
         } else {
             items(if (showAllRecent) recent else recent.take(3), key = { "recent-" + it.mediaId }) { entry ->
-                CompactMediaRow(entry.title, entry.channel, entry.thumbnailUrl, resolvingId == entry.mediaId) { onPlay(entry) }
+                ProgressMediaRow(entry = entry, resolving = resolvingId == entry.mediaId) { onPlay(entry) }
             }
         }
 
@@ -1178,6 +1230,7 @@ private fun LibraryScreen(
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(entry.channel, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    PlaybackProgress(progress = entry.progress)
                 }
                 if (resolvingId == entry.mediaId) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 else IconButton(onClick = { onDelete(entry) }) { Icon(Icons.Outlined.Close, "Remove from history") }
