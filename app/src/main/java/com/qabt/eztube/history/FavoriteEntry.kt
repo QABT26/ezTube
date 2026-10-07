@@ -10,5 +10,7 @@ data class FavoriteEntry(
     val channel: String,
     val thumbnailUrl: String?,
     val channelUrl: String?,
-    val addedAt: Long
+    val addedAt: Long,
+    val updatedAt: Long = addedAt,
+    val syncState: String = "LOCAL"
 )
