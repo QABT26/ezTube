@@ -1550,6 +1550,8 @@ private fun FullPlayer(
     var draggedQueueId by remember { mutableStateOf<String?>(null) }
     var draggedQueueIndex by remember { mutableIntStateOf(-1) }
     var dragQueueY by remember { mutableFloatStateOf(0f) }
+    val playerScrollState = rememberScrollState()
+    val dragScope = rememberCoroutineScope()
     LaunchedEffect(controller, media.id) {
         while (true) {
             position = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
@@ -1571,15 +1573,30 @@ private fun FullPlayer(
         }
 
         Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)
+            Modifier.weight(1f).verticalScroll(playerScrollState).padding(horizontal = 14.dp)
         ) {
             Spacer(Modifier.height(8.dp))
-            AsyncImage(
-                media.thumbnailUrl, null,
-                Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(20.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentScale = ContentScale.Crop
-            )
+            if (videoMode && controller != null) {
+                AndroidView(
+                    factory = { context ->
+                        androidx.media3.ui.PlayerView(context).apply {
+                            useController = false
+                            player = controller
+                        }
+                    },
+                    update = { it.player = controller },
+                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+            } else {
+                AsyncImage(
+                    media.thumbnailUrl, null,
+                    Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentScale = ContentScale.Crop
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Text(media.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1606,6 +1623,20 @@ private fun FullPlayer(
 
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(
+                    selected = !videoMode,
+                    onClick = { onVideoMode(false) },
+                    label = { Text("AUDIO") },
+                    leadingIcon = { Icon(Icons.Outlined.Headphones, null, Modifier.size(16.dp)) }
+                )
+                FilterChip(
+                    selected = videoMode,
+                    onClick = { onVideoMode(true) },
+                    label = { Text("VIDEO") },
+                    leadingIcon = { Icon(Icons.Outlined.OndemandVideo, null, Modifier.size(16.dp)) }
+                )
+            }
+            if (!videoMode) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 AudioQuality.entries.forEach { option ->
                     FilterChip(
                         modifier = Modifier.weight(1f),
@@ -1622,7 +1653,8 @@ private fun FullPlayer(
                 }
             }
             Text(
-                if (compatibilityFallback) "Compatibility stream · may use more data"
+                if (videoMode) "Video mode · queue and position are preserved"
+                else if (compatibilityFallback) "Compatibility stream · may use more data"
                 else "Audio-only · quality applies to next track",
                 style = MaterialTheme.typography.labelSmall,
                 color = if (compatibilityFallback) MaterialTheme.colorScheme.error
