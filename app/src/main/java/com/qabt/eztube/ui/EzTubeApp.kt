@@ -249,7 +249,12 @@ fun EzTubeApp() {
                     }
                     resumePositionMs = 0L
                     playbackPrefs.save(media, startPositionMs)
-                    withContext(Dispatchers.IO) { history.record(media, startPositionMs, controller?.duration?.takeIf { it > 0 } ?: 0L) }
+                    // MediaController is application-thread confined. Read controller state here,
+                    // then cross to IO only for the Room write.
+                    val initialDurationMs = duration.takeIf { it > 0 } ?: 0L
+                    withContext(Dispatchers.IO) {
+                        history.record(media, startPositionMs, initialDurationMs)
+                    }
                 } ?: run { errorMessage = "Playback service is not ready yet" }
             }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
             resolvingId = null
