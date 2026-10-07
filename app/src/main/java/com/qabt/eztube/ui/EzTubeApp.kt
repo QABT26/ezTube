@@ -1333,9 +1333,9 @@ private fun PlaylistDetailScreen(
                         }
                         Box(Modifier.weight(1f)) {
                             SearchResult(
-                                media,
-                                resolvingId == media.id,
-                                resolvingId == null,
+                                media = media,
+                                resolving = resolvingId == media.id,
+                                enabled = resolvingId == null,
                                 onChannel = { onChannel(media) },
                                 onPlay = { onPlay(media, playlist.items) }
                             )
