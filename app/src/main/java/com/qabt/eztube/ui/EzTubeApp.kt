@@ -52,6 +52,7 @@ import com.qabt.eztube.history.FavoriteEntry
 import com.qabt.eztube.history.FavoriteRepository
 import com.qabt.eztube.history.HistoryRepository
 import com.qabt.eztube.history.toMediaSummary
+import com.qabt.eztube.history.progress
 import com.qabt.eztube.playback.AudioQuality
 import com.qabt.eztube.playback.AudioStreamSelector
 import com.qabt.eztube.playback.PlaybackService
