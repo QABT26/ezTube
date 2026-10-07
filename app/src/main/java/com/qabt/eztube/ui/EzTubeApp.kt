@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,6 +71,9 @@ import kotlinx.coroutines.withContext
 private enum class Tab(val label: String) { HOME("Home"), SEARCH("Search"), LIBRARY("Library") }
 private enum class RepeatMode { OFF, ONE, ALL }
 private enum class NextMode { LIST, RECOMMENDED }
+private enum class SearchSort(val label: String) {
+    RELEVANCE("Relevance"), NEWEST("Newest"), VIEWS("Views"), DURATION("Duration")
+}
 
 @Composable
 fun EzTubeApp() {
@@ -95,6 +99,7 @@ fun EzTubeApp() {
     var nowPlaying by remember { mutableStateOf<MediaSummary?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
     var quality by remember { mutableStateOf(playbackPrefs.loadQuality()) }
+    var videoMode by remember { mutableStateOf(playbackPrefs.loadVideoMode()) }
     var autoplay by remember { mutableStateOf(playbackPrefs.loadAutoplay()) }
     var nextMode by remember { mutableStateOf(runCatching { NextMode.valueOf(playbackPrefs.loadNextMode()) }.getOrDefault(NextMode.LIST)) }
     var repeatMode by remember {
@@ -218,10 +223,14 @@ fun EzTubeApp() {
                 playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
             }
             runCatching {
-                val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
-                AudioStreamSelector.select(streams, quality) ?: error("No playable audio stream")
+                val streams = withContext(Dispatchers.IO) {
+                    if (videoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
+                }
+                if (videoMode) streams.firstOrNull()
+                else AudioStreamSelector.select(streams, quality)
+                    ?: error("No playable audio stream")
             }.onSuccess { stream ->
-                compatibilityFallback = stream.isFallbackMuxed
+                compatibilityFallback = !videoMode && stream.isFallbackMuxed
                 playerError = null
                 controller?.apply {
                     val metadata = MediaMetadata.Builder()
