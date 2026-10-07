@@ -1428,6 +1428,9 @@ private fun FullPlayer(
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var showQueue by remember { mutableStateOf(false) }
+    var draggedQueueId by remember { mutableStateOf<String?>(null) }
+    var draggedQueueIndex by remember { mutableIntStateOf(-1) }
+    var dragQueueY by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(controller, media.id) {
         while (true) {
             position = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
@@ -1729,27 +1732,44 @@ private fun FullPlayer(
                                     Icon(Icons.Outlined.GraphicEq, "Playing", Modifier.size(19.dp),
                                         tint = MaterialTheme.colorScheme.primary)
                                 } else {
-                                    var dragY by remember(item.id) { mutableFloatStateOf(0f) }
                                     Icon(
                                         Icons.Outlined.DragHandle,
                                         "Drag to reorder",
                                         Modifier
                                             .size(32.dp)
-                                            .pointerInput(item.id, index, queue.size) {
+                                            .pointerInput(item.id) {
                                                 detectDragGesturesAfterLongPress(
-                                                    onDragStart = { dragY = 0f },
-                                                    onDragCancel = { dragY = 0f },
-                                                    onDragEnd = { dragY = 0f },
+                                                    onDragStart = {
+                                                        draggedQueueId = item.id
+                                                        draggedQueueIndex = queue.indexOfFirst { it.id == item.id }
+                                                        dragQueueY = 0f
+                                                    },
+                                                    onDragCancel = {
+                                                        draggedQueueId = null
+                                                        draggedQueueIndex = -1
+                                                        dragQueueY = 0f
+                                                    },
+                                                    onDragEnd = {
+                                                        draggedQueueId = null
+                                                        draggedQueueIndex = -1
+                                                        dragQueueY = 0f
+                                                    },
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
-                                                        dragY += dragAmount.y
+                                                        if (draggedQueueId != item.id) return@detectDragGesturesAfterLongPress
+                                                        dragQueueY += dragAmount.y
                                                         val threshold = 36.dp.toPx()
-                                                        if (dragY > threshold && index < queue.lastIndex) {
-                                                            onQueueMove(index, index + 1)
-                                                            dragY = 0f
-                                                        } else if (dragY < -threshold && index > 0) {
-                                                            onQueueMove(index, index - 1)
-                                                            dragY = 0f
+                                                        while (dragQueueY > threshold && draggedQueueIndex in 0 until queue.lastIndex) {
+                                                            val from = draggedQueueIndex
+                                                            onQueueMove(from, from + 1)
+                                                            draggedQueueIndex = from + 1
+                                                            dragQueueY -= threshold
+                                                        }
+                                                        while (dragQueueY < -threshold && draggedQueueIndex > 0) {
+                                                            val from = draggedQueueIndex
+                                                            onQueueMove(from, from - 1)
+                                                            draggedQueueIndex = from - 1
+                                                            dragQueueY += threshold
                                                         }
                                                     }
                                                 )
@@ -1767,26 +1787,57 @@ private fun FullPlayer(
                 }
             }
 
-            Row(
-                Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onPrevious, enabled = hasPrevious) {
-                    Icon(Icons.Outlined.SkipPrevious, "Previous")
+            if (!showQueue) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onPrevious, enabled = hasPrevious) {
+                        Icon(Icons.Outlined.SkipPrevious, "Previous")
+                    }
+                    FilledTonalIconButton(onClick = { controller?.seekBack() }) {
+                        Icon(Icons.Outlined.Replay10, "Back 10 seconds")
+                    }
+                    FilledIconButton(onClick = onToggle, modifier = Modifier.size(68.dp)) {
+                        Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                            if (isPlaying) "Pause" else "Play", modifier = Modifier.size(34.dp))
+                    }
+                    FilledTonalIconButton(onClick = { controller?.seekForward() }) {
+                        Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
+                    }
+                    IconButton(onClick = onNext, enabled = hasNext) {
+                        Icon(Icons.Outlined.SkipNext, "Next")
+                    }
                 }
-                FilledTonalIconButton(onClick = { controller?.seekBack() }) {
-                    Icon(Icons.Outlined.Replay10, "Back 10 seconds")
-                }
-                FilledIconButton(onClick = onToggle, modifier = Modifier.size(68.dp)) {
-                    Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                        if (isPlaying) "Pause" else "Play", modifier = Modifier.size(34.dp))
-                }
-                FilledTonalIconButton(onClick = { controller?.seekForward() }) {
-                    Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
-                }
-                IconButton(onClick = onNext, enabled = hasNext) {
-                    Icon(Icons.Outlined.SkipNext, "Next")
+            }
+        }
+        if (showQueue) {
+            Surface(tonalElevation = 6.dp, shadowElevation = 6.dp) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onPrevious, enabled = hasPrevious) {
+                        Icon(Icons.Outlined.SkipPrevious, "Previous")
+                    }
+                    FilledTonalIconButton(onClick = { controller?.seekBack() }) {
+                        Icon(Icons.Outlined.Replay10, "Back 10 seconds")
+                    }
+                    FilledIconButton(onClick = onToggle, modifier = Modifier.size(58.dp)) {
+                        Icon(
+                            if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                            if (isPlaying) "Pause" else "Play",
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                    FilledTonalIconButton(onClick = { controller?.seekForward() }) {
+                        Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
+                    }
+                    IconButton(onClick = onNext, enabled = hasNext) {
+                        Icon(Icons.Outlined.SkipNext, "Next")
+                    }
                 }
             }
         }
