@@ -487,12 +487,14 @@ fun EzTubeApp() {
                         }
                         queue = updated
                         playbackPrefs.saveQueue(queue, queueIndex)
+                        notifyQueueChanged()
                     }
                 },
                 onQueueClearUpcoming = {
                     if (queueIndex in queue.indices && queueIndex < queue.lastIndex) {
                         queue = queue.take(queueIndex + 1)
                         playbackPrefs.saveQueue(queue, queueIndex)
+                        notifyQueueChanged()
                     }
                 },
                 onPrevious = {
