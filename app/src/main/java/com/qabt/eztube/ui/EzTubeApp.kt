@@ -1152,8 +1152,9 @@ private fun LibraryScreen(
         contentPadding = PaddingValues(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        stickyHeader {
+            Surface(tonalElevation = if (showAllFavorites) 2.dp else 0.dp) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Favorites", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f))
                 if (favorites.size > 3) {
@@ -1172,6 +1173,7 @@ private fun LibraryScreen(
                         Text("Play all")
                     }
                 }
+            }
             }
         }
         if (favorites.isEmpty()) {
@@ -1194,9 +1196,9 @@ private fun LibraryScreen(
             }
         }
 
-        item {
-            Spacer(Modifier.height(10.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        stickyHeader {
+            Surface(tonalElevation = if (showAllRecent) 2.dp else 0.dp) {
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Recent", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text("Jump back into your latest listening", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1207,6 +1209,7 @@ private fun LibraryScreen(
                     }
                 }
             }
+            }
         }
         if (recent.isEmpty()) {
             item { Text("Nothing played yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
@@ -1216,8 +1219,9 @@ private fun LibraryScreen(
             }
         }
 
-        item {
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        stickyHeader {
+            Surface(tonalElevation = if (showAllHistory) 2.dp else 0.dp) {
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("History", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text(recent.size.toString() + " items", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1230,6 +1234,7 @@ private fun LibraryScreen(
                 if (recent.isNotEmpty()) {
                     IconButton(onClick = onClear) { Icon(Icons.Outlined.DeleteSweep, "Clear history") }
                 }
+            }
             }
         }
         items(if (showAllHistory) recent else recent.take(3), key = { "history-" + it.mediaId }) { entry ->
