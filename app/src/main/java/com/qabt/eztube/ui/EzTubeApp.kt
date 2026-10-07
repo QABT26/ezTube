@@ -236,6 +236,7 @@ fun EzTubeApp() {
                         val idx = queue.indexOfFirst { it.id == media.id }
                         if (idx >= 0) queueIndex = idx
                         playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
+                        notifyQueueChanged()
                     }
                     resumePositionMs = 0L
                     playbackPrefs.save(media, startPositionMs)
@@ -244,6 +245,13 @@ fun EzTubeApp() {
             }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
             resolvingId = null
         }
+    }
+
+    fun notifyQueueChanged() {
+        controller?.sendCustomCommand(
+            androidx.media3.session.SessionCommand(PlaybackService.COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY),
+            android.os.Bundle.EMPTY
+        )
     }
 
     fun startQueue(media: MediaSummary, sourceItems: List<MediaSummary>, startPositionMs: Long = 0L) {
@@ -265,6 +273,7 @@ fun EzTubeApp() {
         queue = updated
         queueIndex = current
         playbackPrefs.saveQueue(queue, queueIndex)
+        notifyQueueChanged()
     }
 
     fun addToQueue(media: MediaSummary) {
@@ -462,6 +471,7 @@ fun EzTubeApp() {
                         queueIndex = if (index < queueIndex) queueIndex - 1 else queueIndex
                         queue = updated
                         playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
+                        notifyQueueChanged()
                     }
                 },
                 onQueueMove = { from, to ->
