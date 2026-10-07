@@ -24,7 +24,8 @@ class NewPipeYouTubeSource : YouTubeSource {
             thumbnailUrl = thumbnails.firstOrNull()?.url,
             channelUrl = uploaderUrl ?: fallbackChannelUrl,
             viewCount = viewCount,
-            uploadDateText = textualUploadDate
+            uploadDateText = textualUploadDate,
+            durationSeconds = duration
         )
 
     override suspend fun search(query: String): List<MediaSummary> {
@@ -46,7 +47,8 @@ class NewPipeYouTubeSource : YouTubeSource {
                     thumbnailUrl = item.thumbnails.firstOrNull()?.url,
                     channelUrl = item.uploaderUrl,
                     viewCount = item.viewCount,
-                    uploadDateText = item.textualUploadDate
+                    uploadDateText = item.textualUploadDate,
+                    durationSeconds = item.duration
                 )
             }
             .toList()
@@ -174,6 +176,28 @@ class NewPipeYouTubeSource : YouTubeSource {
             uploaderName = info.uploaderName.orEmpty(),
             items = items
         )
+    }
+
+    override suspend fun videoStreams(mediaId: String): List<AudioStream> {
+        val info = StreamInfo.getInfo(mediaId)
+        return info.videoStreams
+            .asSequence()
+            .filter { it.isUrl && it.content.isNotBlank() }
+            .sortedWith(
+                compareByDescending<org.schabi.newpipe.extractor.stream.VideoStream> {
+                    it.height.takeIf { h -> h > 0 } ?: 0
+                }.thenByDescending { it.bitrate }
+            )
+            .map { stream ->
+                AudioStream(
+                    url = stream.content,
+                    bitrateKbps = stream.bitrate.takeIf { it > 0 },
+                    codec = null,
+                    mimeType = stream.format?.mimeType,
+                    isFallbackMuxed = true
+                )
+            }
+            .toList()
     }
 
     override suspend fun audioStreams(mediaId: String): List<AudioStream> {
