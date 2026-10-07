@@ -777,13 +777,15 @@ private fun SearchScreen(
     var loading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
 
-    fun submit() {
-        if (query.isBlank() || loading) return
+    fun submit(searchText: String = query) {
+        val normalized = searchText.trim()
+        if (normalized.isBlank() || loading) return
+        if (normalized != query) onQueryChange(normalized)
         scope.launch {
             loading = true
             searchError = null
-            onSearchSubmitted(query)
-            runCatching { withContext(Dispatchers.IO) { source.search(query) } }
+            onSearchSubmitted(normalized)
+            runCatching { withContext(Dispatchers.IO) { source.search(normalized) } }
                 .onSuccess { onResultsChange(it) }
                 .onFailure { searchError = it.message ?: "Search failed" }
             loading = false
@@ -808,14 +810,23 @@ private fun SearchScreen(
             shape = RoundedCornerShape(18.dp)
         )
         if (query.isBlank() && recentSearches.isNotEmpty()) {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            androidx.compose.foundation.lazy.LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(end = 8.dp)
             ) {
-                recentSearches.take(5).forEach { recent ->
-                    AssistChip(onClick = { onQueryChange(recent) }, label = {
-                        Text(recent, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }, modifier = Modifier.weight(1f))
+                items(recentSearches.take(5), key = { "recent-search-" + it }) { recent ->
+                    AssistChip(
+                        onClick = { submit(recent) },
+                        label = {
+                            Text(
+                                recent,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(min = 88.dp, max = 220.dp)
+                            )
+                        }
+                    )
                 }
             }
         }
