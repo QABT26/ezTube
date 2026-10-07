@@ -91,11 +91,11 @@ class PlaybackService : MediaSessionService() {
                         .setAvailablePlayerCommands(playerCommands)
 
                     val previousButton = CommandButton.Builder(CommandButton.ICON_PREVIOUS)
-                        .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                        .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
                         .setSlots(CommandButton.SLOT_BACK)
                         .build()
                     val nextButton = CommandButton.Builder(CommandButton.ICON_NEXT)
-                        .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
                         .setSlots(CommandButton.SLOT_FORWARD)
                         .build()
                     result.setMediaButtonPreferences(listOf(previousButton, nextButton))
@@ -122,12 +122,21 @@ class PlaybackService : MediaSessionService() {
                     controller: MediaSession.ControllerInfo,
                     playerCommand: Int
                 ): Int {
-                    when (playerCommand) {
-                        Player.COMMAND_SEEK_TO_NEXT -> queueManager.move(1)
-                        Player.COMMAND_SEEK_TO_PREVIOUS -> queueManager.move(-1)
-                        // MEDIA_ITEM commands are handled by ExoPlayer's real timeline.
+                    return when (playerCommand) {
+                        Player.COMMAND_SEEK_TO_NEXT,
+                        Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> {
+                            queueManager.move(1)
+                            // PlaybackQueueManager owns the logical queue. Reject the native
+                            // timeline mutation after dispatch so Media3 cannot advance twice.
+                            SessionResult.RESULT_ERROR_NOT_SUPPORTED
+                        }
+                        Player.COMMAND_SEEK_TO_PREVIOUS,
+                        Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> {
+                            queueManager.move(-1)
+                            SessionResult.RESULT_ERROR_NOT_SUPPORTED
+                        }
+                        else -> SessionResult.RESULT_SUCCESS
                     }
-                    return SessionResult.RESULT_SUCCESS
                 }
             })
             .build()
