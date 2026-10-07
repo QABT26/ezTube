@@ -6,9 +6,21 @@ import kotlinx.coroutines.flow.Flow
 class FavoriteRepository(private val dao: FavoriteDao) {
     val all: Flow<List<FavoriteEntry>> = dao.observeAll()
 
-    suspend fun add(media: MediaSummary) = dao.upsert(
-        FavoriteEntry(media.id, media.title, media.channel, media.thumbnailUrl, media.channelUrl, System.currentTimeMillis())
-    )
+    suspend fun add(media: MediaSummary) {
+        val now = System.currentTimeMillis()
+        dao.upsert(
+            FavoriteEntry(
+                mediaId = media.id,
+                title = media.title,
+                channel = media.channel,
+                thumbnailUrl = media.thumbnailUrl,
+                channelUrl = media.channelUrl,
+                addedAt = now,
+                updatedAt = now,
+                syncState = "LOCAL"
+            )
+        )
+    }
 
     suspend fun remove(mediaId: String) = dao.delete(mediaId)
 }
