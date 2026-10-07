@@ -54,6 +54,13 @@ class PlaybackQueueManager(
         resolveAndPlay(items, target)
     }
 
+    fun refreshFromPreferences() {
+        val saved = preferences.loadQueue() ?: return
+        val currentId = player.currentMediaItem?.mediaId
+        val index = saved.first.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
+        if (index in saved.first.indices) ensureNext(saved.first, index)
+    }
+
     fun move(delta: Int) {
         if (busy) return
         val saved = preferences.loadQueue() ?: return
