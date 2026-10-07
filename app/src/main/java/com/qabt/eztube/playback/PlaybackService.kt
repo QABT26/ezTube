@@ -22,6 +22,9 @@ import androidx.media3.session.SessionResult
 
 @UnstableApi
 class PlaybackService : MediaSessionService() {
+    companion object {
+        const val COMMAND_QUEUE_CHANGED = "com.qabt.eztube.QUEUE_CHANGED"
+    }
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -73,6 +76,9 @@ class PlaybackService : MediaSessionService() {
                     controller: MediaSession.ControllerInfo
                 ): ConnectionResult {
                     val sessionCommands = ConnectionResult.DEFAULT_SESSION_COMMANDS
+                        .buildUpon()
+                        .add(androidx.media3.session.SessionCommand(COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY))
+                        .build()
                     val playerCommands = ConnectionResult.DEFAULT_PLAYER_COMMANDS
                         .buildUpon()
                         .add(Player.COMMAND_SEEK_TO_NEXT)
@@ -94,6 +100,21 @@ class PlaybackService : MediaSessionService() {
                         .build()
                     result.setMediaButtonPreferences(listOf(previousButton, nextButton))
                     return result.build()
+                }
+
+                override fun onCustomCommand(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    customCommand: androidx.media3.session.SessionCommand,
+                    args: android.os.Bundle
+                ): com.google.common.util.concurrent.ListenableFuture<SessionResult> {
+                    if (customCommand.customAction == COMMAND_QUEUE_CHANGED) {
+                        queueManager.refreshFromPreferences()
+                        return com.google.common.util.concurrent.Futures.immediateFuture(
+                            SessionResult(SessionResult.RESULT_SUCCESS)
+                        )
+                    }
+                    return super.onCustomCommand(session, controller, customCommand, args)
                 }
 
                 override fun onPlayerCommandRequest(
