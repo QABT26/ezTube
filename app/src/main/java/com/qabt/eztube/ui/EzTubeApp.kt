@@ -452,7 +452,7 @@ fun EzTubeApp() {
                 compatibilityFallback = compatibilityFallback, isBuffering = isBuffering, playerError = playerError,
                 onRetry = { playerError = null; nowPlaying?.let { playMedia(it, controller?.currentPosition ?: 0L) } },
                 sleepMinutes = sleepMinutes, onSleep = { sleepMinutes = it }, autoplay = autoplay,
-                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) }, nextMode = nextMode,
+                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it); notifyQueueChanged() }, nextMode = nextMode,
                 onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) }, repeatMode = repeatMode,
                 onRepeatMode = { repeatMode = it; playbackPrefs.saveRepeatMode(it.ordinal) },
                 queue = queue, queueIndex = queueIndex,
@@ -497,16 +497,10 @@ fun EzTubeApp() {
                     }
                 },
                 onPrevious = {
-                    controller?.let { mc ->
-                        if (mc.hasPreviousMediaItem()) mc.seekToPreviousMediaItem()
-                        else if (queueIndex > 0) { queueIndex -= 1; playMedia(queue[queueIndex]) }
-                    }
+                    controller?.seekToPreviousMediaItem()
                 },
                 onNext = {
-                    controller?.let { mc ->
-                        if (mc.hasNextMediaItem()) mc.seekToNextMediaItem()
-                        else if (queueIndex >= 0 && queueIndex < queue.lastIndex) { queueIndex += 1; playMedia(queue[queueIndex]) }
-                    }
+                    controller?.seekToNextMediaItem()
                 },
                 isFavorite = favorites.any { it.mediaId == nowPlaying?.id }, onChannel = { openChannel(nowPlaying?.channelUrl) },
                 onFavorite = { nowPlaying?.let { media -> scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } } },
@@ -520,7 +514,7 @@ fun EzTubeApp() {
                 speed = playbackSpeed,
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 autoplay = autoplay,
-                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) },
+                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it); notifyQueueChanged() },
                 trendingTopic = trendingTopic,
                 onTrendingTopic = { trendingTopic = it; playbackPrefs.saveTrendingTopic(it) },
                 trendingLanguage = trendingLanguage,
