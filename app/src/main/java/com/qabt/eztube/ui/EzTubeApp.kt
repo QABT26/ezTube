@@ -775,6 +775,7 @@ private fun SettingsScreen(
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SearchScreen(
     modifier: Modifier,
@@ -1907,7 +1908,7 @@ private fun FullPlayer(
                                         item.title,
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
-                                        maxLines = 1,
+                                        maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                         color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                     )
@@ -1949,6 +1950,14 @@ private fun FullPlayer(
                                                         change.consume()
                                                         if (draggedQueueId != item.id) return@detectDragGesturesAfterLongPress
                                                         dragQueueY += dragAmount.y
+                                                        val edge = 18.dp.toPx()
+                                                        val scrollStep = 30.dp.toPx()
+                                                        when {
+                                                            change.position.y < -edge && playerScrollState.value > 0 ->
+                                                                dragScope.launch { playerScrollState.scrollBy(-scrollStep) }
+                                                            change.position.y > size.height + edge && playerScrollState.value < playerScrollState.maxValue ->
+                                                                dragScope.launch { playerScrollState.scrollBy(scrollStep) }
+                                                        }
                                                         val threshold = 36.dp.toPx()
                                                         while (dragQueueY > threshold && draggedQueueIndex in 0 until queue.lastIndex) {
                                                             val from = draggedQueueIndex
