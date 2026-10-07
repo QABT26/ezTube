@@ -143,9 +143,15 @@ class PlaybackQueueManager(
     }
 
     private suspend fun resolve(media: MediaSummary): Result<MediaItem> = runCatching {
-        val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
-        val stream = AudioStreamSelector.select(streams, preferences.loadQuality())
-            ?: error("No playable audio stream")
+        val videoMode = preferences.loadVideoMode()
+        val streams = withContext(Dispatchers.IO) {
+            if (videoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
+        }
+        val stream = if (videoMode) {
+            streams.firstOrNull()
+        } else {
+            AudioStreamSelector.select(streams, preferences.loadQuality())
+        } ?: error(if (videoMode) "No playable video stream" else "No playable audio stream")
         val metadata = MediaMetadata.Builder()
             .setTitle(media.title)
             .setArtist(media.channel)
