@@ -9,7 +9,8 @@ data class MediaSummary(
     val thumbnailUrl: String?,
     val channelUrl: String? = null,
     val viewCount: Long = -1,
-    val uploadDateText: String? = null
+    val uploadDateText: String? = null,
+    val durationSeconds: Long = -1
 )
 
 data class PlaylistSummary(
@@ -41,6 +42,7 @@ interface YouTubeSource {
     suspend fun search(query: String): List<MediaSummary>
     suspend fun trending(topic: String = "Music", language: String = "Vietnamese"): List<MediaSummary>
     suspend fun audioStreams(mediaId: String): List<AudioStream>
+    suspend fun videoStreams(mediaId: String): List<AudioStream>
     suspend fun channel(channelUrl: String): ChannelSummary
     suspend fun playlist(playlistUrl: String): PlaylistDetail
 }
