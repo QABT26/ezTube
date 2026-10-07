@@ -1080,6 +1080,10 @@ private fun LibraryScreen(
     onDelete: (HistoryEntry) -> Unit,
     onClear: () -> Unit
 ) {
+    var showAllFavorites by remember { mutableStateOf(false) }
+    var showAllRecent by remember { mutableStateOf(false) }
+    var showAllHistory by remember { mutableStateOf(false) }
+
     LazyColumn(
         modifier = modifier.padding(horizontal = 14.dp),
         contentPadding = PaddingValues(vertical = 12.dp),
@@ -1089,6 +1093,11 @@ private fun LibraryScreen(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Favorites", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f))
+                if (favorites.size > 3) {
+                    TextButton(onClick = { showAllFavorites = !showAllFavorites }) {
+                        Text(if (showAllFavorites) "Show less" else "View all")
+                    }
+                }
                 if (favorites.isNotEmpty()) {
                     FilledTonalButton(
                         onClick = onPlayAllFavorites,
@@ -1105,7 +1114,7 @@ private fun LibraryScreen(
         if (favorites.isEmpty()) {
             item { Text("Favorite tracks will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
         } else {
-            items(favorites, key = { "fav-" + it.mediaId }) { entry ->
+            items(if (showAllFavorites) favorites else favorites.take(3), key = { "fav-" + it.mediaId }) { entry ->
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                         .clickable(enabled = resolvingId == null) { onPlayFavorite(entry) }.padding(7.dp),
@@ -1124,13 +1133,22 @@ private fun LibraryScreen(
 
         item {
             Spacer(Modifier.height(10.dp))
-            Text("Recent", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Jump back into your latest listening", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Recent", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Jump back into your latest listening", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (recent.size > 3) {
+                    TextButton(onClick = { showAllRecent = !showAllRecent }) {
+                        Text(if (showAllRecent) "Show less" else "View all")
+                    }
+                }
+            }
         }
         if (recent.isEmpty()) {
             item { Text("Nothing played yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
         } else {
-            items(recent.take(5), key = { "recent-" + it.mediaId }) { entry ->
+            items(if (showAllRecent) recent else recent.take(3), key = { "recent-" + it.mediaId }) { entry ->
                 CompactMediaRow(entry.title, entry.channel, entry.thumbnailUrl, resolvingId == entry.mediaId) { onPlay(entry) }
             }
         }
@@ -1141,10 +1159,17 @@ private fun LibraryScreen(
                     Text("History", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text(recent.size.toString() + " items", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (recent.isNotEmpty()) TextButton(onClick = onClear) { Text("Clear all") }
+                if (recent.size > 3) {
+                    TextButton(onClick = { showAllHistory = !showAllHistory }) {
+                        Text(if (showAllHistory) "Show less" else "View all")
+                    }
+                }
+                if (recent.isNotEmpty()) {
+                    IconButton(onClick = onClear) { Icon(Icons.Outlined.DeleteSweep, "Clear history") }
+                }
             }
         }
-        items(recent, key = { "history-" + it.mediaId }) { entry ->
+        items(if (showAllHistory) recent else recent.take(3), key = { "history-" + it.mediaId }) { entry ->
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                     .clickable(enabled = resolvingId == null) { onPlay(entry) }.padding(7.dp),
@@ -1167,7 +1192,10 @@ private fun LibraryScreen(
 
         item {
             Spacer(Modifier.height(12.dp))
-            Text("Downloads", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Downloads", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f))
+            }
             Text("Offline downloads are not enabled in this beta.", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
