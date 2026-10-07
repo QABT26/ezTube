@@ -680,8 +680,6 @@ private fun AppHeader(onSettings: () -> Unit, onDoubleTapCenter: () -> Unit) {
 @Composable
 private fun SettingsScreen(
     quality: AudioQuality,
-    videoMode: Boolean,
-    onVideoMode: (Boolean) -> Unit,
     onQuality: (AudioQuality) -> Unit,
     speed: Float,
     onSpeed: (Float) -> Unit,
@@ -1554,6 +1552,8 @@ private fun FullPlayer(
     controller: MediaController?,
     isPlaying: Boolean,
     quality: AudioQuality,
+    videoMode: Boolean,
+    onVideoMode: (Boolean) -> Unit,
     onQuality: (AudioQuality) -> Unit,
     playbackSpeed: Float,
     onSpeed: (Float) -> Unit,
@@ -1954,9 +1954,17 @@ private fun FullPlayer(
                                                         val scrollStep = 30.dp.toPx()
                                                         when {
                                                             change.position.y < -edge && playerScrollState.value > 0 ->
-                                                                dragScope.launch { playerScrollState.scrollBy(-scrollStep) }
+                                                                dragScope.launch {
+                                                                    playerScrollState.scrollTo(
+                                                                        (playerScrollState.value - scrollStep.toInt()).coerceAtLeast(0)
+                                                                    )
+                                                                }
                                                             change.position.y > size.height + edge && playerScrollState.value < playerScrollState.maxValue ->
-                                                                dragScope.launch { playerScrollState.scrollBy(scrollStep) }
+                                                                dragScope.launch {
+                                                                    playerScrollState.scrollTo(
+                                                                        (playerScrollState.value + scrollStep.toInt()).coerceAtMost(playerScrollState.maxValue)
+                                                                    )
+                                                                }
                                                         }
                                                         val threshold = 36.dp.toPx()
                                                         while (dragQueueY > threshold && draggedQueueIndex in 0 until queue.lastIndex) {
