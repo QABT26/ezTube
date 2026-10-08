@@ -159,6 +159,10 @@ fun EzTubeApp() {
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         isBuffering = state == Player.STATE_BUFFERING
+                        isPlaying = mediaController.isPlaying
+                    }
+                    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                        isPlaying = mediaController.isPlaying
                     }
                 })
             }.onFailure { errorMessage = it.message ?: "Playback service unavailable" }
@@ -211,6 +215,18 @@ fun EzTubeApp() {
         controller?.sendCustomCommand(
             androidx.media3.session.SessionCommand(PlaybackService.COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY),
             android.os.Bundle.EMPTY
+        )
+    }
+
+    fun reloadCurrentForModeChange() {
+        val active = controller ?: return
+        val args = android.os.Bundle().apply {
+            putLong(PlaybackService.ARG_POSITION_MS, active.currentPosition.coerceAtLeast(0L))
+            putBoolean(PlaybackService.ARG_PLAY_WHEN_READY, active.playWhenReady)
+        }
+        active.sendCustomCommand(
+            androidx.media3.session.SessionCommand(PlaybackService.COMMAND_RELOAD_CURRENT, android.os.Bundle.EMPTY),
+            args
         )
     }
 
