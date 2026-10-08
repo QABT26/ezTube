@@ -1913,41 +1913,6 @@ private fun FullPlayer(
             val progress = if (duration > 0) {
                 (displayedPosition.toFloat() / duration).coerceIn(0f, 1f)
             } else 0f
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(28.dp)
-                    .pointerInput(duration) {
-                        fun seek(x: Float) {
-                            if (duration > 0) {
-                                val fraction = (x / size.width).coerceIn(0f, 1f)
-                                controller?.seekTo((duration * fraction).toLong())
-                            }
-                        }
-                        awaitEachGesture {
-                            val down = awaitFirstDown()
-                            seek(down.position.x)
-                            do {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull() ?: break
-                                if (change.positionChanged()) {
-                                    seek(change.position.x)
-                                    change.consume()
-                                }
-                            } while (!change.changedToUpIgnoreConsumed())
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50))
-                )
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatTime(displayedPosition), style = MaterialTheme.typography.labelSmall)
-                Text(formatTime(duration), style = MaterialTheme.typography.labelSmall)
-            }
             Row(
                 Modifier.fillMaxWidth().padding(top = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -2094,7 +2059,47 @@ private fun FullPlayer(
             }
 
         }
+        val displayedPosition = holdSeekPreviewMs.takeIf { it >= 0L } ?: position
+            val progress = if (duration > 0) {
+                (displayedPosition.toFloat() / duration).coerceIn(0f, 1f)
+            } else 0f
         Surface(tonalElevation = 6.dp, shadowElevation = 6.dp) {
+            Column {
+                Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(28.dp)
+                    .pointerInput(duration) {
+                        fun seek(x: Float) {
+                            if (duration > 0) {
+                                val fraction = (x / size.width).coerceIn(0f, 1f)
+                                controller?.seekTo((duration * fraction).toLong())
+                            }
+                        }
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            seek(down.position.x)
+                            do {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull() ?: break
+                                if (change.positionChanged()) {
+                                    seek(change.position.x)
+                                    change.consume()
+                                }
+                            } while (!change.changedToUpIgnoreConsumed())
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50))
+                )
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(formatTime(displayedPosition), style = MaterialTheme.typography.labelSmall)
+                Text(formatTime(duration), style = MaterialTheme.typography.labelSmall)
+            }
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
@@ -2206,6 +2211,7 @@ private fun FullPlayer(
                     }
                 }
             }
+        }
     }
 }
 
