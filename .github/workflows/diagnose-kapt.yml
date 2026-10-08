@@ -21,4 +21,5 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          chmod +x gradlew
           ./gradlew --no-daemon --refresh-dependencies :app:kaptDebugKotlin --stacktrace --info
