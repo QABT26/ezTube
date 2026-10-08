@@ -84,6 +84,7 @@ dependencies {
     implementation("com.github.InfinityLoop1308.PipePipeExtractor:extractor:v5.4.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.webkit:webkit:1.12.1")
+    implementation("com.github.TeamNewPipe:nanojson:1d9e1aea9049fc9f85e68b43ba39fe7be1c1f751")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
