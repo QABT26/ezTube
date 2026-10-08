@@ -148,17 +148,20 @@ class PlaybackQueueManager(
         val builder = player.trackSelectionParameters.buildUpon()
 
         if (targetHeight == null) {
-            // Auto: expose the whole SABR ladder to Media3.
+            // Auto: expose the whole SABR ladder and let Media3 adapt.
             builder
                 .setMinVideoSize(0, 0)
                 .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+                .setForceHighestSupportedBitrate(false)
         } else {
-            // Manual quality is a hard rung, not merely a ceiling. Using only maxHeight
-            // allowed Media3 to stay forever on 144/240/360 when SABR transport did not
-            // contribute regular HTTP bandwidth samples.
+            // Manual quality must not behave like Auto-with-a-cap. SABR transport does not
+            // contribute normal HTTP bandwidth samples, so adaptive selection can otherwise
+            // remain on a very low rung forever. Force the best supported track at or below
+            // the requested height without rebuilding/reloading the MediaSource.
             builder
-                .setMinVideoSize(0, targetHeight)
+                .setMinVideoSize(0, 0)
                 .setMaxVideoSize(Int.MAX_VALUE, targetHeight)
+                .setForceHighestSupportedBitrate(true)
         }
 
         player.trackSelectionParameters = builder.build()
