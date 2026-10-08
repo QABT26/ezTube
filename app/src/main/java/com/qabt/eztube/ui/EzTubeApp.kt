@@ -732,41 +732,6 @@ private fun SettingsScreen(
     onTrendingLanguage: (String) -> Unit,
     onClose: () -> Unit
 ) {
-    if (fullscreenVideo && videoMode && controller != null) {
-        Dialog(
-            onDismissRequest = { fullscreenVideo = false },
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = false
-            )
-        ) {
-            Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black)) {
-                AndroidView(
-                    factory = { context ->
-                        androidx.media3.ui.PlayerView(context).apply {
-                            useController = true
-                            controllerAutoShow = true
-                            controllerHideOnTouch = true
-                            player = controller
-                        }
-                    },
-                    update = {
-                        it.player = controller
-                        it.useController = true
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-                FilledTonalIconButton(
-                    onClick = { fullscreenVideo = false },
-                    modifier = Modifier.align(Alignment.TopEnd)
-                        .statusBarsPadding().padding(12.dp).size(42.dp)
-                ) {
-                    Icon(Icons.Outlined.FullscreenExit, "Exit fullscreen", Modifier.size(24.dp))
-                }
-            }
-        }
-    }
-
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(
             Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
@@ -1827,6 +1792,42 @@ private fun FullPlayer(
             position = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
             duration = controller?.duration?.takeIf { it > 0 } ?: 0L
             delay(500)
+        }
+    }
+
+    if (fullscreenVideo && videoMode && controller != null) {
+        val fullscreenController = controller
+        Dialog(
+            onDismissRequest = { fullscreenVideo = false },
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
+        ) {
+            Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black)) {
+                AndroidView(
+                    factory = { context ->
+                        androidx.media3.ui.PlayerView(context).apply {
+                            useController = true
+                            controllerAutoShow = true
+                            controllerHideOnTouch = true
+                            player = fullscreenController
+                        }
+                    },
+                    update = { view ->
+                        view.player = fullscreenController
+                        view.useController = true
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+                FilledTonalIconButton(
+                    onClick = { fullscreenVideo = false },
+                    modifier = Modifier.align(Alignment.TopEnd)
+                        .statusBarsPadding().padding(12.dp).size(42.dp)
+                ) {
+                    Icon(Icons.Outlined.FullscreenExit, "Exit fullscreen", Modifier.size(24.dp))
+                }
+            }
         }
     }
 
