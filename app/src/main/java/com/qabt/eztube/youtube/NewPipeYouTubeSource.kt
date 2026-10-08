@@ -14,6 +14,134 @@ import org.schabi.newpipe.extractor.stream.StreamInfoItem
 class NewPipeYouTubeSource : YouTubeSource {
     private companion object {
         const val MAX_EXTRA_PAGES = 20
+        const val PLAYBACK_STREAM_CACHE_TTL_MS = 120_000L
+        const val PLAYBACK_STREAM_CACHE_MAX = 4
+    }
+
+    private data class PlaybackStreams(
+        val audio: List<AudioStream>,
+        val video: List<AudioStream>,
+        val createdAtMs: Long
+    )
+
+    private val playbackStreamCache = object : LinkedHashMap<String, PlaybackStreams>(8, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<String, PlaybackStreams>?
+        ): Boolean = size > PLAYBACK_STREAM_CACHE_MAX
+    }
+
+    private val playbackCacheLock = Any()
+
+    fun invalidatePlaybackStreams(mediaId: String) {
+        synchronized(playbackCacheLock) {
+            playbackStreamCache.remove(mediaId)
+        }
+    }
+
+    private suspend fun playbackStreams(mediaId: String): PlaybackStreams {
+        val now = android.os.SystemClock.elapsedRealtime()
+        synchronized(playbackCacheLock) {
+            playbackStreamCache[mediaId]?.let { cached ->
+                if (now - cached.createdAtMs <= PLAYBACK_STREAM_CACHE_TTL_MS) {
+                    return cached
+                }
+                playbackStreamCache.remove(mediaId)
+            }
+        }
+
+        val info = StreamInfo.getInfo(mediaId)
+
+        val audioOnly = info.audioStreams.mapNotNull { stream ->
+            val url = stream.content.takeIf { stream.isUrl && it.isNotBlank() }
+                ?: return@mapNotNull null
+            val bitrate = stream.averageBitrate
+                .takeIf { it > 0 }
+                ?: stream.bitrate.takeIf { it > 0 }
+
+            AudioStream(
+                url = url,
+                bitrateKbps = bitrate,
+                codec = stream.codec,
+                mimeType = stream.format?.mimeType,
+                isFallbackMuxed = false
+            )
+        }
+
+        val fallbackAudio = if (audioOnly.isEmpty()) {
+            info.videoStreams
+                .asSequence()
+                .filter { it.isUrl && it.content.isNotBlank() }
+                .sortedWith(
+                    compareBy(
+                        { it.height.takeIf { h -> h > 0 } ?: Int.MAX_VALUE },
+                        { it.bitrate }
+                    )
+                )
+                .take(1)
+                .map { stream ->
+                    AudioStream(
+                        url = stream.content,
+                        bitrateKbps = null,
+                        codec = null,
+                        mimeType = stream.format?.mimeType,
+                        isFallbackMuxed = true
+                    )
+                }
+                .toList()
+        } else {
+            emptyList()
+        }
+
+        val bestAudio = info.audioStreams
+            .asSequence()
+            .filter { it.isUrl && it.content.isNotBlank() }
+            .maxByOrNull {
+                it.averageBitrate.takeIf { bitrate -> bitrate > 0 }
+                    ?: it.bitrate.takeIf { bitrate -> bitrate > 0 }
+                    ?: 0
+            }
+
+        val videos = (info.videoStreams + info.videoOnlyStreams)
+            .asSequence()
+            .filter { it.isUrl && it.content.isNotBlank() }
+            .sortedWith(
+                compareByDescending<org.schabi.newpipe.extractor.stream.VideoStream> {
+                    it.height.takeIf { h -> h > 0 } ?: 0
+                }.thenByDescending { it.bitrate }
+            )
+            .mapNotNull { stream ->
+                val needsAudio = stream.isVideoOnly
+                if (needsAudio && bestAudio == null) return@mapNotNull null
+
+                AudioStream(
+                    url = stream.content,
+                    bitrateKbps = stream.bitrate.takeIf { it > 0 },
+                    codec = null,
+                    mimeType = stream.format?.mimeType,
+                    isFallbackMuxed = !needsAudio,
+                    videoHeight = stream.height.takeIf { it > 0 },
+                    companionAudioUrl = if (needsAudio) bestAudio?.content else null,
+                    companionAudioMimeType = if (needsAudio) bestAudio?.format?.mimeType else null
+                )
+            }
+            .distinctBy { stream ->
+                listOf(
+                    stream.videoHeight?.toString().orEmpty(),
+                    stream.mimeType.orEmpty(),
+                    stream.companionAudioUrl?.let { "split" } ?: "muxed"
+                ).joinToString("|")
+            }
+            .toList()
+
+        return PlaybackStreams(
+            audio = if (audioOnly.isNotEmpty()) audioOnly else fallbackAudio,
+            video = videos,
+            createdAtMs = android.os.SystemClock.elapsedRealtime()
+        ).also { resolved ->
+            synchronized(playbackCacheLock) {
+                playbackStreamCache[mediaId] = resolved
+            }
+        }
     }
 
     private fun StreamInfoItem.toSummary(fallbackChannelUrl: String? = null, fallbackChannel: String = "") =
@@ -178,88 +306,10 @@ class NewPipeYouTubeSource : YouTubeSource {
         )
     }
 
-    override suspend fun videoStreams(mediaId: String): List<AudioStream> {
-        val info = StreamInfo.getInfo(mediaId)
+    override suspend fun videoStreams(mediaId: String): List<AudioStream> =
+        playbackStreams(mediaId).video
 
-        val bestAudio = info.audioStreams
-            .asSequence()
-            .filter { it.isUrl && it.content.isNotBlank() }
-            .maxByOrNull {
-                it.averageBitrate.takeIf { bitrate -> bitrate > 0 }
-                    ?: it.bitrate.takeIf { bitrate -> bitrate > 0 }
-                    ?: 0
-            }
+    override suspend fun audioStreams(mediaId: String): List<AudioStream> =
+        playbackStreams(mediaId).audio
 
-        return (info.videoStreams + info.videoOnlyStreams)
-            .asSequence()
-            .filter { it.isUrl && it.content.isNotBlank() }
-            .sortedWith(
-                compareByDescending<org.schabi.newpipe.extractor.stream.VideoStream> {
-                    it.height.takeIf { h -> h > 0 } ?: 0
-                }.thenByDescending { it.bitrate }
-            )
-            .mapNotNull { stream ->
-                val needsAudio = stream.isVideoOnly
-                if (needsAudio && bestAudio == null) return@mapNotNull null
-
-                AudioStream(
-                    url = stream.content,
-                    bitrateKbps = stream.bitrate.takeIf { it > 0 },
-                    codec = null,
-                    mimeType = stream.format?.mimeType,
-                    isFallbackMuxed = !needsAudio,
-                    videoHeight = stream.height.takeIf { it > 0 },
-                    companionAudioUrl = if (needsAudio) bestAudio?.content else null,
-                    companionAudioMimeType = if (needsAudio) bestAudio?.format?.mimeType else null
-                )
-            }
-            .distinctBy { stream ->
-                listOf(
-                    stream.videoHeight?.toString().orEmpty(),
-                    stream.mimeType.orEmpty(),
-                    stream.companionAudioUrl?.let { "split" } ?: "muxed"
-                ).joinToString("|")
-            }
-            .toList()
-    }
-
-    override suspend fun audioStreams(mediaId: String): List<AudioStream> {
-        val info = StreamInfo.getInfo(mediaId)
-
-        val audioOnly = info.audioStreams.mapNotNull { stream ->
-            val url = stream.content.takeIf { stream.isUrl && it.isNotBlank() }
-                ?: return@mapNotNull null
-            val bitrate = stream.averageBitrate
-                .takeIf { it > 0 }
-                ?: stream.bitrate.takeIf { it > 0 }
-
-            AudioStream(
-                url = url,
-                bitrateKbps = bitrate,
-                codec = stream.codec,
-                mimeType = stream.format?.mimeType,
-                isFallbackMuxed = false
-            )
-        }
-        if (audioOnly.isNotEmpty()) return audioOnly
-
-        // YouTube can enforce SABR for some content (notably made-for-kids videos),
-        // leaving no separate audio-only formats. Fall back to the lowest-bandwidth
-        // progressive muxed stream so playback still works. Media3 will render audio only.
-        return info.videoStreams
-            .asSequence()
-            .filter { it.isUrl && it.content.isNotBlank() }
-            .sortedWith(compareBy({ it.height.takeIf { h -> h > 0 } ?: Int.MAX_VALUE }, { it.bitrate }))
-            .take(1)
-            .map { stream ->
-                AudioStream(
-                    url = stream.content,
-                    bitrateKbps = null,
-                    codec = null,
-                    mimeType = stream.format?.mimeType,
-                    isFallbackMuxed = true
-                )
-            }
-            .toList()
-    }
 }
