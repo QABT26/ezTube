@@ -66,9 +66,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("io.coil-kt:coil-compose:2.7.0")
 
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    kapt("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-runtime:2.8.5")
+    implementation("androidx.room:room-ktx:2.8.5")
+    kapt("androidx.room:room-compiler:2.8.5")
 
     implementation("androidx.media3:media3-exoplayer:1.6.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.6.1")
