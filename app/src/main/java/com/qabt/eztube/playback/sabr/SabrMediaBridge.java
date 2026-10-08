@@ -6,6 +6,8 @@ import org.schabi.newpipe.extractor.services.youtube.sabr.YoutubeSabrInfo;
 import org.schabi.newpipe.extractor.services.youtube.sabr.YoutubeSabrRequest;
 import org.schabi.newpipe.extractor.services.youtube.sabr.YoutubeSabrSession;
 import org.schabi.newpipe.extractor.services.youtube.sabr.media.SabrMediaSegment;
+import com.qabt.eztube.youtube.sabr.SabrAttestationRetryHandler;
+import com.qabt.eztube.youtube.sabr.SabrRequestCoordinator;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -16,13 +18,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 
 final class SabrMediaBridge {
     private static final int MAX_AHEAD_SEGMENTS = 48;
-    private static final int MAX_PREPARE_REQUESTS = 8;
 
     private final SabrSourceSpec spec;
-    private final YoutubeSabrSession session;
+    private final SabrRequestCoordinator requestCoordinator;
     private final ReentrantLock transactionLock = new ReentrantLock(true);
     private final Map<SabrSegmentKey, SabrMediaSegment> ahead = new LinkedHashMap<>();
     private final Map<YoutubeSabrInfo.Format, Integer> nextSequences =
@@ -34,8 +36,12 @@ final class SabrMediaBridge {
     private volatile boolean stopped;
 
     SabrMediaBridge(YoutubeSabrSession session, SabrSourceSpec spec) {
-        this.session = session;
         this.spec = spec;
+        requestCoordinator = new SabrRequestCoordinator(
+                session,
+                new SabrAttestationRetryHandler(spec.getVideoId()),
+                ignored -> { }
+        );
         selection = new Selection(
                 spec.getBootstrapAudioFormat(),
                 spec.getBootstrapVideoFormat(),
@@ -90,14 +96,16 @@ final class SabrMediaBridge {
         formats.add(spec.getBootstrapAudioFormat());
         formats.add(spec.getBootstrapVideoFormat());
 
-        int attempts = 0;
-        while (!hasTimelines() && !stopped && attempts++ < MAX_PREPARE_REQUESTS) {
-            final YoutubeSabrRequest request = YoutubeSabrRequest.preparation(
-                    Math.max(0, initialPositionMs),
-                    formats
-            );
-            requestOnce(request, spec.getBootstrapAudioFormat());
-        }
+        final YoutubeSabrRequest request = YoutubeSabrRequest.preparation(
+                Math.max(0, initialPositionMs),
+                formats
+        );
+        requestOnce(
+                request,
+                spec.getBootstrapAudioFormat(),
+                () -> hasTimelines() || stopped
+        );
+
         if (!hasTimelines()) {
             throw new IOException("SABR did not return initialization timelines");
         }
@@ -179,26 +187,23 @@ final class SabrMediaBridge {
             YoutubeSabrInfo.Format requestedAudio
     ) throws IOException, ExtractionException {
         throwIfStopped();
+        requestCoordinator.request(
+                request,
+                segment -> acceptSegment(segment, requestedAudio)
+        );
+    }
 
-        while (true) {
-            final YoutubeSabrSession.RequestResult result = session.requestOnce(
-                    request,
-                    segment -> acceptSegment(segment, requestedAudio)
-            );
-            if (!result.isDeferred()) return;
-
-            final long waitMs = Math.max(
-                    1L,
-                    Math.min(1_500L, session.getBackoffRemainingMs())
-            );
-            try {
-                Thread.sleep(waitMs);
-            } catch (InterruptedException error) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Interrupted during SABR backoff", error);
-            }
-            throwIfStopped();
-        }
+    private void requestOnce(
+            YoutubeSabrRequest request,
+            YoutubeSabrInfo.Format requestedAudio,
+            BooleanSupplier progressChecker
+    ) throws IOException, ExtractionException {
+        throwIfStopped();
+        requestCoordinator.request(
+                request,
+                segment -> acceptSegment(segment, requestedAudio),
+                progressChecker
+        );
     }
 
     void discard(SabrSegmentKey key) {
