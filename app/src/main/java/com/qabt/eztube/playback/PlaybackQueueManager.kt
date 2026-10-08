@@ -125,11 +125,25 @@ class PlaybackQueueManager(
     }
 
     private fun setResolved(playback: ResolvedPlayback) {
+        val engine = playback.mediaItem.mediaMetadata.extras
+            ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE)
+        if (engine == PlaybackService.ENGINE_SABR) {
+            applySabrVideoQualityConstraint()
+        }
+
         if (playback.mediaSource != null) {
             player.setMediaSource(playback.mediaSource)
         } else {
             player.setMediaItem(playback.mediaItem)
         }
+    }
+
+    private fun applySabrVideoQualityConstraint() {
+        val maxHeight = preferences.loadVideoQuality().targetHeight ?: Int.MAX_VALUE
+        player.trackSelectionParameters = player.trackSelectionParameters
+            .buildUpon()
+            .setMaxVideoSize(Int.MAX_VALUE, maxHeight)
+            .build()
     }
 
     private fun addResolved(playback: ResolvedPlayback) {
