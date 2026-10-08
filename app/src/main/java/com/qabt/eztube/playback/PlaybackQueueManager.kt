@@ -27,6 +27,7 @@ class PlaybackQueueManager(
 ) {
     companion object {
         private const val MAX_SOURCE_RECOVERY_ATTEMPTS = 3
+        private const val MAX_RESOLVE_ATTEMPTS = 3
     }
 
     @Volatile private var busy = false
@@ -121,6 +122,34 @@ class PlaybackQueueManager(
         )
     }
 
+    fun playSavedCurrent(
+        positionMs: Long,
+        playWhenReady: Boolean,
+        onComplete: (Result<Unit>) -> Unit
+    ) {
+        if (busy) {
+            onComplete(Result.failure(IllegalStateException("Playback resolver is busy")))
+            return
+        }
+        val saved = preferences.loadQueue()
+        if (saved == null || saved.first.isEmpty()) {
+            onComplete(Result.failure(IllegalStateException("Playback queue is empty")))
+            return
+        }
+        val target = saved.second
+        if (target !in saved.first.indices) {
+            onComplete(Result.failure(IllegalStateException("Playback queue index is invalid")))
+            return
+        }
+        resolveAndPlay(
+            items = saved.first,
+            target = target,
+            positionMs = positionMs.coerceAtLeast(0L),
+            playWhenReady = playWhenReady,
+            onComplete = onComplete
+        )
+    }
+
     fun recoverSourceError() {
         if (busy || recoveryJobActive) return
         val saved = preferences.loadQueue() ?: return
@@ -146,7 +175,7 @@ class PlaybackQueueManager(
         scope.launch {
             if (recoveryAttempts > 1) delay((recoveryAttempts - 1) * 500L)
             val media = items[index]
-            resolve(media).onSuccess { item ->
+            resolveWithRetry(media).onSuccess { item ->
                 if (requestGeneration != generation) return@onSuccess
                 val latest = preferences.loadQueue()
                 if (latest == null || latest.first.getOrNull(index)?.id != media.id) return@onSuccess
@@ -243,7 +272,7 @@ class PlaybackQueueManager(
         preloadId = next.id
         val requestGeneration = generation
         scope.launch {
-            resolve(next).onSuccess { item ->
+            resolveWithRetry(next).onSuccess { item ->
                 if (requestGeneration != generation) return@onSuccess
                 val currentId = player.currentMediaItem?.mediaId
                 val latest = preferences.loadQueue()
@@ -265,18 +294,29 @@ class PlaybackQueueManager(
         items: List<MediaSummary>,
         target: Int,
         positionMs: Long = 0L,
-        playWhenReady: Boolean = true
+        playWhenReady: Boolean = true,
+        onComplete: ((Result<Unit>) -> Unit)? = null
     ) {
-        if (target !in items.indices) return
+        if (target !in items.indices) {
+            onComplete?.invoke(Result.failure(IndexOutOfBoundsException("Playback target is out of range")))
+            return
+        }
         busy = true
         invalidatePending()
         val requestGeneration = generation
         scope.launch {
             val media = items[target]
-            resolve(media).onSuccess { item ->
-                if (requestGeneration != generation) return@onSuccess
+            val resolved = resolveWithRetry(media)
+            resolved.onSuccess { item ->
+                if (requestGeneration != generation) {
+                    onComplete?.invoke(Result.failure(IllegalStateException("Playback request was superseded")))
+                    return@onSuccess
+                }
                 val latest = preferences.loadQueue()
-                if (latest == null || latest.first.getOrNull(target)?.id != media.id) return@onSuccess
+                if (latest == null || latest.first.getOrNull(target)?.id != media.id) {
+                    onComplete?.invoke(Result.failure(IllegalStateException("Playback queue changed during resolve")))
+                    return@onSuccess
+                }
                 player.setMediaItem(item)
                 player.prepare()
                 if (positionMs > 0L) player.seekTo(positionMs)
@@ -287,6 +327,9 @@ class PlaybackQueueManager(
                 clearAlternateStream()
                 ensureNext(items, target)
                 warmAlternateStream(media)
+                onComplete?.invoke(Result.success(Unit))
+            }.onFailure { error ->
+                onComplete?.invoke(Result.failure(error))
             }
             busy = false
         }
@@ -304,6 +347,9 @@ class PlaybackQueueManager(
         val metadata = MediaMetadata.Builder()
             .setTitle(media.title)
             .setArtist(media.channel)
+            .setExtras(android.os.Bundle().apply {
+                putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, stream.isFallbackMuxed)
+            })
             .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
         player.setMediaItem(
@@ -341,6 +387,19 @@ class PlaybackQueueManager(
         }
     }
 
+    private suspend fun resolveWithRetry(media: MediaSummary): Result<MediaItem> {
+        var lastError: Throwable? = null
+        repeat(MAX_RESOLVE_ATTEMPTS) { attempt ->
+            val result = resolve(media)
+            if (result.isSuccess) return result
+            lastError = result.exceptionOrNull()
+            if (attempt < MAX_RESOLVE_ATTEMPTS - 1) {
+                delay((attempt + 1) * 500L)
+            }
+        }
+        return Result.failure(lastError ?: IllegalStateException("Unable to resolve media"))
+    }
+
     private suspend fun resolve(media: MediaSummary): Result<MediaItem> = runCatching {
         val videoMode = preferences.loadVideoMode()
         val streams = withContext(Dispatchers.IO) {
@@ -354,6 +413,9 @@ class PlaybackQueueManager(
         val metadata = MediaMetadata.Builder()
             .setTitle(media.title)
             .setArtist(media.channel)
+            .setExtras(android.os.Bundle().apply {
+                putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, stream.isFallbackMuxed)
+            })
             .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
         MediaItem.Builder()
