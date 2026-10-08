@@ -166,19 +166,28 @@ class PlaybackQueueManager(
 
         val positionMs = player.currentPosition.coerceAtLeast(0L)
         val shouldPlay = player.playWhenReady
-        recoveryAttempts += 1
         recoveryJobActive = true
         invalidatePending()
         clearAlternateStream()
         val requestGeneration = generation
 
         scope.launch {
-            if (recoveryAttempts > 1) delay((recoveryAttempts - 1) * 500L)
             val media = items[index]
-            resolveWithRetry(media).onSuccess { item ->
-                if (requestGeneration != generation) return@onSuccess
+            while (
+                recoveryAttempts < MAX_SOURCE_RECOVERY_ATTEMPTS &&
+                requestGeneration == generation
+            ) {
+                recoveryAttempts += 1
+                if (recoveryAttempts > 1) delay((recoveryAttempts - 1) * 500L)
+
+                val resolved = resolve(media)
+                if (resolved.isFailure) continue
+                val item = resolved.getOrThrow()
+
                 val latest = preferences.loadQueue()
-                if (latest == null || latest.first.getOrNull(index)?.id != media.id) return@onSuccess
+                if (latest == null || latest.first.getOrNull(index)?.id != media.id) break
+                if (requestGeneration != generation) break
+
                 player.setMediaItem(item)
                 player.prepare()
                 if (positionMs > 0L) player.seekTo(positionMs)
@@ -188,6 +197,7 @@ class PlaybackQueueManager(
                 preferences.saveSession(media, positionMs, shouldPlay)
                 ensureNext(items, index)
                 warmAlternateStream(media)
+                break
             }
             recoveryJobActive = false
         }
