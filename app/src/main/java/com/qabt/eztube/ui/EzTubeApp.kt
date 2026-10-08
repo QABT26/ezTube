@@ -274,12 +274,26 @@ fun EzTubeApp() {
         )
     }
 
-    fun applyVideoQualityConstraint(active: MediaController, quality: VideoQuality) {
-        val maxHeight = quality.targetHeight ?: Int.MAX_VALUE
-        active.trackSelectionParameters = active.trackSelectionParameters
-            .buildUpon()
-            .setMaxVideoSize(Int.MAX_VALUE, maxHeight)
-            .build()
+    fun applyVideoQualityWithoutGuessingEngine() {
+        val active = controller ?: return
+        val args = android.os.Bundle().apply {
+            putLong(PlaybackService.ARG_POSITION_MS, active.currentPosition.coerceAtLeast(0L))
+            putBoolean(PlaybackService.ARG_PLAY_WHEN_READY, active.playWhenReady)
+        }
+        val future = active.sendCustomCommand(
+            androidx.media3.session.SessionCommand(
+                PlaybackService.COMMAND_SET_VIDEO_QUALITY,
+                android.os.Bundle.EMPTY
+            ),
+            args
+        )
+        future.addListener({
+            runCatching { future.get() }.onSuccess { result ->
+                playbackEngine = result.extras.getString(
+                    PlaybackService.EXTRA_PLAYBACK_ENGINE
+                ) ?: playbackEngine
+            }
+        }, context.mainExecutor)
     }
 
     fun reloadCurrentForModeChange() {
@@ -570,15 +584,7 @@ fun EzTubeApp() {
                         videoQuality = it
                         playbackPrefs.saveVideoQuality(it)
                         if (videoMode) {
-                            val active = controller
-                            if (
-                                active != null &&
-                                playbackEngine == PlaybackService.ENGINE_SABR
-                            ) {
-                                applyVideoQualityConstraint(active, it)
-                            } else {
-                                reloadCurrentForModeChange()
-                            }
+                            applyVideoQualityWithoutGuessingEngine()
                         }
                     }
                 },
