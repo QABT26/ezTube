@@ -65,7 +65,11 @@ class PlaybackService : MediaSessionService() {
                         queueManager.onTransition(mediaItem)
                     }
 
-                    override fun onPlaybackStateChanged(playbackState: Int) {
+                    override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                queueManager.onTracksChanged()
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
                         if (playbackState == Player.STATE_ENDED) queueManager.onPlaybackEnded()
                         if (playbackState == Player.STATE_READY) queueManager.onPlaybackHealthy()
                         queueManager.checkpointSession()
