@@ -9,6 +9,20 @@ enum class VideoQuality(val targetHeight: Int?) {
 }
 
 object VideoStreamSelector {
+    fun selectFastStart(streams: List<AudioStream>, quality: VideoQuality): AudioStream? {
+        val target = quality.targetHeight ?: 480
+        val cap = minOf(target, 480)
+        val muxed = streams.filter {
+            (it.videoHeight ?: 0) > 0 &&
+                (it.videoHeight ?: 0) <= cap &&
+                it.companionAudioUrl == null
+        }
+        return muxed.maxWithOrNull(
+            compareBy<AudioStream> { it.videoHeight ?: 0 }
+                .thenBy { it.bitrateKbps ?: 0 }
+        ) ?: select(streams, quality)
+    }
+
     fun select(streams: List<AudioStream>, quality: VideoQuality): AudioStream? {
         if (streams.isEmpty()) return null
         val videos = streams.filter { (it.videoHeight ?: 0) > 0 }
