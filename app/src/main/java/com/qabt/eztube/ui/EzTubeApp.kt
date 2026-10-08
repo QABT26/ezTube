@@ -1731,17 +1731,17 @@ private fun FullPlayer(
                 }
             }
 
-            Spacer(Modifier.height(4.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
-                    modifier = Modifier.height(40.dp),
+                    modifier = Modifier.height(34.dp),
                     selected = !videoMode,
                     onClick = { onVideoMode(false) },
                     label = { Text("AUDIO") },
                     leadingIcon = { Icon(Icons.Outlined.Headphones, null, Modifier.size(16.dp)) }
                 )
                 FilterChip(
-                    modifier = Modifier.height(40.dp),
+                    modifier = Modifier.height(34.dp),
                     selected = videoMode,
                     onClick = { onVideoMode(true) },
                     label = { Text("VIDEO") },
@@ -1751,7 +1751,7 @@ private fun FullPlayer(
             if (!videoMode) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 AudioQuality.entries.forEach { option ->
                     FilterChip(
-                        modifier = Modifier.weight(1f).height(36.dp),
+                        modifier = Modifier.weight(1f).height(32.dp),
                         selected = quality == option,
                         onClick = { onQuality(option) },
                         label = {
@@ -1787,8 +1787,8 @@ private fun FullPlayer(
             }
 
             Row(
-                Modifier.fillMaxWidth().padding(top = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
             ) {
                 listOf(0.5f, 1f, 1.25f, 1.5f, 2f).forEach { speed ->
                     CompactPresetButton(
@@ -1806,8 +1806,8 @@ private fun FullPlayer(
                 }
             }
             Row(
-                Modifier.fillMaxWidth().padding(top = 3.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                Modifier.fillMaxWidth().padding(top = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
             ) {
                 listOf(null, 15, 30, 60, 120).forEach { minutes ->
                     CompactPresetButton(
@@ -1819,8 +1819,8 @@ private fun FullPlayer(
                 }
             }
             Row(
-                Modifier.fillMaxWidth().padding(top = 3.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                Modifier.fillMaxWidth().padding(top = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
                     selected = autoplay,
@@ -1830,7 +1830,7 @@ private fun FullPlayer(
                         Text("Auto next", modifier = Modifier.fillMaxWidth(),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
                     },
-                    modifier = Modifier.weight(1f).height(36.dp)
+                    modifier = Modifier.weight(1f).height(32.dp)
                 )
                 FilterChip(
                     selected = nextMode == NextMode.RECOMMENDED,
@@ -1852,7 +1852,7 @@ private fun FullPlayer(
                             maxLines = 1
                         )
                     },
-                    modifier = Modifier.weight(1f).height(36.dp)
+                    modifier = Modifier.weight(1f).height(32.dp)
                 )
                 FilterChip(
                     selected = repeatMode != RepeatMode.OFF,
@@ -1884,7 +1884,7 @@ private fun FullPlayer(
                             maxLines = 1
                         )
                     },
-                    modifier = Modifier.weight(1f).height(36.dp)
+                    modifier = Modifier.weight(1f).height(32.dp)
                 )
             }
 
@@ -2203,7 +2203,7 @@ private fun CompactPresetButton(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = modifier.height(36.dp).clickable(onClick = onClick),
+        modifier = modifier.height(32.dp).clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
         border = if (selected) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
