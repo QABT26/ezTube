@@ -31,8 +31,8 @@ final class SabrMediaBridge {
             new ConcurrentHashMap<>();
 
     private volatile Selection selection;
-    private volatile YoutubeSabrFormatTimeline audioTimeline;
-    private volatile YoutubeSabrFormatTimeline videoTimeline;
+    private final Map<YoutubeSabrInfo.Format, YoutubeSabrFormatTimeline> timelines =
+            new ConcurrentHashMap<>();
     private volatile boolean stopped;
 
     SabrMediaBridge(YoutubeSabrSession session, SabrSourceSpec spec) {
@@ -66,8 +66,7 @@ final class SabrMediaBridge {
     }
 
     YoutubeSabrFormatTimeline getTimeline(YoutubeSabrInfo.Format format) {
-        final YoutubeSabrFormatTimeline timeline = format.isAudio()
-                ? audioTimeline : videoTimeline;
+        final YoutubeSabrFormatTimeline timeline = timelines.get(format);
         if (timeline == null) {
             throw new IllegalStateException(
                     "SABR timeline is not ready: itag=" + format.getItag()
@@ -76,25 +75,22 @@ final class SabrMediaBridge {
         return timeline;
     }
 
-    boolean hasTimelines() {
-        return audioTimeline != null && videoTimeline != null;
-    }
-
-    YoutubeSabrFormatTimeline getAudioTimeline() { return audioTimeline; }
-    YoutubeSabrFormatTimeline getVideoTimeline() { return videoTimeline; }
-
-    void restoreTimelines(
-            YoutubeSabrFormatTimeline audio,
-            YoutubeSabrFormatTimeline video
-    ) {
-        if (audioTimeline == null) audioTimeline = audio;
-        if (videoTimeline == null) videoTimeline = video;
+    boolean hasAllTimelines() {
+        for (YoutubeSabrInfo.Format audio : spec.getAudioFormats()) {
+            if (!timelines.containsKey(audio)) return false;
+        }
+        for (YoutubeSabrInfo.Format video : spec.getVideoFormats()) {
+            if (!timelines.containsKey(video)) return false;
+        }
+        return true;
     }
 
     void prepareTimelines(long initialPositionMs) throws IOException, ExtractionException {
-        final List<YoutubeSabrInfo.Format> formats = new ArrayList<>(2);
-        formats.add(spec.getBootstrapAudioFormat());
-        formats.add(spec.getBootstrapVideoFormat());
+        final List<YoutubeSabrInfo.Format> formats = new ArrayList<>(
+                spec.getAudioFormats().size() + spec.getVideoFormats().size()
+        );
+        formats.addAll(spec.getAudioFormats());
+        formats.addAll(spec.getVideoFormats());
 
         final YoutubeSabrRequest request = YoutubeSabrRequest.preparation(
                 Math.max(0, initialPositionMs),
@@ -103,11 +99,11 @@ final class SabrMediaBridge {
         requestOnce(
                 request,
                 spec.getBootstrapAudioFormat(),
-                () -> hasTimelines() || stopped
+                () -> hasAllTimelines() || stopped
         );
 
-        if (!hasTimelines()) {
-            throw new IOException("SABR did not return initialization timelines");
+        if (!hasAllTimelines()) {
+            throw new IOException("SABR did not return initialization timelines for all formats");
         }
     }
 
@@ -256,8 +252,7 @@ final class SabrMediaBridge {
         try {
             final YoutubeSabrFormatTimeline timeline =
                     YoutubeSabrFormatTimeline.parse(format, data);
-            if (format.isAudio()) audioTimeline = timeline;
-            else videoTimeline = timeline;
+            timelines.put(format, timeline);
         } catch (ExtractionException error) {
             throw new IllegalStateException(
                     "Invalid SABR initialization: itag=" + format.getItag(),
