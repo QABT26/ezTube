@@ -1657,6 +1657,7 @@ private fun FullPlayer(
     var draggedQueueIndex by remember { mutableIntStateOf(-1) }
     var draggedQueueStartIndex by remember { mutableIntStateOf(-1) }
     var dragQueueY by remember { mutableFloatStateOf(0f) }
+    var holdSeekPreviewMs by remember { mutableLongStateOf(-1L) }
     val playerScrollState = rememberScrollState()
     val queueScrollState = rememberScrollState()
     val dragScope = rememberCoroutineScope()
@@ -1887,8 +1888,9 @@ private fun FullPlayer(
 
             }
             Spacer(Modifier.height(if (showQueue) 2.dp else 8.dp))
+            val displayedPosition = holdSeekPreviewMs.takeIf { it >= 0L } ?: position
             val progress = if (duration > 0) {
-                (position.toFloat() / duration).coerceIn(0f, 1f)
+                (displayedPosition.toFloat() / duration).coerceIn(0f, 1f)
             } else 0f
             Box(
                 Modifier
@@ -1922,7 +1924,7 @@ private fun FullPlayer(
                 )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatTime(position), style = MaterialTheme.typography.labelSmall)
+                Text(formatTime(displayedPosition), style = MaterialTheme.typography.labelSmall)
                 Text(formatTime(duration), style = MaterialTheme.typography.labelSmall)
             }
             Row(
@@ -2080,13 +2082,14 @@ private fun FullPlayer(
                     Box(
                         Modifier
                             .size(48.dp)
-                            .pointerInput(hasPrevious, controller) {
+                            .pointerInput(hasPrevious, controller, duration) {
                                 if (!hasPrevious) return@pointerInput
                                 awaitEachGesture {
                                     val down = awaitFirstDown()
                                     val startedAt = down.uptimeMillis
                                     var longPress = false
-                                    var lastSeekAt = startedAt
+                                    var preview = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
+                                    var lastPreviewAt = startedAt
                                     var released = false
                                     while (!released) {
                                         val event = awaitPointerEvent()
@@ -2094,17 +2097,22 @@ private fun FullPlayer(
                                         val now = change.uptimeMillis
                                         if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
                                             longPress = true
+                                            holdSeekPreviewMs = preview
                                         }
-                                        if (longPress && now - lastSeekAt >= 450L) {
-                                            controller?.let { player ->
-                                                player.seekTo((player.currentPosition - 5_000L).coerceAtLeast(0L))
-                                            }
-                                            lastSeekAt = now
+                                        if (longPress && now - lastPreviewAt >= 180L) {
+                                            preview = (preview - 2_000L).coerceAtLeast(0L)
+                                            holdSeekPreviewMs = preview
+                                            lastPreviewAt = now
                                         }
                                         released = change.changedToUpIgnoreConsumed()
                                         change.consume()
                                     }
-                                    if (!longPress) onPrevious()
+                                    if (longPress) {
+                                        controller?.seekTo(preview)
+                                        holdSeekPreviewMs = -1L
+                                    } else {
+                                        onPrevious()
+                                    }
                                 }
                             },
                         contentAlignment = Alignment.Center
@@ -2132,13 +2140,14 @@ private fun FullPlayer(
                     Box(
                         Modifier
                             .size(48.dp)
-                            .pointerInput(hasNext, controller) {
+                            .pointerInput(hasNext, controller, duration) {
                                 if (!hasNext) return@pointerInput
                                 awaitEachGesture {
                                     val down = awaitFirstDown()
                                     val startedAt = down.uptimeMillis
                                     var longPress = false
-                                    var lastSeekAt = startedAt
+                                    var preview = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
+                                    var lastPreviewAt = startedAt
                                     var released = false
                                     while (!released) {
                                         val event = awaitPointerEvent()
@@ -2146,18 +2155,23 @@ private fun FullPlayer(
                                         val now = change.uptimeMillis
                                         if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
                                             longPress = true
+                                            holdSeekPreviewMs = preview
                                         }
-                                        if (longPress && now - lastSeekAt >= 450L) {
-                                            controller?.let { player ->
-                                                val end = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
-                                                player.seekTo((player.currentPosition + 5_000L).coerceAtMost(end))
-                                            }
-                                            lastSeekAt = now
+                                        if (longPress && now - lastPreviewAt >= 180L) {
+                                            val end = duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                                            preview = (preview + 2_000L).coerceAtMost(end)
+                                            holdSeekPreviewMs = preview
+                                            lastPreviewAt = now
                                         }
                                         released = change.changedToUpIgnoreConsumed()
                                         change.consume()
                                     }
-                                    if (!longPress) onNext()
+                                    if (longPress) {
+                                        controller?.seekTo(preview)
+                                        holdSeekPreviewMs = -1L
+                                    } else {
+                                        onNext()
+                                    }
                                 }
                             },
                         contentAlignment = Alignment.Center
