@@ -1734,14 +1734,14 @@ private fun FullPlayer(
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(
-                    modifier = Modifier.height(34.dp),
+                    modifier = Modifier.height(32.dp),
                     selected = !videoMode,
                     onClick = { onVideoMode(false) },
                     label = { Text("AUDIO") },
                     leadingIcon = { Icon(Icons.Outlined.Headphones, null, Modifier.size(16.dp)) }
                 )
                 FilterChip(
-                    modifier = Modifier.height(34.dp),
+                    modifier = Modifier.height(32.dp),
                     selected = videoMode,
                     onClick = { onVideoMode(true) },
                     label = { Text("VIDEO") },
@@ -1754,7 +1754,7 @@ private fun FullPlayer(
             ) {
                 AudioQuality.entries.forEach { option ->
                     FilterChip(
-                        modifier = Modifier.weight(1f).height(32.dp),
+                        modifier = Modifier.weight(1f).height(30.dp),
                         selected = quality == option,
                         onClick = { onQuality(option) },
                         label = {
@@ -1833,7 +1833,7 @@ private fun FullPlayer(
                         Text("Auto next", modifier = Modifier.fillMaxWidth(),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
                     },
-                    modifier = Modifier.weight(1f).height(32.dp)
+                    modifier = Modifier.weight(1f).height(30.dp)
                 )
                 FilterChip(
                     selected = nextMode == NextMode.RECOMMENDED,
@@ -1855,7 +1855,7 @@ private fun FullPlayer(
                             maxLines = 1
                         )
                     },
-                    modifier = Modifier.weight(1f).height(32.dp)
+                    modifier = Modifier.weight(1f).height(30.dp)
                 )
                 FilterChip(
                     selected = repeatMode != RepeatMode.OFF,
@@ -1887,7 +1887,7 @@ private fun FullPlayer(
                             maxLines = 1
                         )
                     },
-                    modifier = Modifier.weight(1f).height(32.dp)
+                    modifier = Modifier.weight(1f).height(30.dp)
                 )
             }
 
@@ -2206,7 +2206,7 @@ private fun CompactPresetButton(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = modifier.height(32.dp).clickable(onClick = onClick),
+        modifier = modifier.height(30.dp).clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
         border = if (selected) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
