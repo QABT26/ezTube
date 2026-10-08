@@ -2095,9 +2095,9 @@ private fun FullPlayer(
                                         if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
                                             longPress = true
                                         }
-                                        if (longPress && now - lastSeekAt >= 180L) {
+                                        if (longPress && now - lastSeekAt >= 450L) {
                                             controller?.let { player ->
-                                                player.seekTo((player.currentPosition - 2_000L).coerceAtLeast(0L))
+                                                player.seekTo((player.currentPosition - 5_000L).coerceAtLeast(0L))
                                             }
                                             lastSeekAt = now
                                         }
@@ -2147,10 +2147,10 @@ private fun FullPlayer(
                                         if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
                                             longPress = true
                                         }
-                                        if (longPress && now - lastSeekAt >= 180L) {
+                                        if (longPress && now - lastSeekAt >= 450L) {
                                             controller?.let { player ->
                                                 val end = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
-                                                player.seekTo((player.currentPosition + 2_000L).coerceAtMost(end))
+                                                player.seekTo((player.currentPosition + 5_000L).coerceAtMost(end))
                                             }
                                             lastSeekAt = now
                                         }
