@@ -5,7 +5,7 @@ import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.kiosk.KioskInfo
 import org.schabi.newpipe.extractor.channel.ChannelInfo
-import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
+import org.schabi.newpipe.extractor.channel.ChannelTabInfo
 import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.stream.StreamInfo
@@ -149,7 +149,7 @@ class NewPipeYouTubeSource : YouTubeSource {
             id = url,
             title = name,
             channel = uploaderName.orEmpty().ifBlank { fallbackChannel },
-            thumbnailUrl = thumbnails.firstOrNull()?.url,
+            thumbnailUrl = thumbnailUrl,
             channelUrl = uploaderUrl ?: fallbackChannelUrl,
             viewCount = viewCount,
             uploadDateText = textualUploadDate,
@@ -172,7 +172,7 @@ class NewPipeYouTubeSource : YouTubeSource {
                     id = item.url,
                     title = item.name,
                     channel = item.uploaderName.orEmpty(),
-                    thumbnailUrl = item.thumbnails.firstOrNull()?.url,
+                    thumbnailUrl = item.thumbnailUrl,
                     channelUrl = item.uploaderUrl,
                     viewCount = item.viewCount,
                     uploadDateText = item.textualUploadDate,
@@ -225,11 +225,11 @@ class NewPipeYouTubeSource : YouTubeSource {
         val service = ServiceList.YouTube
         val info = ChannelInfo.getInfo(service, channelUrl)
         val videosTab = info.tabs.firstOrNull { handler ->
-            handler.contentFilters.any { it.equals("videos", ignoreCase = true) }
+            handler.contentFilters.any { it.name.equals("videos", ignoreCase = true) }
         } ?: info.tabs.firstOrNull()
 
         val playlistsTab = info.tabs.firstOrNull { handler ->
-            handler.contentFilters.any { it.equals("playlists", ignoreCase = true) }
+            handler.contentFilters.any { it.name.equals("playlists", ignoreCase = true) }
         }
 
         val videos = videosTab?.let { handler ->
@@ -265,7 +265,7 @@ class NewPipeYouTubeSource : YouTubeSource {
                     PlaylistSummary(
                         url = item.url,
                         title = item.name,
-                        thumbnailUrl = item.thumbnails.firstOrNull()?.url,
+                        thumbnailUrl = item.thumbnailUrl,
                         streamCount = item.streamCount
                     )
                 }
@@ -300,7 +300,7 @@ class NewPipeYouTubeSource : YouTubeSource {
         return PlaylistDetail(
             url = info.url,
             title = info.name,
-            thumbnailUrl = info.thumbnails.firstOrNull()?.url,
+            thumbnailUrl = info.thumbnailUrl,
             uploaderName = info.uploaderName.orEmpty(),
             items = items
         )
