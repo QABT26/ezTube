@@ -1127,8 +1127,7 @@ private fun HomeScreen(
                 Text((index + 1).toString(), style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold, modifier = Modifier.width(28.dp))
                 Box(Modifier.weight(1f)) {
-                    CompactMediaRow(media.title, media.channel, media.thumbnailUrl,
-                        resolvingId == media.id) { onPlay(media, trending) }
+                    CompactMediaRow(media, resolvingId == media.id) { onPlay(media, trending) }
                 }
             }
         }
