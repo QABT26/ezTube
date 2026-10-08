@@ -83,6 +83,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.6.1")
     implementation("com.github.InfinityLoop1308.PipePipeExtractor:extractor:v5.4.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.webkit:webkit:1.12.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
