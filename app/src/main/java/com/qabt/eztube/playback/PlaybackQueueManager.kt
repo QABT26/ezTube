@@ -1,10 +1,15 @@
 package com.qabt.eztube.playback
 
+import android.content.Context
 import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import kotlinx.coroutines.CoroutineScope
@@ -19,12 +24,22 @@ import kotlinx.coroutines.withContext
  * The logical queue can be large. Only adjacent direct YouTube stream URLs are resolved,
  * avoiding eager extraction and reducing stale URL risk.
  */
+@androidx.media3.common.util.UnstableApi
 class PlaybackQueueManager(
+    private val context: Context,
     private val player: ExoPlayer,
     private val preferences: PlaybackPreferences,
     private val source: NewPipeYouTubeSource,
     private val scope: CoroutineScope
 ) {
+    private data class ResolvedPlayback(
+        val mediaItem: MediaItem,
+        val mediaSource: MediaSource?
+    )
+
+    private val progressiveFactory by lazy {
+        ProgressiveMediaSource.Factory(DefaultDataSource.Factory(context))
+    }
     companion object {
         private const val MAX_SOURCE_RECOVERY_ATTEMPTS = 3
         private const val MAX_RESOLVE_ATTEMPTS = 3
@@ -39,6 +54,39 @@ class PlaybackQueueManager(
     @Volatile private var recoveryJobActive = false
     @Volatile private var recoveryMediaId: String? = null
     @Volatile private var recoveryAttempts = 0
+
+    private fun mediaSourceFor(mediaItem: MediaItem, stream: AudioStream): MediaSource? {
+        val audioUrl = stream.companionAudioUrl ?: return null
+        val videoItem = mediaItem.buildUpon()
+            .setUri(stream.url)
+            .apply { stream.mimeType?.let { setMimeType(it) } }
+            .build()
+        val audioItem = MediaItem.Builder()
+            .setMediaId(mediaItem.mediaId + "#audio")
+            .setUri(audioUrl)
+            .apply { stream.companionAudioMimeType?.let { setMimeType(it) } }
+            .build()
+        return MergingMediaSource(
+            progressiveFactory.createMediaSource(videoItem),
+            progressiveFactory.createMediaSource(audioItem)
+        )
+    }
+
+    private fun setResolved(playback: ResolvedPlayback) {
+        if (playback.mediaSource != null) {
+            player.setMediaSource(playback.mediaSource)
+        } else {
+            player.setMediaItem(playback.mediaItem)
+        }
+    }
+
+    private fun addResolved(playback: ResolvedPlayback) {
+        if (playback.mediaSource != null) {
+            player.addMediaSource(playback.mediaSource)
+        } else {
+            player.addMediaItem(playback.mediaItem)
+        }
+    }
 
     private fun invalidatePending() {
         generation += 1
@@ -188,7 +236,7 @@ class PlaybackQueueManager(
                 if (latest == null || latest.first.getOrNull(index)?.id != media.id) break
                 if (requestGeneration != generation) break
 
-                player.setMediaItem(item)
+                setResolved(item)
                 player.prepare()
                 if (positionMs > 0L) player.seekTo(positionMs)
                 player.setPlaybackSpeed(preferences.loadSpeed())
@@ -293,7 +341,7 @@ class PlaybackQueueManager(
                     if (playerIndex >= 0 && playerIndex + 1 < player.mediaItemCount) {
                         player.removeMediaItems(playerIndex + 1, player.mediaItemCount)
                     }
-                    player.addMediaItem(item)
+                    addResolved(item)
                 }
             }
             if (preloadId == next.id) preloadId = null
@@ -327,7 +375,7 @@ class PlaybackQueueManager(
                     onComplete?.invoke(Result.failure(IllegalStateException("Playback queue changed during resolve")))
                     return@onSuccess
                 }
-                player.setMediaItem(item)
+                setResolved(item)
                 player.prepare()
                 if (positionMs > 0L) player.seekTo(positionMs)
                 player.setPlaybackSpeed(preferences.loadSpeed())
@@ -359,15 +407,21 @@ class PlaybackQueueManager(
             .setArtist(media.channel)
             .setExtras(android.os.Bundle().apply {
                 putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, stream.isFallbackMuxed)
+                putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, stream.videoHeight ?: 0)
             })
             .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
-        player.setMediaItem(
-            MediaItem.Builder()
-                .setMediaId(media.id)
-                .setUri(stream.url)
-                .setMediaMetadata(metadata)
-                .build()
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(media.id)
+            .setUri(stream.url)
+            .setMediaMetadata(metadata)
+            .apply { stream.mimeType?.let { setMimeType(it) } }
+            .build()
+        setResolved(
+            ResolvedPlayback(
+                mediaItem = mediaItem,
+                mediaSource = mediaSourceFor(mediaItem, stream)
+            )
         )
         player.prepare()
         if (positionMs > 0L) player.seekTo(positionMs)
@@ -397,7 +451,7 @@ class PlaybackQueueManager(
         }
     }
 
-    private suspend fun resolveWithRetry(media: MediaSummary): Result<MediaItem> {
+    private suspend fun resolveWithRetry(media: MediaSummary): Result<ResolvedPlayback> {
         var lastError: Throwable? = null
         repeat(MAX_RESOLVE_ATTEMPTS) { attempt ->
             val result = resolve(media)
@@ -410,7 +464,7 @@ class PlaybackQueueManager(
         return Result.failure(lastError ?: IllegalStateException("Unable to resolve media"))
     }
 
-    private suspend fun resolve(media: MediaSummary): Result<MediaItem> = runCatching {
+    private suspend fun resolve(media: MediaSummary): Result<ResolvedPlayback> = runCatching {
         val videoMode = preferences.loadVideoMode()
         val streams = withContext(Dispatchers.IO) {
             if (videoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
@@ -428,10 +482,15 @@ class PlaybackQueueManager(
             })
             .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
-        MediaItem.Builder()
+        val mediaItem = MediaItem.Builder()
             .setMediaId(media.id)
             .setUri(stream.url)
             .setMediaMetadata(metadata)
+            .apply { stream.mimeType?.let { setMimeType(it) } }
             .build()
+        ResolvedPlayback(
+            mediaItem = mediaItem,
+            mediaSource = mediaSourceFor(mediaItem, stream)
+        )
     }
 }
