@@ -1321,7 +1321,7 @@ private fun ProgressMediaRow(entry: HistoryEntry, resolving: Boolean, onClick: (
                 overflow = TextOverflow.Ellipsis)
             Text(entry.channel, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            PlaybackProgress(entry.progress)
+            SearchPlaybackProgress(entry.progress)
         }
         if (resolving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         else Icon(Icons.Outlined.PlayArrow, "Play")
@@ -1455,8 +1455,22 @@ private fun LibraryScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     SearchPlaybackProgress(progress = entry.progress)
                 }
-                if (resolvingId == entry.mediaId) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else IconButton(onClick = { onDelete(entry) }) { Icon(Icons.Outlined.Close, "Remove from history") }
+                if (resolvingId == entry.mediaId) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    IconButton(
+                        onClick = { onPlay(entry) },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(19.dp))
+                    }
+                    IconButton(
+                        onClick = { onDelete(entry) },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Outlined.Close, "Remove from history", Modifier.size(16.dp))
+                    }
+                }
             }
         }
 
