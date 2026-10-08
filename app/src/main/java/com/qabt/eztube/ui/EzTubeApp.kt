@@ -38,6 +38,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,6 +57,7 @@ import com.qabt.eztube.history.HistoryRepository
 import com.qabt.eztube.history.toMediaSummary
 import com.qabt.eztube.history.progress
 import com.qabt.eztube.playback.AudioQuality
+import com.qabt.eztube.playback.VideoQuality
 import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
 import com.qabt.eztube.youtube.MediaSummary
@@ -98,6 +101,7 @@ fun EzTubeApp() {
     var nowPlaying by remember { mutableStateOf<MediaSummary?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
     var quality by remember { mutableStateOf(playbackPrefs.loadQuality()) }
+    var videoQuality by remember { mutableStateOf(playbackPrefs.loadVideoQuality()) }
     var videoMode by remember { mutableStateOf(playbackPrefs.loadVideoMode()) }
     var autoplay by remember { mutableStateOf(playbackPrefs.loadAutoplay()) }
     var nextMode by remember { mutableStateOf(runCatching { NextMode.valueOf(playbackPrefs.loadNextMode()) }.getOrDefault(NextMode.LIST)) }
@@ -487,6 +491,7 @@ fun EzTubeApp() {
         } else if (showPlayer && nowPlaying != null) {
             FullPlayer(
                 media = requireNotNull(nowPlaying), controller = controller, isPlaying = isPlaying, quality = quality,
+                videoQuality = videoQuality,
                 videoMode = videoMode,
                 onVideoMode = { enabled ->
                     if (videoMode != enabled) {
@@ -497,7 +502,15 @@ fun EzTubeApp() {
                         reloadCurrentForModeChange()
                     }
                 },
-                onQuality = { quality = it; playbackPrefs.saveQuality(it) }, playbackSpeed = playbackSpeed,
+                onQuality = { quality = it; playbackPrefs.saveQuality(it) },
+                onVideoQuality = {
+                    if (videoQuality != it) {
+                        videoQuality = it
+                        playbackPrefs.saveVideoQuality(it)
+                        if (videoMode) reloadCurrentForModeChange()
+                    }
+                },
+                playbackSpeed = playbackSpeed,
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 compatibilityFallback = compatibilityFallback, isBuffering = isBuffering, playerError = playerError,
                 onRetry = { playerError = null; nowPlaying?.let { playMedia(it, controller?.currentPosition ?: 0L) } },
@@ -719,6 +732,41 @@ private fun SettingsScreen(
     onTrendingLanguage: (String) -> Unit,
     onClose: () -> Unit
 ) {
+    if (fullscreenVideo && videoMode && controller != null) {
+        Dialog(
+            onDismissRequest = { fullscreenVideo = false },
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
+        ) {
+            Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black)) {
+                AndroidView(
+                    factory = { context ->
+                        androidx.media3.ui.PlayerView(context).apply {
+                            useController = true
+                            controllerAutoShow = true
+                            controllerHideOnTouch = true
+                            player = controller
+                        }
+                    },
+                    update = {
+                        it.player = controller
+                        it.useController = true
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+                FilledTonalIconButton(
+                    onClick = { fullscreenVideo = false },
+                    modifier = Modifier.align(Alignment.TopEnd)
+                        .statusBarsPadding().padding(12.dp).size(42.dp)
+                ) {
+                    Icon(Icons.Outlined.FullscreenExit, "Exit fullscreen", Modifier.size(24.dp))
+                }
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(
             Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
@@ -1727,9 +1775,11 @@ private fun FullPlayer(
     controller: MediaController?,
     isPlaying: Boolean,
     quality: AudioQuality,
+    videoQuality: VideoQuality,
     videoMode: Boolean,
     onVideoMode: (Boolean) -> Unit,
     onQuality: (AudioQuality) -> Unit,
+    onVideoQuality: (VideoQuality) -> Unit,
     playbackSpeed: Float,
     onSpeed: (Float) -> Unit,
     compatibilityFallback: Boolean,
@@ -1768,6 +1818,7 @@ private fun FullPlayer(
     var draggedQueueStartIndex by remember { mutableIntStateOf(-1) }
     var dragQueueY by remember { mutableFloatStateOf(0f) }
     var holdSeekPreviewMs by remember { mutableLongStateOf(-1L) }
+    var fullscreenVideo by remember { mutableStateOf(false) }
     val playerScrollState = rememberScrollState()
     val queueScrollState = rememberScrollState()
     val dragScope = rememberCoroutineScope()
@@ -1797,18 +1848,28 @@ private fun FullPlayer(
             if (!showQueue) {
             Spacer(Modifier.height(8.dp))
             if (videoMode && controller != null) {
-                AndroidView(
-                    factory = { context ->
-                        androidx.media3.ui.PlayerView(context).apply {
-                            useController = false
-                            player = controller
-                        }
-                    },
-                    update = { it.player = controller },
-                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                Box(
+                    Modifier.fillMaxWidth().aspectRatio(16f / 9f)
                         .clip(RoundedCornerShape(20.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                )
+                ) {
+                    AndroidView(
+                        factory = { context ->
+                            androidx.media3.ui.PlayerView(context).apply {
+                                useController = false
+                                player = controller
+                            }
+                        },
+                        update = { it.player = controller },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    FilledTonalIconButton(
+                        onClick = { fullscreenVideo = true },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(38.dp)
+                    ) {
+                        Icon(Icons.Outlined.Fullscreen, "Fullscreen", Modifier.size(22.dp))
+                    }
+                }
             } else {
                 AsyncImage(
                     media.thumbnailUrl, null,
@@ -1873,6 +1934,30 @@ private fun FullPlayer(
                                 AudioQuality.STANDARD -> "Std 128"
                                 AudioQuality.HIGH -> "High 160+"
                             }, maxLines = 1)
+                        }
+                    )
+                }
+            }
+            if (videoMode) Row(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                VideoQuality.entries.forEach { option ->
+                    FilterChip(
+                        modifier = Modifier.weight(1f).height(30.dp),
+                        selected = videoQuality == option,
+                        onClick = { onVideoQuality(option) },
+                        label = {
+                            Text(
+                                when (option) {
+                                    VideoQuality.AUTO -> "Auto"
+                                    VideoQuality.P360 -> "360p"
+                                    VideoQuality.P480 -> "480p"
+                                    VideoQuality.P720 -> "720p"
+                                    VideoQuality.P1080 -> "1080p"
+                                },
+                                maxLines = 1
+                            )
                         }
                     )
                 }
