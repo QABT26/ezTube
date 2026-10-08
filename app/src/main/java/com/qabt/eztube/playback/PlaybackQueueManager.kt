@@ -50,14 +50,12 @@ class PlaybackQueueManager(
         if (items.isEmpty()) return
         val currentId = player.currentMediaItem?.mediaId
         val current = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
-        val repeat = preferences.loadRepeatMode()
-        // Repeat ONE is handled natively by ExoPlayer. Logical queue ownership only
-        // advances here, or wraps the final item for Repeat ALL.
-        val target = when {
-            current < items.lastIndex -> current + 1
-            repeat == 2 -> 0
-            else -> return
-        }
+        val target = QueueNavigationPolicy.endedTarget(
+            current = current,
+            size = items.size,
+            autoplay = preferences.loadAutoplay(),
+            repeatMode = preferences.loadRepeatMode()
+        ) ?: return
         resolveAndPlay(items, target)
     }
 
@@ -86,14 +84,12 @@ class PlaybackQueueManager(
         if (items.isEmpty()) return
         val currentId = player.currentMediaItem?.mediaId
         val current = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
-        val repeatAll = preferences.loadRepeatMode() == 2
-        val rawTarget = current + delta
-        val target = when {
-            rawTarget in items.indices -> rawTarget
-            repeatAll && rawTarget > items.lastIndex -> 0
-            repeatAll && rawTarget < 0 -> items.lastIndex
-            else -> return
-        }
+        val target = QueueNavigationPolicy.manualTarget(
+            current = current,
+            size = items.size,
+            delta = delta,
+            repeatMode = preferences.loadRepeatMode()
+        ) ?: return
 
         // Native adjacent items are safe only when they match the logical target.
         // Queue edits can otherwise leave a stale resolved item in Media3.
