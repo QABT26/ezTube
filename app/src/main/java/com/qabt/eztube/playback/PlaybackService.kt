@@ -26,8 +26,11 @@ class PlaybackService : MediaSessionService() {
     companion object {
         const val COMMAND_QUEUE_CHANGED = "com.qabt.eztube.QUEUE_CHANGED"
         const val COMMAND_RELOAD_CURRENT = "com.qabt.eztube.RELOAD_CURRENT"
+        const val COMMAND_PLAY_CURRENT = "com.qabt.eztube.PLAY_CURRENT"
         const val ARG_POSITION_MS = "position_ms"
         const val ARG_PLAY_WHEN_READY = "play_when_ready"
+        const val ARG_ERROR_MESSAGE = "error_message"
+        const val EXTRA_COMPATIBILITY_FALLBACK = "compatibility_fallback"
     }
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
@@ -107,6 +110,7 @@ class PlaybackService : MediaSessionService() {
                         .buildUpon()
                         .add(androidx.media3.session.SessionCommand(COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_RELOAD_CURRENT, android.os.Bundle.EMPTY))
+                        .add(androidx.media3.session.SessionCommand(COMMAND_PLAY_CURRENT, android.os.Bundle.EMPTY))
                         .build()
                     val playerCommands = ConnectionResult.DEFAULT_PLAYER_COMMANDS
                         .buildUpon()
@@ -142,6 +146,26 @@ class PlaybackService : MediaSessionService() {
                         return com.google.common.util.concurrent.Futures.immediateFuture(
                             SessionResult(SessionResult.RESULT_SUCCESS)
                         )
+                    }
+                    if (customCommand.customAction == COMMAND_PLAY_CURRENT) {
+                        val future = com.google.common.util.concurrent.SettableFuture.create<SessionResult>()
+                        queueManager.playSavedCurrent(
+                            positionMs = args.getLong(ARG_POSITION_MS, 0L),
+                            playWhenReady = args.getBoolean(ARG_PLAY_WHEN_READY, true)
+                        ) { result ->
+                            if (result.isSuccess) {
+                                future.set(SessionResult(SessionResult.RESULT_SUCCESS))
+                            } else {
+                                val extras = android.os.Bundle().apply {
+                                    putString(
+                                        ARG_ERROR_MESSAGE,
+                                        result.exceptionOrNull()?.message ?: "Unable to resolve media"
+                                    )
+                                }
+                                future.set(SessionResult(SessionResult.RESULT_ERROR_UNKNOWN, extras))
+                            }
+                        }
+                        return future
                     }
                     if (customCommand.customAction == COMMAND_RELOAD_CURRENT) {
                         queueManager.reloadCurrent(
