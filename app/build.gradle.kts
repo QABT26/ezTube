@@ -71,6 +71,8 @@ dependencies {
     kapt("androidx.room:room-compiler:2.6.1")
 
     implementation("androidx.media3:media3-exoplayer:1.6.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.6.1")
+    implementation("androidx.media3:media3-exoplayer-dash:1.6.1")
     implementation("androidx.media3:media3-session:1.6.1")
     implementation("androidx.media3:media3-ui:1.6.1")
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
