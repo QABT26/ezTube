@@ -32,6 +32,9 @@ class PlaybackService : MediaSessionService() {
         const val ARG_ERROR_MESSAGE = "error_message"
         const val EXTRA_COMPATIBILITY_FALLBACK = "compatibility_fallback"
         const val EXTRA_VIDEO_HEIGHT = "video_height"
+        const val EXTRA_PLAYBACK_ENGINE = "playback_engine"
+        const val ENGINE_SABR = "sabr"
+        const val ENGINE_DIRECT = "direct"
     }
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
