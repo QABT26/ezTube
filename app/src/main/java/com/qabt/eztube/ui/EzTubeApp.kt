@@ -1061,7 +1061,7 @@ private fun SearchResult(
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             progressEntry?.let { entry ->
-                SearchPlaybackProgress(progress = entry.progress)
+                SearchSearchPlaybackProgress(progress = entry.progress)
             }
         }
         Spacer(Modifier.width(2.dp))
@@ -1453,7 +1453,7 @@ private fun LibraryScreen(
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(entry.channel, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    PlaybackProgress(progress = entry.progress)
+                    SearchPlaybackProgress(progress = entry.progress)
                 }
                 if (resolvingId == entry.mediaId) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 else IconButton(onClick = { onDelete(entry) }) { Icon(Icons.Outlined.Close, "Remove from history") }
