@@ -1,0 +1,175 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "com.github.InfinityLoop1308.PipePipeExtractor",
+    "module": "extractor",
+    "version": "v5.4.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.5.1"
+    }
+  },
+  "variants": [
+    {
+      "name": "apiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "com.squareup.wire",
+          "module": "wire-runtime",
+          "version": {
+            "requires": "6.4.1"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "extractor-v5.4.0.jar",
+          "url": "extractor-v5.4.0.jar",
+          "size": 1198920,
+          "sha512": "d1c189bcc74a60c53915c7b27e71f03b9930d56bf102fded4054a6303c1214eeb055f802eaf11d9cfd59b35448b298305ee1f547facc466420eb0d1944d4e55f",
+          "sha256": "c3338205306593757df2fc981e38b3d05bbe22174ac71cb182902b28519140e8",
+          "sha1": "916b98cddf742ec72eb7cff5f1ef9d4ecf01b861",
+          "md5": "1924e470e435c08399c08b60340dd411"
+        }
+      ]
+    },
+    {
+      "name": "runtimeElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "com.github.InfinityLoop1308.PipePipeExtractor",
+          "module": "timeago-parser",
+          "version": {
+            "requires": "v5.4.0"
+          }
+        },
+        {
+          "group": "com.github.TeamNewPipe",
+          "module": "nanojson",
+          "version": {
+            "requires": "1d9e1aea9049fc9f85e68b43ba39fe7be1c1f751"
+          }
+        },
+        {
+          "group": "org.jsoup",
+          "module": "jsoup",
+          "version": {
+            "requires": "1.22.2"
+          }
+        },
+        {
+          "group": "org.java-websocket",
+          "module": "Java-WebSocket",
+          "version": {
+            "requires": "1.6.0"
+          }
+        },
+        {
+          "group": "com.github.spotbugs",
+          "module": "spotbugs-annotations",
+          "version": {
+            "requires": "4.10.2"
+          }
+        },
+        {
+          "group": "org.nibor.autolink",
+          "module": "autolink",
+          "version": {
+            "requires": "0.12.0"
+          }
+        },
+        {
+          "group": "com.google.protobuf",
+          "module": "protobuf-java",
+          "version": {
+            "requires": "4.35.1"
+          }
+        },
+        {
+          "group": "com.squareup.okhttp3",
+          "module": "okhttp",
+          "version": {
+            "requires": "4.12.0"
+          }
+        },
+        {
+          "group": "org.brotli",
+          "module": "dec",
+          "version": {
+            "requires": "0.1.2"
+          }
+        },
+        {
+          "group": "org.apache.commons",
+          "module": "commons-lang3",
+          "version": {
+            "requires": "3.20.0"
+          }
+        },
+        {
+          "group": "org.bouncycastle",
+          "module": "bcprov-jdk18on",
+          "version": {
+            "requires": "1.85"
+          }
+        },
+        {
+          "group": "com.squareup.wire",
+          "module": "wire-runtime",
+          "version": {
+            "requires": "6.4.1"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "extractor-v5.4.0.jar",
+          "url": "extractor-v5.4.0.jar",
+          "size": 1198920,
+          "sha512": "d1c189bcc74a60c53915c7b27e71f03b9930d56bf102fded4054a6303c1214eeb055f802eaf11d9cfd59b35448b298305ee1f547facc466420eb0d1944d4e55f",
+          "sha256": "c3338205306593757df2fc981e38b3d05bbe22174ac71cb182902b28519140e8",
+          "sha1": "916b98cddf742ec72eb7cff5f1ef9d4ecf01b861",
+          "md5": "1924e470e435c08399c08b60340dd411"
+        }
+      ]
+    },
+    {
+      "name": "sourcesElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "extractor-v5.4.0-sources.jar",
+          "url": "extractor-v5.4.0-sources.jar",
+          "size": 638894,
+          "sha512": "a2c3f187dd090d9a13358577fd69ff20d45e4c470d4a211b8c252ecc24d6c7551115ce6a87cd19efd59209eb68da585622a77174faa6d3bad6900daa48c82c5e",
+          "sha256": "01d9eef3ff06031a4f4c7d9e2f0d819fe81cebe4d8a38cf9650fab2730090e2c",
+          "sha1": "fc48c64e572a75a03c1e39cbc0e681262e45ef20",
+          "md5": "24752bc4cee109fa2f80a4397a085a10"
+        }
+      ]
+    }
+  ]
+}

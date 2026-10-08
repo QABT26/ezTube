@@ -1,0 +1,96 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "com.github.InfinityLoop1308.PipePipeExtractor",
+    "module": "timeago-parser",
+    "version": "v5.4.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.5.1"
+    }
+  },
+  "variants": [
+    {
+      "name": "apiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api"
+      },
+      "files": [
+        {
+          "name": "timeago-parser-v5.4.0.jar",
+          "url": "timeago-parser-v5.4.0.jar",
+          "size": 78106,
+          "sha512": "145f224d4853dc175c4f5e10e60636b6a112f57df6e09cb6488bd1f6cba816dd7eeb27d4e5866721ad99ec59d30e0f3be093a79a0c0487aac502858ac3c34c21",
+          "sha256": "fdacfa418f8c90b8d66b6283056c65b02d58cfc2788f84c5943be28607fe7d91",
+          "sha1": "2fa268410c95dc018f2a1c0494cf065088b2a14c",
+          "md5": "4e2b506374387944887410911906def6"
+        }
+      ]
+    },
+    {
+      "name": "runtimeElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "com.github.TeamNewPipe",
+          "module": "nanojson",
+          "version": {
+            "requires": "1d9e1aea9049fc9f85e68b43ba39fe7be1c1f751"
+          }
+        },
+        {
+          "group": "com.github.spotbugs",
+          "module": "spotbugs-annotations",
+          "version": {
+            "requires": "4.10.2"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "timeago-parser-v5.4.0.jar",
+          "url": "timeago-parser-v5.4.0.jar",
+          "size": 78106,
+          "sha512": "145f224d4853dc175c4f5e10e60636b6a112f57df6e09cb6488bd1f6cba816dd7eeb27d4e5866721ad99ec59d30e0f3be093a79a0c0487aac502858ac3c34c21",
+          "sha256": "fdacfa418f8c90b8d66b6283056c65b02d58cfc2788f84c5943be28607fe7d91",
+          "sha1": "2fa268410c95dc018f2a1c0494cf065088b2a14c",
+          "md5": "4e2b506374387944887410911906def6"
+        }
+      ]
+    },
+    {
+      "name": "sourcesElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "timeago-parser-v5.4.0-sources.jar",
+          "url": "timeago-parser-v5.4.0-sources.jar",
+          "size": 57042,
+          "sha512": "c95c802f66162b0951b4fcac0e0799a6f8dd0dd416cd3b50f4cf89110ce61358543f2dc354554ae619722d9e6d604b41a0b5f26bbc48ecc3f9e554f61f9117fc",
+          "sha256": "467ce96abe4d446e97bb226b4b099430de52f21ef00b40706d427f63725b078b",
+          "sha1": "a1de9f7f94777567c300c31f8ed7e18a7fcef759",
+          "md5": "1f89e4cb9dc109605c563c4b30d1f42e"
+        }
+      ]
+    }
+  ]
+}
