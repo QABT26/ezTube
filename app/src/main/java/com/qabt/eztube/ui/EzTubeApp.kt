@@ -1023,7 +1023,16 @@ private fun SearchResult(
         if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
         else if (onPlayNext != null || onAddToQueue != null) {
             Box {
-                IconButton(onClick = { showMenu = true }) { Icon(Icons.Outlined.MoreVert, "Queue actions") }
+                IconButton(
+                    onClick = { showMenu = true },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.MoreVert,
+                        "Queue actions",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                     onPlayNext?.let { action ->
                         DropdownMenuItem(
