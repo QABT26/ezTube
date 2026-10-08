@@ -1061,7 +1061,7 @@ private fun SearchResult(
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             progressEntry?.let { entry ->
-                SearchSearchPlaybackProgress(progress = entry.progress)
+                SearchPlaybackProgress(progress = entry.progress)
             }
         }
         Spacer(Modifier.width(2.dp))
