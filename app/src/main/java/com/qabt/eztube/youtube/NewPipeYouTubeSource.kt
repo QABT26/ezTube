@@ -239,7 +239,17 @@ class NewPipeYouTubeSource : YouTubeSource {
             .sortedBy { it.height }
             .ifEmpty { listOf(videoCandidates.minBy { it.height }) }
 
-        val bootstrapVideo = adaptiveVideos.first()
+        val bootstrapVideo = quality.targetHeight?.let { target ->
+            adaptiveVideos
+                .filter { it.height <= target }
+                .maxWithOrNull(
+                    compareBy<YoutubeSabrInfo.Format> { it.height }
+                        .thenBy { it.bitrate }
+                )
+                ?: adaptiveVideos.minByOrNull {
+                    kotlin.math.abs(it.height - target)
+                }
+        } ?: adaptiveVideos.first()
 
         return SabrSourceSpec(
             sabrInfo.videoId,
