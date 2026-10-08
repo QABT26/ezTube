@@ -966,6 +966,12 @@ private fun SearchResult(
                 overflow = TextOverflow.Ellipsis,
                 modifier = if (media.channelUrl != null) Modifier.clickable(onClick = onChannel) else Modifier
             )
+            val meta = mediaMeta(media)
+            if (meta.isNotBlank()) {
+                Text(meta, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             progressEntry?.let { entry ->
                 PlaybackProgress(progress = entry.progress)
             }
@@ -1094,8 +1100,7 @@ private fun HomeScreen(
         if (suggestions.isNotEmpty()) {
             item { Text("Recommended", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             itemsIndexed(suggestions, key = { index, media -> "home-s-" + index + "-" + media.id }) { _, media ->
-                CompactMediaRow(media.title, media.channel, media.thumbnailUrl,
-                    resolvingId == media.id) { onPlay(media, suggestions) }
+                CompactMediaRow(media, resolvingId == media.id) { onPlay(media, suggestions) }
             }
             item {
                 Spacer(Modifier.height(6.dp))
@@ -1138,9 +1143,7 @@ private fun HomeScreen(
 
 @Composable
 private fun CompactMediaRow(
-    title: String,
-    channel: String,
-    thumbnailUrl: String?,
+    media: MediaSummary,
     resolving: Boolean,
     onClick: () -> Unit
 ) {
@@ -1149,14 +1152,20 @@ private fun CompactMediaRow(
             .clickable(enabled = !resolving, onClick = onClick).padding(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        AsyncImage(thumbnailUrl, null, Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)),
+        AsyncImage(media.thumbnailUrl, null, Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)),
             contentScale = ContentScale.Crop)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+            Text(media.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
-            Text(channel, style = MaterialTheme.typography.bodySmall,
+            Text(media.channel, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            val meta = mediaMeta(media)
+            if (meta.isNotBlank()) {
+                Text(meta, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         if (resolving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         else Icon(Icons.Outlined.PlayArrow, "Play")
@@ -1560,6 +1569,22 @@ private fun formatViews(value: Long): String = when {
     else -> "$value views"
 }
 
+private fun formatDuration(seconds: Long): String {
+    if (seconds < 0) return ""
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val secs = seconds % 60
+    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, secs)
+    else "%d:%02d".format(minutes, secs)
+}
+
+private fun mediaMeta(media: MediaSummary): String =
+    buildList {
+        if (media.viewCount >= 0) add(formatViews(media.viewCount))
+        media.uploadDateText?.takeIf { it.isNotBlank() }?.let(::add)
+        if (media.durationSeconds >= 0) add(formatDuration(media.durationSeconds))
+    }.joinToString(" · ")
+
 @Composable
 private fun FullPlayer(
     media: MediaSummary,
@@ -1604,8 +1629,8 @@ private fun FullPlayer(
     var showQueue by remember { mutableStateOf(false) }
     var draggedQueueId by remember { mutableStateOf<String?>(null) }
     var draggedQueueIndex by remember { mutableIntStateOf(-1) }
+    var draggedQueueStartIndex by remember { mutableIntStateOf(-1) }
     var dragQueueY by remember { mutableFloatStateOf(0f) }
-    var dragQueuePointerY by remember { mutableFloatStateOf(0f) }
     val playerScrollState = rememberScrollState()
     val dragScope = rememberCoroutineScope()
     LaunchedEffect(controller, media.id) {
@@ -1949,55 +1974,49 @@ private fun FullPlayer(
                                                     onDragStart = {
                                                         draggedQueueId = item.id
                                                         draggedQueueIndex = queue.indexOfFirst { it.id == item.id }
+                                                        draggedQueueStartIndex = draggedQueueIndex
                                                         dragQueueY = 0f
-                                                        dragQueuePointerY = 0f
                                                     },
                                                     onDragCancel = {
                                                         draggedQueueId = null
                                                         draggedQueueIndex = -1
+                                                        draggedQueueStartIndex = -1
                                                         dragQueueY = 0f
-                                                        dragQueuePointerY = 0f
                                                     },
                                                     onDragEnd = {
                                                         draggedQueueId = null
                                                         draggedQueueIndex = -1
+                                                        draggedQueueStartIndex = -1
                                                         dragQueueY = 0f
-                                                        dragQueuePointerY = 0f
                                                     },
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
                                                         if (draggedQueueId != item.id) return@detectDragGesturesAfterLongPress
                                                         dragQueueY += dragAmount.y
-                                                        dragQueuePointerY += dragAmount.y
-                                                        val threshold = 36.dp.toPx()
-                                                         // Pointer coordinates are local to the drag handle. Use the
-                                                        // accumulated gesture displacement for continuous multi-row
-                                                        // movement; outer scrolling is driven by drag direction once
-                                                        // the gesture has crossed several row heights.
-                                                        if (dragQueueY > threshold * 2 && playerScrollState.value < playerScrollState.maxValue) {
+                                                        val rowHeight = 54.dp.toPx()
+                                                        val deltaRows = (dragQueueY / rowHeight).toInt()
+                                                        val target = (draggedQueueStartIndex + deltaRows)
+                                                            .coerceIn(0, queue.lastIndex)
+                                                        if (draggedQueueIndex >= 0 && target != draggedQueueIndex) {
+                                                            onQueueMove(draggedQueueIndex, target)
+                                                            draggedQueueIndex = target
+                                                        }
+
+                                                        // Keep exposing more queue while the finger continues
+                                                        // beyond roughly two rows. Reorder target is based on the
+                                                        // gesture's total displacement, not on the mutated row.
+                                                        if (dragQueueY > rowHeight * 2 && playerScrollState.value < playerScrollState.maxValue) {
                                                             dragScope.launch {
                                                                 playerScrollState.scrollTo(
-                                                                    (playerScrollState.value + threshold.toInt()).coerceAtMost(playerScrollState.maxValue)
+                                                                    (playerScrollState.value + rowHeight.toInt()).coerceAtMost(playerScrollState.maxValue)
                                                                 )
                                                             }
-                                                        } else if (dragQueueY < -threshold * 2 && playerScrollState.value > 0) {
+                                                        } else if (dragQueueY < -rowHeight * 2 && playerScrollState.value > 0) {
                                                             dragScope.launch {
                                                                 playerScrollState.scrollTo(
-                                                                    (playerScrollState.value - threshold.toInt()).coerceAtLeast(0)
+                                                                    (playerScrollState.value - rowHeight.toInt()).coerceAtLeast(0)
                                                                 )
                                                             }
-                                                        }
-                                                        while (dragQueueY > threshold && draggedQueueIndex in 0 until queue.lastIndex) {
-                                                            val from = draggedQueueIndex
-                                                            onQueueMove(from, from + 1)
-                                                            draggedQueueIndex = from + 1
-                                                            dragQueueY -= threshold
-                                                        }
-                                                        while (dragQueueY < -threshold && draggedQueueIndex > 0) {
-                                                            val from = draggedQueueIndex
-                                                            onQueueMove(from, from - 1)
-                                                            draggedQueueIndex = from - 1
-                                                            dragQueueY += threshold
                                                         }
                                                     }
                                                 )
