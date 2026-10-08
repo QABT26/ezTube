@@ -1860,8 +1860,21 @@ private fun FullPlayer(
         fullscreenVideo = false
     }
 
-    LaunchedEffect(fullscreenVideo, fullscreenControlsVisible, fullscreenControlsEpoch) {
-        if (fullscreenVideo && fullscreenControlsVisible) {
+    LaunchedEffect(
+        fullscreenVideo,
+        fullscreenControlsVisible,
+        fullscreenControlsEpoch,
+        fullscreenSpeedMenu,
+        fullscreenQualityMenu,
+        fullscreenSleepMenu
+    ) {
+        if (
+            fullscreenVideo &&
+            fullscreenControlsVisible &&
+            !fullscreenSpeedMenu &&
+            !fullscreenQualityMenu &&
+            !fullscreenSleepMenu
+        ) {
             delay(2_500L)
             fullscreenControlsVisible = false
         }
