@@ -85,6 +85,17 @@ class PlaybackPreferences(context: Context) {
         runCatching { AudioQuality.valueOf(prefs.getString("quality", AudioQuality.STANDARD.name).orEmpty()) }
             .getOrDefault(AudioQuality.STANDARD)
 
+    fun saveVideoQuality(quality: VideoQuality) {
+        prefs.edit().putString("video_quality", quality.name).apply()
+    }
+
+    fun loadVideoQuality(): VideoQuality =
+        runCatching {
+            VideoQuality.valueOf(
+                prefs.getString("video_quality", VideoQuality.AUTO.name).orEmpty()
+            )
+        }.getOrDefault(VideoQuality.AUTO)
+
     fun saveSpeed(speed: Float) {
         prefs.edit().putFloat("speed", speed).apply()
     }
