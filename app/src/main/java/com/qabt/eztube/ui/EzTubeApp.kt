@@ -2144,7 +2144,7 @@ private fun FullPlayer(
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(
-                        formatTime(position),
+                        formatTime(fullscreenDisplayedPosition),
                         color = androidx.compose.ui.graphics.Color.White,
                         style = MaterialTheme.typography.labelSmall
                     )
