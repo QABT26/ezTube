@@ -77,6 +77,16 @@ class PlaybackQueueManager(
         if (index in saved.first.indices) ensureNext(saved.first, index)
     }
 
+    fun reloadCurrent(positionMs: Long, playWhenReady: Boolean) {
+        if (busy) return
+        val saved = preferences.loadQueue() ?: return
+        val items = saved.first
+        val currentId = player.currentMediaItem?.mediaId
+        val index = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
+        if (index !in items.indices) return
+        resolveAndPlay(items, index, positionMs.coerceAtLeast(0L), playWhenReady)
+    }
+
     fun move(delta: Int) {
         if (busy || delta == 0) return
         val saved = preferences.loadQueue() ?: return
@@ -146,7 +156,12 @@ class PlaybackQueueManager(
         }
     }
 
-    private fun resolveAndPlay(items: List<MediaSummary>, target: Int) {
+    private fun resolveAndPlay(
+        items: List<MediaSummary>,
+        target: Int,
+        positionMs: Long = 0L,
+        playWhenReady: Boolean = true
+    ) {
         if (target !in items.indices) return
         busy = true
         invalidatePending()
@@ -159,10 +174,11 @@ class PlaybackQueueManager(
                 if (latest == null || latest.first.getOrNull(target)?.id != media.id) return@onSuccess
                 player.setMediaItem(item)
                 player.prepare()
+                if (positionMs > 0L) player.seekTo(positionMs)
                 player.setPlaybackSpeed(preferences.loadSpeed())
-                player.play()
+                if (playWhenReady) player.play() else player.pause()
                 preferences.saveQueue(items, target)
-                preferences.save(media, 0L)
+                preferences.save(media, positionMs)
                 ensureNext(items, target)
             }
             busy = false
