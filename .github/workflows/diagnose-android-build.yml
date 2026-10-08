@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/diagnose-android-build.yml"
       - "app/build.gradle.kts"
+      - "app/src/**"
       - "settings.gradle.kts"
       - "local-maven/**"
 
