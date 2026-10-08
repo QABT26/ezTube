@@ -5,5 +5,6 @@ data class AudioStream(
     val bitrateKbps: Int?,
     val codec: String?,
     val mimeType: String?,
-    val isFallbackMuxed: Boolean = false
+    val isFallbackMuxed: Boolean = false,
+    val videoHeight: Int? = null
 )
