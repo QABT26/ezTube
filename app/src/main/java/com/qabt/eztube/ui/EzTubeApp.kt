@@ -2062,30 +2062,6 @@ private fun FullPlayer(
                 }
             }
 
-            if (!showQueue) {
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = onPrevious, enabled = hasPrevious) {
-                        Icon(Icons.Outlined.SkipPrevious, "Previous")
-                    }
-                    FilledTonalIconButton(onClick = { controller?.seekBack() }) {
-                        Icon(Icons.Outlined.Replay10, "Back 10 seconds")
-                    }
-                    FilledIconButton(onClick = onToggle, modifier = Modifier.size(68.dp)) {
-                        Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                            if (isPlaying) "Pause" else "Play", modifier = Modifier.size(34.dp))
-                    }
-                    FilledTonalIconButton(onClick = { controller?.seekForward() }) {
-                        Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
-                    }
-                    IconButton(onClick = onNext, enabled = hasNext) {
-                        Icon(Icons.Outlined.SkipNext, "Next")
-                    }
-                }
-            }
         }
         Surface(tonalElevation = 6.dp, shadowElevation = 6.dp) {
                 Row(
