@@ -7,6 +7,7 @@ on:
       - ".github/workflows/diagnose-android-build.yml"
       - "app/build.gradle.kts"
       - "app/src/**"
+      - "app/src/main/java/com/qabt/eztube/playback/sabr/**"
       - "settings.gradle.kts"
       - "local-maven/**"
 
