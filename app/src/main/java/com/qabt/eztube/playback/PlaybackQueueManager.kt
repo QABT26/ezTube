@@ -228,6 +228,7 @@ class PlaybackQueueManager(
                 recoveryAttempts += 1
                 if (recoveryAttempts > 1) delay((recoveryAttempts - 1) * 500L)
 
+                source.invalidatePlaybackStreams(media.id)
                 val resolved = resolve(media)
                 if (resolved.isFailure) continue
                 val item = resolved.getOrThrow()
