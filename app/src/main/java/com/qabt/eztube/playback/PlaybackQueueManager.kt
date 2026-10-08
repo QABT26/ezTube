@@ -27,10 +27,19 @@ class PlaybackQueueManager(
     @Volatile private var busy = false
     @Volatile private var preloadId: String? = null
     @Volatile private var generation = 0L
+    @Volatile private var alternateStreamId: String? = null
+    @Volatile private var alternateStreamVideoMode: Boolean? = null
+    @Volatile private var alternateStream: AudioStream? = null
 
     private fun invalidatePending() {
         generation += 1
         preloadId = null
+    }
+
+    private fun clearAlternateStream() {
+        alternateStreamId = null
+        alternateStreamVideoMode = null
+        alternateStream = null
     }
 
     fun onTransition(mediaItem: MediaItem?) {
@@ -40,7 +49,9 @@ class PlaybackQueueManager(
         if (index < 0) return
         preferences.saveQueue(saved.first, index)
         preferences.save(saved.first[index], 0L)
+        clearAlternateStream()
         ensureNext(saved.first, index)
+        warmAlternateStream(saved.first[index])
     }
 
     fun onPlaybackEnded() {
@@ -84,6 +95,17 @@ class PlaybackQueueManager(
         val currentId = player.currentMediaItem?.mediaId
         val index = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
         if (index !in items.indices) return
+        val media = items[index]
+        val targetVideoMode = preferences.loadVideoMode()
+        val cached = alternateStream?.takeIf {
+            alternateStreamId == media.id && alternateStreamVideoMode == targetVideoMode
+        }
+        if (cached != null) {
+            clearAlternateStream()
+            playResolved(items, index, media, cached, positionMs.coerceAtLeast(0L), playWhenReady)
+            warmAlternateStream(media)
+            return
+        }
         resolveAndPlay(items, index, positionMs.coerceAtLeast(0L), playWhenReady)
     }
 
@@ -179,9 +201,60 @@ class PlaybackQueueManager(
                 if (playWhenReady) player.play() else player.pause()
                 preferences.saveQueue(items, target)
                 preferences.save(media, positionMs)
+                clearAlternateStream()
                 ensureNext(items, target)
+                warmAlternateStream(media)
             }
             busy = false
+        }
+    }
+
+    private fun playResolved(
+        items: List<MediaSummary>,
+        target: Int,
+        media: MediaSummary,
+        stream: AudioStream,
+        positionMs: Long,
+        playWhenReady: Boolean
+    ) {
+        invalidatePending()
+        val metadata = MediaMetadata.Builder()
+            .setTitle(media.title)
+            .setArtist(media.channel)
+            .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
+            .build()
+        player.setMediaItem(
+            MediaItem.Builder()
+                .setMediaId(media.id)
+                .setUri(stream.url)
+                .setMediaMetadata(metadata)
+                .build()
+        )
+        player.prepare()
+        if (positionMs > 0L) player.seekTo(positionMs)
+        player.setPlaybackSpeed(preferences.loadSpeed())
+        if (playWhenReady) player.play() else player.pause()
+        preferences.saveQueue(items, target)
+        preferences.save(media, positionMs)
+        ensureNext(items, target)
+    }
+
+    private fun warmAlternateStream(media: MediaSummary) {
+        val requestGeneration = generation
+        val targetVideoMode = !preferences.loadVideoMode()
+        scope.launch {
+            val selected = runCatching {
+                val streams = withContext(Dispatchers.IO) {
+                    if (targetVideoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
+                }
+                if (targetVideoMode) streams.firstOrNull()
+                else AudioStreamSelector.select(streams, preferences.loadQuality())
+            }.getOrNull() ?: return@launch
+            if (requestGeneration != generation) return@launch
+            if (player.currentMediaItem?.mediaId != media.id) return@launch
+            alternateStreamId = media.id
+            alternateStreamVideoMode = targetVideoMode
+            alternateStream = selected
         }
     }
 
