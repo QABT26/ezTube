@@ -2080,12 +2080,32 @@ private fun FullPlayer(
                     Box(
                         Modifier
                             .size(48.dp)
-                            .pointerInput(hasPrevious) {
+                            .pointerInput(hasPrevious, controller) {
                                 if (!hasPrevious) return@pointerInput
-                                detectTapGestures(
-                                    onTap = { onPrevious() },
-                                    onLongPress = { controller?.seekBack() }
-                                )
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
+                                    val startedAt = down.uptimeMillis
+                                    var longPress = false
+                                    var lastSeekAt = startedAt
+                                    var released = false
+                                    while (!released) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull() ?: break
+                                        val now = change.uptimeMillis
+                                        if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
+                                            longPress = true
+                                        }
+                                        if (longPress && now - lastSeekAt >= 180L) {
+                                            controller?.let { player ->
+                                                player.seekTo((player.currentPosition - 2_000L).coerceAtLeast(0L))
+                                            }
+                                            lastSeekAt = now
+                                        }
+                                        released = change.changedToUpIgnoreConsumed()
+                                        change.consume()
+                                    }
+                                    if (!longPress) onPrevious()
+                                }
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -2112,12 +2132,33 @@ private fun FullPlayer(
                     Box(
                         Modifier
                             .size(48.dp)
-                            .pointerInput(hasNext) {
+                            .pointerInput(hasNext, controller) {
                                 if (!hasNext) return@pointerInput
-                                detectTapGestures(
-                                    onTap = { onNext() },
-                                    onLongPress = { controller?.seekForward() }
-                                )
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
+                                    val startedAt = down.uptimeMillis
+                                    var longPress = false
+                                    var lastSeekAt = startedAt
+                                    var released = false
+                                    while (!released) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull() ?: break
+                                        val now = change.uptimeMillis
+                                        if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
+                                            longPress = true
+                                        }
+                                        if (longPress && now - lastSeekAt >= 180L) {
+                                            controller?.let { player ->
+                                                val end = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                                                player.seekTo((player.currentPosition + 2_000L).coerceAtMost(end))
+                                            }
+                                            lastSeekAt = now
+                                        }
+                                        released = change.changedToUpIgnoreConsumed()
+                                        change.consume()
+                                    }
+                                    if (!longPress) onNext()
+                                }
                             },
                         contentAlignment = Alignment.Center
                     ) {
