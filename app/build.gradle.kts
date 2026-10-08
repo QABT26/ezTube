@@ -75,7 +75,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-dash:1.6.1")
     implementation("androidx.media3:media3-session:1.6.1")
     implementation("androidx.media3:media3-ui:1.6.1")
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
+    implementation("com.github.InfinityLoop1308.PipePipeExtractor:extractor:c68e10e2e97495877832d8df6cbac55478083019")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
