@@ -309,10 +309,10 @@ class PlaybackQueueManager(
             ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE)
         val isSabr = currentEngine == PlaybackService.ENGINE_SABR
 
-        // Media3/SABR already retries transient segment loads in-place. Do not immediately
-        // switch sources on the first terminal player error; allow up to the configured
-        // recovery budget before blacklisting SABR for this media item.
-        if (isSabr && recoveryAttempts + 1 >= MAX_SOURCE_RECOVERY_ATTEMPTS) {
+        // A SABR PlayerError is terminal only after SabrLoadErrorHandlingPolicy has already
+        // retried the failing segment in-place. Do not recreate SABR and visibly reload it again;
+        // blacklist SABR for this item and perform one direct-stream fallback recovery.
+        if (isSabr) {
             sabrFailedIds.add(currentId)
         }
         recoveryJobActive = true
