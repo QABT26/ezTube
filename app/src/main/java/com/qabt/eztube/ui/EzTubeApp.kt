@@ -489,11 +489,11 @@ fun EzTubeApp() {
                 videoMode = videoMode,
                 onVideoMode = { enabled ->
                     if (videoMode != enabled) {
-                        val resumeAt = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
                         videoMode = enabled
                         playbackPrefs.saveVideoMode(enabled)
-                        notifyQueueChanged()
-                        nowPlaying?.let { playMedia(it, resumeAt) }
+                        // The service owns stream replacement so a mode switch cannot race
+                        // the UI resolver or lose queue identity/position.
+                        reloadCurrentForModeChange()
                     }
                 },
                 onQuality = { quality = it; playbackPrefs.saveQuality(it) }, playbackSpeed = playbackSpeed,
