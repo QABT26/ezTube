@@ -53,6 +53,7 @@ class PlaybackQueueManager(
     @Volatile private var recoveryMediaId: String? = null
     @Volatile private var recoveryAttempts = 0
     @Volatile private var recoveryHealthyGeneration = 0L
+    @Volatile private var activePlaybackEngine: String = PlaybackService.ENGINE_DIRECT
     private val sabrFailedIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private fun mediaSourceFor(mediaItem: MediaItem, stream: AudioStream): MediaSource? {
@@ -128,6 +129,9 @@ class PlaybackQueueManager(
     private fun setResolved(playback: ResolvedPlayback) {
         val engine = playback.mediaItem.mediaMetadata.extras
             ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE)
+            ?: PlaybackService.ENGINE_DIRECT
+        activePlaybackEngine = engine
+
         if (engine == PlaybackService.ENGINE_SABR) {
             applySabrVideoQualityConstraint()
         }
@@ -374,6 +378,18 @@ class PlaybackQueueManager(
             recoveryAttempts = 0
         }
     }
+
+    fun applyVideoQualityChange(positionMs: Long, playWhenReady: Boolean): String {
+        if (activePlaybackEngine == PlaybackService.ENGINE_SABR) {
+            applySabrVideoQualityConstraint()
+            return PlaybackService.ENGINE_SABR
+        }
+
+        reloadCurrent(positionMs, playWhenReady)
+        return PlaybackService.ENGINE_DIRECT
+    }
+
+    fun currentPlaybackEngine(): String = activePlaybackEngine
 
     fun reloadCurrent(positionMs: Long, playWhenReady: Boolean) {
         if (busy) return
