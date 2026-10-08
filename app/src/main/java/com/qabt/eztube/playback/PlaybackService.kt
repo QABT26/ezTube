@@ -58,11 +58,29 @@ class PlaybackService : MediaSessionService() {
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (playbackState == Player.STATE_ENDED) queueManager.onPlaybackEnded()
+                        queueManager.checkpointSession()
+                    }
+
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        queueManager.checkpointSession()
+                    }
+
+                    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                        queueManager.checkpointSession()
+                    }
+
+                    override fun onPositionDiscontinuity(
+                        oldPosition: Player.PositionInfo,
+                        newPosition: Player.PositionInfo,
+                        reason: Int
+                    ) {
+                        queueManager.checkpointSession()
                     }
                 })
             }
 
         queueManager = PlaybackQueueManager(requireNotNull(player), preferences, source, serviceScope)
+        queueManager.restoreSession()
 
         setMediaNotificationProvider(object : MediaNotification.Provider {
             private val delegate = androidx.media3.session.DefaultMediaNotificationProvider(this@PlaybackService)
@@ -170,6 +188,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        if (::queueManager.isInitialized) queueManager.checkpointSession()
         SystemTransportBridge.clear()
         serviceScope.cancel()
         session?.release()
