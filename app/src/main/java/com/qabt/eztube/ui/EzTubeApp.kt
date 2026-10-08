@@ -106,6 +106,20 @@ fun EzTubeApp() {
     var quality by remember { mutableStateOf(playbackPrefs.loadQuality()) }
     var videoQuality by remember { mutableStateOf(playbackPrefs.loadVideoQuality()) }
     var videoMode by remember { mutableStateOf(playbackPrefs.loadVideoMode()) }
+    val playbackActivity = context as? Activity
+    DisposableEffect(videoMode, playbackActivity) {
+        val window = playbackActivity?.window
+        if (videoMode) {
+            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            if (videoMode) {
+                window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
     var autoplay by remember { mutableStateOf(playbackPrefs.loadAutoplay()) }
     var nextMode by remember { mutableStateOf(runCatching { NextMode.valueOf(playbackPrefs.loadNextMode()) }.getOrDefault(NextMode.LIST)) }
     var repeatMode by remember {
@@ -1945,7 +1959,7 @@ private fun FullPlayer(
                                     fullscreenSeekPreviewMs = target
                                     fullscreenSeeking = true
 
-                                    launch {
+                                    dragScope.launch {
                                         delay(650L)
                                         fullscreenSeeking = false
                                         fullscreenSeekPreviewMs = -1L
@@ -1954,7 +1968,7 @@ private fun FullPlayer(
                                     lastTapAt = releasedAt
                                     lastTapForward = forward
                                     singleTapJob?.cancel()
-                                    singleTapJob = launch {
+                                    singleTapJob = dragScope.launch {
                                         delay(viewConfiguration.doubleTapTimeoutMillis.toLong())
                                         fullscreenControlsVisible = !fullscreenControlsVisible
                                         if (fullscreenControlsVisible) fullscreenControlsEpoch += 1
