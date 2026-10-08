@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.foundation.layout.*
@@ -1682,6 +1683,7 @@ private fun FullPlayer(
         Column(
             Modifier.weight(1f).verticalScroll(playerScrollState).padding(horizontal = 14.dp)
         ) {
+            if (!showQueue) {
             Spacer(Modifier.height(8.dp))
             if (videoMode && controller != null) {
                 AndroidView(
@@ -1883,7 +1885,8 @@ private fun FullPlayer(
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
+            }
+            Spacer(Modifier.height(if (showQueue) 2.dp else 8.dp))
             val progress = if (duration > 0) {
                 (position.toFloat() / duration).coerceIn(0f, 1f)
             } else 0f
@@ -1950,13 +1953,13 @@ private fun FullPlayer(
             }
             if (showQueue) {
                 Surface(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false).padding(bottom = 2.dp),
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                 ) {
                     Column(
                         Modifier
-                            .heightIn(max = 360.dp)
+                            .fillMaxHeight()
                             .verticalScroll(queueScrollState)
                             .padding(vertical = 5.dp)
                     ) {
@@ -2074,8 +2077,17 @@ private fun FullPlayer(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onPrevious, enabled = hasPrevious) {
-                        Icon(Icons.Outlined.SkipPrevious, "Previous")
+                    IconButton(
+                        onClick = onPrevious,
+                        enabled = hasPrevious,
+                        modifier = Modifier.pointerInput(hasPrevious) {
+                            if (!hasPrevious) return@pointerInput
+                            detectTapGestures(
+                                onLongPress = { controller?.seekBack() }
+                            )
+                        }
+                    ) {
+                        Icon(Icons.Outlined.SkipPrevious, "Previous / hold to rewind")
                     }
                     FilledTonalIconButton(onClick = { controller?.seekBack() }) {
                         Icon(Icons.Outlined.Replay10, "Back 10 seconds")
@@ -2090,8 +2102,17 @@ private fun FullPlayer(
                     FilledTonalIconButton(onClick = { controller?.seekForward() }) {
                         Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
                     }
-                    IconButton(onClick = onNext, enabled = hasNext) {
-                        Icon(Icons.Outlined.SkipNext, "Next")
+                    IconButton(
+                        onClick = onNext,
+                        enabled = hasNext,
+                        modifier = Modifier.pointerInput(hasNext) {
+                            if (!hasNext) return@pointerInput
+                            detectTapGestures(
+                                onLongPress = { controller?.seekForward() }
+                            )
+                        }
+                    ) {
+                        Icon(Icons.Outlined.SkipNext, "Next / hold to fast-forward")
                     }
                 }
             }
