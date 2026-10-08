@@ -386,7 +386,7 @@ class PlaybackQueueManager(
                 val streams = withContext(Dispatchers.IO) {
                     if (targetVideoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
                 }
-                if (targetVideoMode) streams.firstOrNull()
+                if (targetVideoMode) VideoStreamSelector.select(streams, preferences.loadVideoQuality())
                 else AudioStreamSelector.select(streams, preferences.loadQuality())
             }.getOrNull() ?: return@launch
             if (requestGeneration != generation) return@launch
@@ -416,7 +416,7 @@ class PlaybackQueueManager(
             if (videoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
         }
         val stream = if (videoMode) {
-            streams.firstOrNull()
+            VideoStreamSelector.select(streams, preferences.loadVideoQuality())
         } else {
             AudioStreamSelector.select(streams, preferences.loadQuality())
         } ?: error(if (videoMode) "No playable video stream" else "No playable audio stream")
