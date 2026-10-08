@@ -8,6 +8,7 @@ import java.io.IOException;
 
 final class SabrLoadErrorHandlingPolicy extends DefaultLoadErrorHandlingPolicy {
     private static final long PENDING_RETRY_DELAY_MS = 100L;
+    private static final int MAX_SEGMENT_RETRIES = 3;
 
     @Override
     public long getRetryDelayMsFor(
@@ -16,17 +17,15 @@ final class SabrLoadErrorHandlingPolicy extends DefaultLoadErrorHandlingPolicy {
         if (isPending(loadErrorInfo.exception)) {
             return PENDING_RETRY_DELAY_MS;
         }
-        final int normalRetryCount = super.getMinimumLoadableRetryCount(
-                loadErrorInfo.mediaLoadData.dataType
-        );
-        return loadErrorInfo.errorCount > normalRetryCount
-                ? C.TIME_UNSET
-                : super.getRetryDelayMsFor(loadErrorInfo);
+        if (loadErrorInfo.errorCount <= MAX_SEGMENT_RETRIES) {
+            return Math.min(1_000L, loadErrorInfo.errorCount * 250L);
+        }
+        return C.TIME_UNSET;
     }
 
     @Override
     public int getMinimumLoadableRetryCount(int dataType) {
-        return Integer.MAX_VALUE;
+        return MAX_SEGMENT_RETRIES;
     }
 
     private static boolean isPending(IOException exception) {
