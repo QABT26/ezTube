@@ -13,11 +13,23 @@ android {
         applicationId = "com.qabt.eztube"
         minSdk = 23
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.2.0-beta.2"
+        versionCode = 4
+        versionName = "0.2.0-beta.3"
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    buildTypes {
+        debug {
+            buildConfigField("String", "BUILD_ID", "\\\"b5139c4\\\"")
+        }
+        release {
+            buildConfigField("String", "BUILD_ID", "\\\"release\\\"")
+        }
+    }
 
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
