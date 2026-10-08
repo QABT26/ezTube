@@ -1,5 +1,7 @@
 package com.qabt.eztube.ui
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.content.ComponentName
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -38,8 +40,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -47,6 +47,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
 import com.qabt.eztube.BuildConfig
 import com.qabt.eztube.history.EzTubeDatabase
@@ -1775,6 +1778,7 @@ private fun FullPlayer(
     onToggle: () -> Unit,
     onClose: () -> Unit
 ) {
+    val context = LocalContext.current
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var showQueue by remember { mutableStateOf(false) }
@@ -1795,40 +1799,65 @@ private fun FullPlayer(
         }
     }
 
-    if (fullscreenVideo && videoMode && controller != null) {
-        val fullscreenController = controller
-        Dialog(
-            onDismissRequest = { fullscreenVideo = false },
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = false
-            )
-        ) {
-            Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black)) {
-                AndroidView(
-                    factory = { context ->
-                        androidx.media3.ui.PlayerView(context).apply {
-                            useController = true
-                            controllerAutoShow = true
-                            controllerHideOnTouch = true
-                            player = fullscreenController
-                        }
-                    },
-                    update = { view ->
-                        view.player = fullscreenController
-                        view.useController = true
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-                FilledTonalIconButton(
-                    onClick = { fullscreenVideo = false },
-                    modifier = Modifier.align(Alignment.TopEnd)
-                        .statusBarsPadding().padding(12.dp).size(42.dp)
-                ) {
-                    Icon(Icons.Outlined.FullscreenExit, "Exit fullscreen", Modifier.size(24.dp))
-                }
+    val activity = context as? Activity
+    val originalOrientation = remember(activity) { activity?.requestedOrientation }
+
+    DisposableEffect(fullscreenVideo, activity) {
+        if (fullscreenVideo && activity != null) {
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+            WindowInsetsControllerCompat(activity.window, activity.window.decorView).apply {
+                systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                hide(WindowInsetsCompat.Type.systemBars())
             }
         }
+        onDispose {
+            if (activity != null) {
+                WindowInsetsControllerCompat(activity.window, activity.window.decorView)
+                    .show(WindowInsetsCompat.Type.systemBars())
+                WindowCompat.setDecorFitsSystemWindows(activity.window, true)
+                activity.requestedOrientation =
+                    originalOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+        }
+    }
+
+    BackHandler(enabled = fullscreenVideo) {
+        fullscreenVideo = false
+    }
+
+    if (fullscreenVideo && videoMode && controller != null) {
+        val fullscreenController = controller
+        Box(
+            Modifier.fillMaxSize()
+                .background(androidx.compose.ui.graphics.Color.Black)
+        ) {
+            AndroidView(
+                factory = { viewContext ->
+                    androidx.media3.ui.PlayerView(viewContext).apply {
+                        useController = true
+                        controllerAutoShow = true
+                        controllerHideOnTouch = true
+                        resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        player = fullscreenController
+                    }
+                },
+                update = { view ->
+                    view.player = fullscreenController
+                    view.useController = true
+                    view.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+            FilledTonalIconButton(
+                onClick = { fullscreenVideo = false },
+                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp).size(42.dp)
+            ) {
+                Icon(Icons.Outlined.FullscreenExit, "Exit fullscreen", Modifier.size(24.dp))
+            }
+        }
+        return
     }
 
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
