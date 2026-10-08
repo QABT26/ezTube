@@ -52,6 +52,7 @@ class PlaybackQueueManager(
     @Volatile private var recoveryJobActive = false
     @Volatile private var recoveryMediaId: String? = null
     @Volatile private var recoveryAttempts = 0
+    @Volatile private var recoveryHealthyGeneration = 0L
     private val sabrFailedIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private fun mediaSourceFor(mediaItem: MediaItem, stream: AudioStream): MediaSource? {
@@ -289,6 +290,7 @@ class PlaybackQueueManager(
 
     fun recoverSourceError() {
         if (busy || recoveryJobActive) return
+        recoveryHealthyGeneration += 1
         val saved = preferences.loadQueue() ?: return
         val items = saved.first
         val currentId = player.currentMediaItem?.mediaId ?: return
@@ -303,10 +305,14 @@ class PlaybackQueueManager(
 
         val positionMs = player.currentPosition.coerceAtLeast(0L)
         val shouldPlay = player.playWhenReady
-        if (
-            player.currentMediaItem?.mediaMetadata?.extras
-                ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE) == PlaybackService.ENGINE_SABR
-        ) {
+        val currentEngine = player.currentMediaItem?.mediaMetadata?.extras
+            ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE)
+        val isSabr = currentEngine == PlaybackService.ENGINE_SABR
+
+        // Media3/SABR already retries transient segment loads in-place. Do not immediately
+        // switch sources on the first terminal player error; allow up to the configured
+        // recovery budget before blacklisting SABR for this media item.
+        if (isSabr && recoveryAttempts + 1 >= MAX_SOURCE_RECOVERY_ATTEMPTS) {
             sabrFailedIds.add(currentId)
         }
         recoveryJobActive = true
@@ -350,8 +356,21 @@ class PlaybackQueueManager(
     }
 
     fun onPlaybackHealthy() {
-        if (player.playbackState == Player.STATE_READY) {
-            recoveryMediaId = player.currentMediaItem?.mediaId
+        if (player.playbackState != Player.STATE_READY) return
+
+        val healthyId = player.currentMediaItem?.mediaId ?: return
+        recoveryMediaId = healthyId
+        val healthyGeneration = ++recoveryHealthyGeneration
+
+        // READY can be reached briefly between repeated source failures. Reset the recovery
+        // budget only after playback has stayed healthy for a while, otherwise the "3 retries"
+        // budget effectively becomes unlimited reload cycles.
+        scope.launch {
+            delay(10_000L)
+            if (healthyGeneration != recoveryHealthyGeneration) return@launch
+            if (player.currentMediaItem?.mediaId != healthyId) return@launch
+            if (player.playbackState != Player.STATE_READY) return@launch
+            if (!player.isPlaying && player.playWhenReady) return@launch
             recoveryAttempts = 0
         }
     }
