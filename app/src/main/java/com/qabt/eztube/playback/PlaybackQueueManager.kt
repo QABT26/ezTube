@@ -144,11 +144,24 @@ class PlaybackQueueManager(
     }
 
     private fun applySabrVideoQualityConstraint() {
-        val maxHeight = preferences.loadVideoQuality().targetHeight ?: Int.MAX_VALUE
-        player.trackSelectionParameters = player.trackSelectionParameters
-            .buildUpon()
-            .setMaxVideoSize(Int.MAX_VALUE, maxHeight)
-            .build()
+        val targetHeight = preferences.loadVideoQuality().targetHeight
+        val builder = player.trackSelectionParameters.buildUpon()
+
+        if (targetHeight == null) {
+            // Auto: expose the whole SABR ladder to Media3.
+            builder
+                .setMinVideoSize(0, 0)
+                .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+        } else {
+            // Manual quality is a hard rung, not merely a ceiling. Using only maxHeight
+            // allowed Media3 to stay forever on 144/240/360 when SABR transport did not
+            // contribute regular HTTP bandwidth samples.
+            builder
+                .setMinVideoSize(0, targetHeight)
+                .setMaxVideoSize(Int.MAX_VALUE, targetHeight)
+        }
+
+        player.trackSelectionParameters = builder.build()
     }
 
     private fun addResolved(playback: ResolvedPlayback) {
