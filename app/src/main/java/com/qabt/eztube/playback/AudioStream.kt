@@ -6,5 +6,7 @@ data class AudioStream(
     val codec: String?,
     val mimeType: String?,
     val isFallbackMuxed: Boolean = false,
-    val videoHeight: Int? = null
+    val videoHeight: Int? = null,
+    val companionAudioUrl: String? = null,
+    val companionAudioMimeType: String? = null
 )
