@@ -1748,7 +1748,10 @@ private fun FullPlayer(
                     leadingIcon = { Icon(Icons.Outlined.OndemandVideo, null, Modifier.size(16.dp)) }
                 )
             }
-            if (!videoMode) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (!videoMode) Row(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 AudioQuality.entries.forEach { option ->
                     FilterChip(
                         modifier = Modifier.weight(1f).height(32.dp),
