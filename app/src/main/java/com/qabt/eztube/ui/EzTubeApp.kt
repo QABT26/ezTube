@@ -653,7 +653,11 @@ fun EzTubeApp() {
                         resolvingId = resolvingId,
                         onPlay = { entry ->
                             val items = recent.map { it.toMediaSummary() }
-                            startQueue(entry.toMediaSummary(), items)
+                            startQueue(
+                                entry.toMediaSummary(),
+                                items,
+                                startPositionMs = entry.positionMs.coerceAtLeast(0L)
+                            )
                         },
                         onPlayFavorite = { entry ->
                             val items = favorites.map { it.toMediaSummary() }
