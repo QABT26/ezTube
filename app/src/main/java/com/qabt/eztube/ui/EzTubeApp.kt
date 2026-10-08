@@ -982,8 +982,25 @@ private fun SearchResult(
     onAddToQueue: (() -> Unit)? = null
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    var titleTouchActive by remember(media.id) { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = enabled, onClick = onPlay)
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .pointerInput(media.id) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    titleTouchActive = true
+                    try {
+                        do {
+                            val event = awaitPointerEvent()
+                        } while (event.changes.any { it.pressed })
+                    } finally {
+                        titleTouchActive = false
+                    }
+                }
+            }
+            .clickable(enabled = enabled, onClick = onPlay)
             .padding(7.dp), verticalAlignment = Alignment.CenterVertically
     ) {
         Box(Modifier.size(width = 116.dp, height = 66.dp)) {
@@ -1012,8 +1029,21 @@ private fun SearchResult(
         }
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
-            Text(media.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                media.title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = if (titleTouchActive) 1 else 2,
+                softWrap = !titleTouchActive,
+                overflow = if (titleTouchActive) TextOverflow.Clip else TextOverflow.Ellipsis,
+                modifier = if (titleTouchActive) {
+                    Modifier.fillMaxWidth().basicMarquee(
+                        iterations = Int.MAX_VALUE,
+                        spacing = MarqueeSpacing(20.dp),
+                        initialDelayMillis = 120
+                    )
+                } else Modifier.fillMaxWidth()
+            )
             Spacer(Modifier.height(3.dp))
             Text(
                 media.channel.ifBlank { "YouTube" },
