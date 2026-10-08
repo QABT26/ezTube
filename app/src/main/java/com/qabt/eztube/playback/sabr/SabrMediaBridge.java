@@ -143,6 +143,9 @@ final class SabrMediaBridge {
                 : current.audio == null
                 ? spec.getBootstrapAudioFormat()
                 : current.audio;
+        final YoutubeSabrInfo.Format video = key.getFormat().isVideo()
+                ? key.getFormat()
+                : current.video;
 
         final long playerTimeMs = Math.max(
                 0,
@@ -153,7 +156,7 @@ final class SabrMediaBridge {
             tracks.add(track(audio));
         }
         if (current.videoActive || key.getFormat().isVideo()) {
-            tracks.add(track(current.video));
+            tracks.add(track(video));
         }
         requestOnce(
                 YoutubeSabrRequest.playback(playerTimeMs, 1.0f, tracks),
