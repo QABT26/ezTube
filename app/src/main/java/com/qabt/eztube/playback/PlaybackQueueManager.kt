@@ -26,6 +26,12 @@ class PlaybackQueueManager(
 ) {
     @Volatile private var busy = false
     @Volatile private var preloadId: String? = null
+    @Volatile private var generation = 0L
+
+    private fun invalidatePending() {
+        generation += 1
+        preloadId = null
+    }
 
     fun onTransition(mediaItem: MediaItem?) {
         val id = mediaItem?.mediaId ?: return
@@ -45,8 +51,9 @@ class PlaybackQueueManager(
         val currentId = player.currentMediaItem?.mediaId
         val current = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
         val repeat = preferences.loadRepeatMode()
+        // Repeat ONE is handled natively by ExoPlayer. Logical queue ownership only
+        // advances here, or wraps the final item for Repeat ALL.
         val target = when {
-            repeat == 1 -> current
             current < items.lastIndex -> current + 1
             repeat == 2 -> 0
             else -> return
@@ -55,6 +62,7 @@ class PlaybackQueueManager(
     }
 
     fun refreshFromPreferences() {
+        invalidatePending()
         val saved = preferences.loadQueue() ?: return
         val currentId = player.currentMediaItem?.mediaId
         val index = saved.first.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
@@ -72,21 +80,36 @@ class PlaybackQueueManager(
     }
 
     fun move(delta: Int) {
-        if (busy) return
+        if (busy || delta == 0) return
         val saved = preferences.loadQueue() ?: return
         val items = saved.first
+        if (items.isEmpty()) return
         val currentId = player.currentMediaItem?.mediaId
         val current = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
-        val target = current + delta
-        if (target !in items.indices) return
-
-        if (delta > 0 && player.hasNextMediaItem()) {
-            player.seekToNextMediaItem()
-            return
+        val repeatAll = preferences.loadRepeatMode() == 2
+        val rawTarget = current + delta
+        val target = when {
+            rawTarget in items.indices -> rawTarget
+            repeatAll && rawTarget > items.lastIndex -> 0
+            repeatAll && rawTarget < 0 -> items.lastIndex
+            else -> return
         }
-        if (delta < 0 && player.hasPreviousMediaItem()) {
-            player.seekToPreviousMediaItem()
-            return
+
+        // Native adjacent items are safe only when they match the logical target.
+        // Queue edits can otherwise leave a stale resolved item in Media3.
+        if (delta > 0 && target == current + 1 && player.hasNextMediaItem()) {
+            val nativeNext = player.getMediaItemAt(player.currentMediaItemIndex + 1)
+            if (nativeNext.mediaId == items[target].id) {
+                player.seekToNextMediaItem()
+                return
+            }
+        }
+        if (delta < 0 && target == current - 1 && player.hasPreviousMediaItem()) {
+            val nativePrevious = player.getMediaItemAt(player.currentMediaItemIndex - 1)
+            if (nativePrevious.mediaId == items[target].id) {
+                player.seekToPreviousMediaItem()
+                return
+            }
         }
         resolveAndPlay(items, target)
     }
@@ -107,8 +130,10 @@ class PlaybackQueueManager(
         if (preloadId != next.id) preloadId = null
         if (preloadId == next.id) return
         preloadId = next.id
+        val requestGeneration = generation
         scope.launch {
             resolve(next).onSuccess { item ->
+                if (requestGeneration != generation) return@onSuccess
                 val currentId = player.currentMediaItem?.mediaId
                 val latest = preferences.loadQueue()
                 val latestIndex = latest?.first?.indexOfFirst { it.id == currentId } ?: -1
@@ -126,10 +151,16 @@ class PlaybackQueueManager(
     }
 
     private fun resolveAndPlay(items: List<MediaSummary>, target: Int) {
+        if (target !in items.indices) return
         busy = true
+        invalidatePending()
+        val requestGeneration = generation
         scope.launch {
             val media = items[target]
             resolve(media).onSuccess { item ->
+                if (requestGeneration != generation) return@onSuccess
+                val latest = preferences.loadQueue()
+                if (latest == null || latest.first.getOrNull(target)?.id != media.id) return@onSuccess
                 player.setMediaItem(item)
                 player.prepare()
                 player.setPlaybackSpeed(preferences.loadSpeed())
