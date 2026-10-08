@@ -27,6 +27,7 @@ class PlaybackService : MediaSessionService() {
         const val COMMAND_QUEUE_CHANGED = "com.qabt.eztube.QUEUE_CHANGED"
         const val COMMAND_RELOAD_CURRENT = "com.qabt.eztube.RELOAD_CURRENT"
         const val COMMAND_PLAY_CURRENT = "com.qabt.eztube.PLAY_CURRENT"
+        const val COMMAND_SET_VIDEO_QUALITY = "com.qabt.eztube.SET_VIDEO_QUALITY"
         const val ARG_POSITION_MS = "position_ms"
         const val ARG_PLAY_WHEN_READY = "play_when_ready"
         const val ARG_ERROR_MESSAGE = "error_message"
@@ -94,7 +95,8 @@ class PlaybackService : MediaSessionService() {
             }
 
         queueManager = PlaybackQueueManager(this, requireNotNull(player), preferences, source, serviceScope)
-        queueManager.restoreSession()
+        // Do not resolve YouTube on service/app startup. UI restores logical media/position
+        // from PlaybackPreferences; the network source is resolved only when playback starts.
 
         setMediaNotificationProvider(object : MediaNotification.Provider {
             private val delegate = androidx.media3.session.DefaultMediaNotificationProvider(this@PlaybackService)
@@ -115,6 +117,7 @@ class PlaybackService : MediaSessionService() {
                         .add(androidx.media3.session.SessionCommand(COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_RELOAD_CURRENT, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_PLAY_CURRENT, android.os.Bundle.EMPTY))
+                        .add(androidx.media3.session.SessionCommand(COMMAND_SET_VIDEO_QUALITY, android.os.Bundle.EMPTY))
                         .build()
                     val playerCommands = ConnectionResult.DEFAULT_PLAYER_COMMANDS
                         .buildUpon()
@@ -170,6 +173,20 @@ class PlaybackService : MediaSessionService() {
                             }
                         }
                         return future
+                    }
+                    if (customCommand.customAction == COMMAND_SET_VIDEO_QUALITY) {
+                        val engine = queueManager.applyVideoQualityChange(
+                            positionMs = args.getLong(ARG_POSITION_MS, 0L),
+                            playWhenReady = args.getBoolean(ARG_PLAY_WHEN_READY, true)
+                        )
+                        return com.google.common.util.concurrent.Futures.immediateFuture(
+                            SessionResult(
+                                SessionResult.RESULT_SUCCESS,
+                                android.os.Bundle().apply {
+                                    putString(EXTRA_PLAYBACK_ENGINE, engine)
+                                }
+                            )
+                        )
                     }
                     if (customCommand.customAction == COMMAND_RELOAD_CURRENT) {
                         queueManager.reloadCurrent(
