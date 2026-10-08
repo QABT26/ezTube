@@ -1877,14 +1877,15 @@ private fun FullPlayer(
                     )
                 }
             }
-            Text(
-                if (videoMode) "Video mode · queue and position are preserved"
-                else if (compatibilityFallback) "Compatibility stream · may use more data"
-                else "Audio-only · quality applies to next track",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (compatibilityFallback) MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (!videoMode) {
+                Text(
+                    if (compatibilityFallback) "Compatibility stream · may use more data"
+                    else "Audio-only · quality applies to next track",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (compatibilityFallback) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             playerError?.let {
                 Row(
                     Modifier.fillMaxWidth().padding(top = 4.dp),
