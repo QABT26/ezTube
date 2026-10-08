@@ -1,7 +1,6 @@
 package com.qabt.eztube.ui
 
 import android.content.ComponentName
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -43,7 +42,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -57,7 +55,6 @@ import com.qabt.eztube.history.HistoryRepository
 import com.qabt.eztube.history.toMediaSummary
 import com.qabt.eztube.history.progress
 import com.qabt.eztube.playback.AudioQuality
-import com.qabt.eztube.playback.AudioStreamSelector
 import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
 import com.qabt.eztube.youtube.MediaSummary
@@ -142,6 +139,8 @@ fun EzTubeApp() {
                     override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         val id = mediaItem?.mediaId ?: return
+                        compatibilityFallback = mediaItem.mediaMetadata.extras
+                            ?.getBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, false) == true
                         val saved = playbackPrefs.loadQueue()
                         val media = saved?.first?.firstOrNull { it.id == id }
                             ?: playbackPrefs.load()?.first?.takeIf { it.id == id }
@@ -232,61 +231,63 @@ fun EzTubeApp() {
 
     fun playMedia(media: MediaSummary, startPositionMs: Long = 0L) {
         if (resolvingId != null) return
-        scope.launch {
-            resolvingId = media.id
-            errorMessage = null
-            if (queue.isNotEmpty()) {
-                val idx = queue.indexOfFirst { it.id == media.id }
-                if (idx >= 0) queueIndex = idx
-                playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
-            }
-            runCatching {
-                val streams = withContext(Dispatchers.IO) {
-                    if (videoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
-                }
-                (if (videoMode) streams.firstOrNull()
-                else AudioStreamSelector.select(streams, quality))
-                    ?: error(if (videoMode) "No playable video stream" else "No playable audio stream")
-            }.onSuccess { stream ->
-                compatibilityFallback = !videoMode && stream.isFallbackMuxed
-                playerError = null
-                controller?.apply {
-                    val metadata = MediaMetadata.Builder()
-                        .setTitle(media.title)
-                        .setArtist(media.channel)
-                        .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
-                        .build()
-                    setMediaItem(
-                        MediaItem.Builder()
-                            .setMediaId(media.id)
-                            .setUri(stream.url)
-                            .setMediaMetadata(metadata)
-                            .build()
-                    )
-                    prepare()
-                    if (startPositionMs > 0) seekTo(startPositionMs)
-                    setPlaybackSpeed(playbackSpeed)
-                    play()
-                    nowPlaying = media
-                    if (queue.isNotEmpty()) {
-                        val idx = queue.indexOfFirst { it.id == media.id }
-                        if (idx >= 0) queueIndex = idx
-                        playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
-                        notifyQueueChanged()
-                    }
-                    resumePositionMs = 0L
-                    playbackPrefs.save(media, startPositionMs)
-                    // MediaController is application-thread confined. Read controller state here,
-                    // then cross to IO only for the Room write.
-                    val initialDurationMs = duration.takeIf { it > 0 } ?: 0L
-                    withContext(Dispatchers.IO) {
-                        history.record(media, startPositionMs, initialDurationMs)
-                    }
-                } ?: run { errorMessage = "Playback service is not ready yet" }
-            }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
-            resolvingId = null
+        val active = controller
+        if (active == null) {
+            errorMessage = "Playback service is not ready yet"
+            return
         }
+
+        resolvingId = media.id
+        errorMessage = null
+
+        if (queue.isEmpty()) {
+            queue = listOf(media)
+            queueIndex = 0
+        } else {
+            val idx = queue.indexOfFirst { it.id == media.id }
+            if (idx >= 0) {
+                queueIndex = idx
+            } else {
+                queue = listOf(media)
+                queueIndex = 0
+            }
+        }
+        playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
+
+        val args = android.os.Bundle().apply {
+            putLong(PlaybackService.ARG_POSITION_MS, startPositionMs.coerceAtLeast(0L))
+            putBoolean(PlaybackService.ARG_PLAY_WHEN_READY, true)
+        }
+        val future = active.sendCustomCommand(
+            androidx.media3.session.SessionCommand(
+                PlaybackService.COMMAND_PLAY_CURRENT,
+                android.os.Bundle.EMPTY
+            ),
+            args
+        )
+        future.addListener({
+            runCatching { future.get() }
+                .onSuccess { result ->
+                    if (result.resultCode == androidx.media3.session.SessionResult.RESULT_SUCCESS) {
+                        playerError = null
+                        nowPlaying = media
+                        resumePositionMs = 0L
+                        playbackPrefs.save(media, startPositionMs.coerceAtLeast(0L))
+                        scope.launch(Dispatchers.IO) {
+                            history.record(media, startPositionMs.coerceAtLeast(0L), 0L)
+                        }
+                    } else {
+                        errorMessage = result.extras.getString(PlaybackService.ARG_ERROR_MESSAGE)
+                            ?: "Unable to play this item"
+                    }
+                }
+                .onFailure {
+                    errorMessage = it.message ?: "Unable to play this item"
+                }
+            if (resolvingId == media.id) resolvingId = null
+        }, context.mainExecutor)
     }
+
     fun startQueue(media: MediaSummary, sourceItems: List<MediaSummary>, startPositionMs: Long = 0L) {
         queue = queueForStart(media, sourceItems)
         queueIndex = queue.indexOfFirst { it.id == media.id }.coerceAtLeast(0)
