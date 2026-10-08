@@ -1788,6 +1788,8 @@ private fun FullPlayer(
     var dragQueueY by remember { mutableFloatStateOf(0f) }
     var holdSeekPreviewMs by remember { mutableLongStateOf(-1L) }
     var fullscreenVideo by remember { mutableStateOf(false) }
+    var fullscreenControlsVisible by remember { mutableStateOf(true) }
+    var fullscreenControlsEpoch by remember { mutableIntStateOf(0) }
     val playerScrollState = rememberScrollState()
     val queueScrollState = rememberScrollState()
     val dragScope = rememberCoroutineScope()
@@ -1827,6 +1829,13 @@ private fun FullPlayer(
         fullscreenVideo = false
     }
 
+    LaunchedEffect(fullscreenVideo, fullscreenControlsVisible, fullscreenControlsEpoch) {
+        if (fullscreenVideo && fullscreenControlsVisible) {
+            delay(2_500L)
+            fullscreenControlsVisible = false
+        }
+    }
+
     if (fullscreenVideo && videoMode && controller != null) {
         val fullscreenController = controller
         val fullscreenProgress = if (duration > 0L) {
@@ -1853,179 +1862,242 @@ private fun FullPlayer(
                 modifier = Modifier.fillMaxSize()
             )
 
-            Row(
-                Modifier.align(Alignment.Center)
-                    .background(
-                        androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.32f),
-                        RoundedCornerShape(50)
-                    )
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    Modifier
-                        .size(52.dp)
-                        .pointerInput(hasPrevious, fullscreenController, duration) {
-                            if (!hasPrevious) return@pointerInput
-                            awaitEachGesture {
-                                val down = awaitFirstDown()
-                                val startedAt = down.uptimeMillis
-                                var longPress = false
-                                var preview = fullscreenController.currentPosition.coerceAtLeast(0L)
-                                var lastPreviewAt = startedAt
-                                var released = false
-                                while (!released) {
-                                    val event = awaitPointerEvent()
-                                    val change = event.changes.firstOrNull() ?: break
-                                    val now = change.uptimeMillis
-                                    if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
-                                        longPress = true
-                                    }
-                                    if (longPress && now - lastPreviewAt >= 180L) {
-                                        preview = (preview - 2_000L).coerceAtLeast(0L)
-                                        lastPreviewAt = now
-                                    }
-                                    released = change.changedToUpIgnoreConsumed()
-                                    change.consume()
+            // Fullscreen surface gesture:
+            // tap toggles controls; hold left/right half continuously rewinds/fast-forwards.
+            Box(
+                Modifier.fillMaxSize()
+                    .pointerInput(fullscreenController, duration) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            val startedAt = down.uptimeMillis
+                            val forward = down.position.x >= size.width / 2f
+                            var longPress = false
+                            var lastSeekAt = startedAt
+                            var released = false
+
+                            while (!released) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull() ?: break
+                                val now = change.uptimeMillis
+
+                                if (!longPress &&
+                                    now - startedAt >= viewConfiguration.longPressTimeoutMillis
+                                ) {
+                                    longPress = true
+                                    fullscreenControlsVisible = false
                                 }
-                                if (longPress) fullscreenController.seekTo(preview) else onPrevious()
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Outlined.SkipPrevious,
-                        "Previous / hold to rewind",
-                        Modifier.size(34.dp),
-                        tint = androidx.compose.ui.graphics.Color.White.copy(
-                            alpha = if (hasPrevious) 1f else 0.38f
-                        )
-                    )
-                }
 
-                FilledTonalIconButton(
-                    onClick = { fullscreenController.seekBack() },
-                    modifier = Modifier.size(52.dp)
-                ) {
-                    Icon(Icons.Outlined.Replay10, "Back 10 seconds", Modifier.size(27.dp))
-                }
-
-                FilledIconButton(
-                    onClick = onToggle,
-                    modifier = Modifier.size(64.dp)
-                ) {
-                    Icon(
-                        if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                        if (isPlaying) "Pause" else "Play",
-                        Modifier.size(34.dp)
-                    )
-                }
-
-                FilledTonalIconButton(
-                    onClick = { fullscreenController.seekForward() },
-                    modifier = Modifier.size(52.dp)
-                ) {
-                    Icon(Icons.Outlined.Forward10, "Forward 10 seconds", Modifier.size(27.dp))
-                }
-
-                Box(
-                    Modifier
-                        .size(52.dp)
-                        .pointerInput(hasNext, fullscreenController, duration) {
-                            if (!hasNext) return@pointerInput
-                            awaitEachGesture {
-                                val down = awaitFirstDown()
-                                val startedAt = down.uptimeMillis
-                                var longPress = false
-                                var preview = fullscreenController.currentPosition.coerceAtLeast(0L)
-                                var lastPreviewAt = startedAt
-                                var released = false
-                                while (!released) {
-                                    val event = awaitPointerEvent()
-                                    val change = event.changes.firstOrNull() ?: break
-                                    val now = change.uptimeMillis
-                                    if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
-                                        longPress = true
-                                    }
-                                    if (longPress && now - lastPreviewAt >= 180L) {
+                                if (longPress && now - lastSeekAt >= 180L) {
+                                    val current = fullscreenController.currentPosition.coerceAtLeast(0L)
+                                    val target = if (forward) {
                                         val endPosition = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
-                                        preview = (preview + 2_000L).coerceAtMost(endPosition)
-                                        lastPreviewAt = now
+                                        (current + 2_000L).coerceAtMost(endPosition)
+                                    } else {
+                                        (current - 2_000L).coerceAtLeast(0L)
                                     }
-                                    released = change.changedToUpIgnoreConsumed()
-                                    change.consume()
+                                    fullscreenController.seekTo(target)
+                                    lastSeekAt = now
                                 }
-                                if (longPress) fullscreenController.seekTo(preview) else onNext()
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Outlined.SkipNext,
-                        "Next / hold to fast-forward",
-                        Modifier.size(34.dp),
-                        tint = androidx.compose.ui.graphics.Color.White.copy(
-                            alpha = if (hasNext) 1f else 0.38f
-                        )
-                    )
-                }
-            }
 
-            Column(
-                Modifier.align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.42f))
-                    .padding(horizontal = 18.dp, vertical = 8.dp)
-            ) {
-                Box(
-                    Modifier.fillMaxWidth().height(28.dp)
-                        .pointerInput(duration) {
-                            fun seek(x: Float) {
-                                if (duration > 0L) {
-                                    val fraction = (x / size.width).coerceIn(0f, 1f)
-                                    fullscreenController.seekTo((duration * fraction).toLong())
-                                }
+                                released = change.changedToUpIgnoreConsumed()
+                                change.consume()
                             }
-                            awaitEachGesture {
-                                val down = awaitFirstDown()
-                                seek(down.position.x)
-                                do {
-                                    val event = awaitPointerEvent()
-                                    val change = event.changes.firstOrNull() ?: break
-                                    if (change.positionChanged()) {
-                                        seek(change.position.x)
+
+                            if (!longPress) {
+                                fullscreenControlsVisible = !fullscreenControlsVisible
+                                if (fullscreenControlsVisible) fullscreenControlsEpoch += 1
+                            }
+                        }
+                    }
+            )
+
+            if (fullscreenControlsVisible) {
+                Row(
+                    Modifier.align(Alignment.Center)
+                        .background(
+                            androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.32f),
+                            RoundedCornerShape(50)
+                        )
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier
+                            .size(52.dp)
+                            .pointerInput(hasPrevious, fullscreenController, duration) {
+                                if (!hasPrevious) return@pointerInput
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
+                                    val startedAt = down.uptimeMillis
+                                    var longPress = false
+                                    var preview = fullscreenController.currentPosition.coerceAtLeast(0L)
+                                    var lastPreviewAt = startedAt
+                                    var released = false
+                                    while (!released) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull() ?: break
+                                        val now = change.uptimeMillis
+                                        if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
+                                            longPress = true
+                                        }
+                                        if (longPress && now - lastPreviewAt >= 180L) {
+                                            preview = (preview - 2_000L).coerceAtLeast(0L)
+                                            lastPreviewAt = now
+                                        }
+                                        released = change.changedToUpIgnoreConsumed()
                                         change.consume()
                                     }
-                                } while (!change.changedToUpIgnoreConsumed())
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    LinearProgressIndicator(
-                        progress = { fullscreenProgress },
-                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50))
-                    )
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(
-                        formatTime(position),
-                        color = androidx.compose.ui.graphics.Color.White,
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                    Text(
-                        formatTime(duration),
-                        color = androidx.compose.ui.graphics.Color.White,
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
-            }
+                                    if (longPress) fullscreenController.seekTo(preview) else onPrevious()
+                                    fullscreenControlsEpoch += 1
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Outlined.SkipPrevious,
+                            "Previous / hold to rewind",
+                            Modifier.size(34.dp),
+                            tint = androidx.compose.ui.graphics.Color.White.copy(
+                                alpha = if (hasPrevious) 1f else 0.38f
+                            )
+                        )
+                    }
 
-            FilledTonalIconButton(
-                onClick = { fullscreenVideo = false },
-                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp).size(42.dp)
-            ) {
-                Icon(Icons.Outlined.FullscreenExit, "Exit fullscreen", Modifier.size(24.dp))
+                    FilledTonalIconButton(
+                        onClick = {
+                            fullscreenController.seekBack()
+                            fullscreenControlsEpoch += 1
+                        },
+                        modifier = Modifier.size(52.dp)
+                    ) {
+                        Icon(Icons.Outlined.Replay10, "Back 10 seconds", Modifier.size(27.dp))
+                    }
+
+                    FilledIconButton(
+                        onClick = {
+                            onToggle()
+                            fullscreenControlsEpoch += 1
+                        },
+                        modifier = Modifier.size(64.dp)
+                    ) {
+                        Icon(
+                            if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                            if (isPlaying) "Pause" else "Play",
+                            Modifier.size(34.dp)
+                        )
+                    }
+
+                    FilledTonalIconButton(
+                        onClick = {
+                            fullscreenController.seekForward()
+                            fullscreenControlsEpoch += 1
+                        },
+                        modifier = Modifier.size(52.dp)
+                    ) {
+                        Icon(Icons.Outlined.Forward10, "Forward 10 seconds", Modifier.size(27.dp))
+                    }
+
+                    Box(
+                        Modifier
+                            .size(52.dp)
+                            .pointerInput(hasNext, fullscreenController, duration) {
+                                if (!hasNext) return@pointerInput
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
+                                    val startedAt = down.uptimeMillis
+                                    var longPress = false
+                                    var preview = fullscreenController.currentPosition.coerceAtLeast(0L)
+                                    var lastPreviewAt = startedAt
+                                    var released = false
+                                    while (!released) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull() ?: break
+                                        val now = change.uptimeMillis
+                                        if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
+                                            longPress = true
+                                        }
+                                        if (longPress && now - lastPreviewAt >= 180L) {
+                                            val endPosition = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                            preview = (preview + 2_000L).coerceAtMost(endPosition)
+                                            lastPreviewAt = now
+                                        }
+                                        released = change.changedToUpIgnoreConsumed()
+                                        change.consume()
+                                    }
+                                    if (longPress) fullscreenController.seekTo(preview) else onNext()
+                                    fullscreenControlsEpoch += 1
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Outlined.SkipNext,
+                            "Next / hold to fast-forward",
+                            Modifier.size(34.dp),
+                            tint = androidx.compose.ui.graphics.Color.White.copy(
+                                alpha = if (hasNext) 1f else 0.38f
+                            )
+                        )
+                    }
+                }
+
+                Column(
+                    Modifier.align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.42f))
+                        .padding(horizontal = 18.dp, vertical = 8.dp)
+                ) {
+                    Box(
+                        Modifier.fillMaxWidth().height(28.dp)
+                            .pointerInput(duration) {
+                                fun seek(x: Float) {
+                                    if (duration > 0L) {
+                                        val fraction = (x / size.width).coerceIn(0f, 1f)
+                                        fullscreenController.seekTo((duration * fraction).toLong())
+                                    }
+                                }
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
+                                    seek(down.position.x)
+                                    do {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull() ?: break
+                                        if (change.positionChanged()) {
+                                            seek(change.position.x)
+                                            change.consume()
+                                        }
+                                    } while (!change.changedToUpIgnoreConsumed())
+                                    fullscreenControlsEpoch += 1
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        LinearProgressIndicator(
+                            progress = { fullscreenProgress },
+                            modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50))
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(
+                            formatTime(position),
+                            color = androidx.compose.ui.graphics.Color.White,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                        Text(
+                            formatTime(duration),
+                            color = androidx.compose.ui.graphics.Color.White,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
+
+                FilledTonalIconButton(
+                    onClick = { fullscreenVideo = false },
+                    modifier = Modifier.align(Alignment.TopEnd).padding(12.dp).size(42.dp)
+                ) {
+                    Icon(Icons.Outlined.FullscreenExit, "Exit fullscreen", Modifier.size(24.dp))
+                }
             }
         }
         return
@@ -2084,7 +2156,7 @@ private fun FullPlayer(
                 )
             }
             Spacer(Modifier.height(12.dp))
-            Text(media.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+            Text(media.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
                 maxLines = 3, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(3.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
