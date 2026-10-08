@@ -2077,17 +2077,24 @@ private fun FullPlayer(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(
-                        onClick = onPrevious,
-                        enabled = hasPrevious,
-                        modifier = Modifier.pointerInput(hasPrevious) {
-                            if (!hasPrevious) return@pointerInput
-                            detectTapGestures(
-                                onLongPress = { controller?.seekBack() }
-                            )
-                        }
+                    Box(
+                        Modifier
+                            .size(48.dp)
+                            .pointerInput(hasPrevious) {
+                                if (!hasPrevious) return@pointerInput
+                                detectTapGestures(
+                                    onTap = { onPrevious() },
+                                    onLongPress = { controller?.seekBack() }
+                                )
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Outlined.SkipPrevious, "Previous / hold to rewind")
+                        Icon(
+                            Icons.Outlined.SkipPrevious,
+                            "Previous / hold to rewind",
+                            tint = if (hasPrevious) LocalContentColor.current
+                            else LocalContentColor.current.copy(alpha = 0.38f)
+                        )
                     }
                     FilledTonalIconButton(onClick = { controller?.seekBack() }) {
                         Icon(Icons.Outlined.Replay10, "Back 10 seconds")
@@ -2102,17 +2109,24 @@ private fun FullPlayer(
                     FilledTonalIconButton(onClick = { controller?.seekForward() }) {
                         Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
                     }
-                    IconButton(
-                        onClick = onNext,
-                        enabled = hasNext,
-                        modifier = Modifier.pointerInput(hasNext) {
-                            if (!hasNext) return@pointerInput
-                            detectTapGestures(
-                                onLongPress = { controller?.seekForward() }
-                            )
-                        }
+                    Box(
+                        Modifier
+                            .size(48.dp)
+                            .pointerInput(hasNext) {
+                                if (!hasNext) return@pointerInput
+                                detectTapGestures(
+                                    onTap = { onNext() },
+                                    onLongPress = { controller?.seekForward() }
+                                )
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Outlined.SkipNext, "Next / hold to fast-forward")
+                        Icon(
+                            Icons.Outlined.SkipNext,
+                            "Next / hold to fast-forward",
+                            tint = if (hasNext) LocalContentColor.current
+                            else LocalContentColor.current.copy(alpha = 0.38f)
+                        )
                     }
                 }
             }
