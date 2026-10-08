@@ -6,10 +6,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.source.MediaSource
-import androidx.media3.exoplayer.source.MergingMediaSource
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import kotlinx.coroutines.CoroutineScope
@@ -37,8 +34,8 @@ class PlaybackQueueManager(
         val mediaSource: MediaSource?
     )
 
-    private val progressiveFactory by lazy {
-        ProgressiveMediaSource.Factory(DefaultDataSource.Factory(context))
+    private val mediaSourceFactory by lazy {
+        PlaybackMediaSourceFactory(context)
     }
     companion object {
         private const val MAX_SOURCE_RECOVERY_ATTEMPTS = 3
@@ -57,18 +54,45 @@ class PlaybackQueueManager(
 
     private fun mediaSourceFor(mediaItem: MediaItem, stream: AudioStream): MediaSource? {
         val audioUrl = stream.companionAudioUrl ?: return null
-        val videoItem = mediaItem.buildUpon()
-            .setUri(stream.url)
-            .apply { stream.mimeType?.let { setMimeType(it) } }
+        return mediaSourceFactory.createMerged(
+            mediaItem = mediaItem,
+            videoUrl = stream.url,
+            videoMimeType = stream.mimeType,
+            audioUrl = audioUrl,
+            audioMimeType = stream.companionAudioMimeType
+        )
+    }
+
+    private fun resolvedGenericPlayback(
+        media: MediaSummary,
+        source: PlaybackSource
+    ): ResolvedPlayback {
+        val metadata = MediaMetadata.Builder()
+            .setTitle(media.title)
+            .setArtist(media.channel)
+            .setExtras(android.os.Bundle().apply {
+                putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, false)
+                putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0)
+            })
+            .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
-        val audioItem = MediaItem.Builder()
-            .setMediaId(mediaItem.mediaId + "#audio")
-            .setUri(audioUrl)
-            .apply { stream.companionAudioMimeType?.let { setMimeType(it) } }
+
+        val uri = when (source) {
+            is PlaybackSource.Hls -> source.manifestUrl
+            is PlaybackSource.Dash -> source.manifestUrl
+            is PlaybackSource.Progressive -> source.url
+            is PlaybackSource.YouTube -> error("YouTube must use the YouTube playback adapter")
+        }
+
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(media.id)
+            .setUri(uri)
+            .setMediaMetadata(metadata)
             .build()
-        return MergingMediaSource(
-            progressiveFactory.createMediaSource(videoItem),
-            progressiveFactory.createMediaSource(audioItem)
+
+        return ResolvedPlayback(
+            mediaItem = mediaItem,
+            mediaSource = mediaSourceFactory.create(mediaItem, source)
         )
     }
 
@@ -250,7 +274,9 @@ class PlaybackQueueManager(
                 recoveryAttempts += 1
                 if (recoveryAttempts > 1) delay((recoveryAttempts - 1) * 500L)
 
-                source.invalidatePlaybackStreams(media.id)
+                if (PlaybackSourceResolver.resolve(media.id) is PlaybackSource.YouTube) {
+                    source.invalidatePlaybackStreams(media.id)
+                }
                 val resolved = resolve(media)
                 if (resolved.isFailure) continue
                 val item = resolved.getOrThrow()
@@ -434,6 +460,7 @@ class PlaybackQueueManager(
         requestGeneration: Long
     ) {
         scope.launch {
+            if (PlaybackSourceResolver.resolve(media.id) !is PlaybackSource.YouTube) return@launch
             delay(1_200L)
             if (requestGeneration != generation) return@launch
             if (!preferences.loadVideoMode()) return@launch
@@ -513,6 +540,7 @@ class PlaybackQueueManager(
     }
 
     private fun warmAlternateStream(media: MediaSummary) {
+        if (PlaybackSourceResolver.resolve(media.id) !is PlaybackSource.YouTube) return
         val requestGeneration = generation
         val targetVideoMode = !preferences.loadVideoMode()
         scope.launch {
@@ -551,6 +579,11 @@ class PlaybackQueueManager(
         media: MediaSummary,
         fastStart: Boolean = false
     ): Result<ResolvedPlayback> = runCatching {
+        val playbackSource = PlaybackSourceResolver.resolve(media.id)
+        if (playbackSource !is PlaybackSource.YouTube) {
+            return@runCatching resolvedGenericPlayback(media, playbackSource)
+        }
+
         val videoMode = preferences.loadVideoMode()
         val streams = withContext(Dispatchers.IO) {
             if (videoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
