@@ -24,6 +24,9 @@ import androidx.media3.session.SessionResult
 class PlaybackService : MediaSessionService() {
     companion object {
         const val COMMAND_QUEUE_CHANGED = "com.qabt.eztube.QUEUE_CHANGED"
+        const val COMMAND_RELOAD_CURRENT = "com.qabt.eztube.RELOAD_CURRENT"
+        const val ARG_POSITION_MS = "position_ms"
+        const val ARG_PLAY_WHEN_READY = "play_when_ready"
     }
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
@@ -78,6 +81,7 @@ class PlaybackService : MediaSessionService() {
                     val sessionCommands = ConnectionResult.DEFAULT_SESSION_COMMANDS
                         .buildUpon()
                         .add(androidx.media3.session.SessionCommand(COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY))
+                        .add(androidx.media3.session.SessionCommand(COMMAND_RELOAD_CURRENT, android.os.Bundle.EMPTY))
                         .build()
                     val playerCommands = ConnectionResult.DEFAULT_PLAYER_COMMANDS
                         .buildUpon()
@@ -110,6 +114,15 @@ class PlaybackService : MediaSessionService() {
                 ): com.google.common.util.concurrent.ListenableFuture<SessionResult> {
                     if (customCommand.customAction == COMMAND_QUEUE_CHANGED) {
                         queueManager.refreshFromPreferences()
+                        return com.google.common.util.concurrent.Futures.immediateFuture(
+                            SessionResult(SessionResult.RESULT_SUCCESS)
+                        )
+                    }
+                    if (customCommand.customAction == COMMAND_RELOAD_CURRENT) {
+                        queueManager.reloadCurrent(
+                            positionMs = args.getLong(ARG_POSITION_MS, 0L),
+                            playWhenReady = args.getBoolean(ARG_PLAY_WHEN_READY, true)
+                        )
                         return com.google.common.util.concurrent.Futures.immediateFuture(
                             SessionResult(SessionResult.RESULT_SUCCESS)
                         )
