@@ -1732,7 +1732,7 @@ private fun FullPlayer(
             }
 
             Spacer(Modifier.height(6.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(
                     modifier = Modifier.height(34.dp),
                     selected = !videoMode,
@@ -1787,8 +1787,8 @@ private fun FullPlayer(
             }
 
             Row(
-                Modifier.fillMaxWidth().padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 listOf(0.5f, 1f, 1.25f, 1.5f, 2f).forEach { speed ->
                     CompactPresetButton(
@@ -1806,8 +1806,8 @@ private fun FullPlayer(
                 }
             }
             Row(
-                Modifier.fillMaxWidth().padding(top = 7.dp),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 listOf(null, 15, 30, 60, 120).forEach { minutes ->
                     CompactPresetButton(
@@ -1819,8 +1819,8 @@ private fun FullPlayer(
                 }
             }
             Row(
-                Modifier.fillMaxWidth().padding(top = 7.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 FilterChip(
                     selected = autoplay,
