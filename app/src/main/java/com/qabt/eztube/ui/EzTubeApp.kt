@@ -1982,6 +1982,77 @@ private fun FullPlayer(
 
             if (fullscreenControlsVisible) {
                 Row(
+                    Modifier.align(Alignment.TopStart)
+                        .padding(start = 12.dp, top = 10.dp)
+                        .background(
+                            androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.16f),
+                            RoundedCornerShape(50)
+                        )
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        modifier = Modifier.height(30.dp).clickable {
+                            val speeds = listOf(0.5f, 1f, 1.25f, 1.5f, 2f)
+                            val current = speeds.indexOfFirst { it == playbackSpeed }
+                                .takeIf { it >= 0 } ?: 1
+                            onSpeed(speeds[(current + 1) % speeds.size])
+                            fullscreenControlsEpoch += 1
+                        },
+                        shape = RoundedCornerShape(50),
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.22f)
+                    ) {
+                        Box(
+                            Modifier.padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                when (playbackSpeed) {
+                                    0.5f -> "0.5×"
+                                    1f -> "1×"
+                                    1.25f -> "1.25×"
+                                    1.5f -> "1.5×"
+                                    else -> "2×"
+                                },
+                                color = androidx.compose.ui.graphics.Color.White,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
+                    Surface(
+                        modifier = Modifier.height(30.dp).clickable {
+                            val qualities = VideoQuality.entries
+                            val current = qualities.indexOf(videoQuality).coerceAtLeast(0)
+                            onVideoQuality(qualities[(current + 1) % qualities.size])
+                            fullscreenControlsEpoch += 1
+                        },
+                        shape = RoundedCornerShape(50),
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.22f)
+                    ) {
+                        Box(
+                            Modifier.padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                when (videoQuality) {
+                                    VideoQuality.AUTO -> "Auto"
+                                    VideoQuality.P360 -> "360p"
+                                    VideoQuality.P480 -> "480p"
+                                    VideoQuality.P720 -> "720p"
+                                    VideoQuality.P1080 -> "1080p"
+                                },
+                                color = androidx.compose.ui.graphics.Color.White,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+
+                Row(
                     Modifier.align(Alignment.Center)
                         .offset(y = 92.dp)
                         .background(
