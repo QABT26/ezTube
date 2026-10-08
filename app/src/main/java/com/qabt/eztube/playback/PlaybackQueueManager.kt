@@ -9,6 +9,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
+import com.qabt.eztube.playback.sabr.SabrMediaSourceFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -51,6 +52,7 @@ class PlaybackQueueManager(
     @Volatile private var recoveryJobActive = false
     @Volatile private var recoveryMediaId: String? = null
     @Volatile private var recoveryAttempts = 0
+    private val sabrFailedIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private fun mediaSourceFor(mediaItem: MediaItem, stream: AudioStream): MediaSource? {
         val audioUrl = stream.companionAudioUrl ?: return null
@@ -73,6 +75,7 @@ class PlaybackQueueManager(
             .setExtras(android.os.Bundle().apply {
                 putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, false)
                 putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0)
+                putString(PlaybackService.EXTRA_PLAYBACK_ENGINE, PlaybackService.ENGINE_DIRECT)
             })
             .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
@@ -93,6 +96,31 @@ class PlaybackQueueManager(
         return ResolvedPlayback(
             mediaItem = mediaItem,
             mediaSource = mediaSourceFactory.create(mediaItem, source)
+        )
+    }
+
+    private fun resolvedSabrPlayback(
+        media: MediaSummary,
+        spec: com.qabt.eztube.playback.sabr.SabrSourceSpec
+    ): ResolvedPlayback {
+        val metadata = MediaMetadata.Builder()
+            .setTitle(media.title)
+            .setArtist(media.channel)
+            .setExtras(android.os.Bundle().apply {
+                putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, false)
+                putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0)
+                putString(PlaybackService.EXTRA_PLAYBACK_ENGINE, PlaybackService.ENGINE_SABR)
+            })
+            .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
+            .build()
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(media.id)
+            .setUri("sabr://" + spec.videoId)
+            .setMediaMetadata(metadata)
+            .build()
+        return ResolvedPlayback(
+            mediaItem = mediaItem,
+            mediaSource = SabrMediaSourceFactory.create(mediaItem, spec, 0L)
         )
     }
 
@@ -119,6 +147,7 @@ class PlaybackQueueManager(
             .setExtras(android.os.Bundle().apply {
                 putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, stream.isFallbackMuxed)
                 putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, stream.videoHeight ?: 0)
+                putString(PlaybackService.EXTRA_PLAYBACK_ENGINE, PlaybackService.ENGINE_DIRECT)
             })
             .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
@@ -260,6 +289,12 @@ class PlaybackQueueManager(
 
         val positionMs = player.currentPosition.coerceAtLeast(0L)
         val shouldPlay = player.playWhenReady
+        if (
+            player.currentMediaItem?.mediaMetadata?.extras
+                ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE) == PlaybackService.ENGINE_SABR
+        ) {
+            sabrFailedIds.add(currentId)
+        }
         recoveryJobActive = true
         invalidatePending()
         clearAlternateStream()
@@ -442,7 +477,9 @@ class PlaybackQueueManager(
                 clearAlternateStream()
                 ensureNext(items, target)
                 warmAlternateStream(media)
-                if (useFastStart) {
+                val resolvedEngine = item.mediaItem.mediaMetadata.extras
+                    ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE)
+                if (useFastStart && resolvedEngine != PlaybackService.ENGINE_SABR) {
                     scheduleVideoUpgrade(items, target, media, requestGeneration)
                 }
                 onComplete?.invoke(Result.success(Unit))
@@ -585,6 +622,22 @@ class PlaybackQueueManager(
         }
 
         val videoMode = preferences.loadVideoMode()
+
+        if (videoMode && !sabrFailedIds.contains(media.id)) {
+            val sabr = runCatching {
+                withContext(Dispatchers.IO) {
+                    val spec = source.sabrSpec(
+                        media.id,
+                        preferences.loadVideoQuality()
+                    ) ?: return@withContext null
+                    resolvedSabrPlayback(media, spec)
+                }
+            }.getOrNull()
+            if (sabr != null) {
+                return@runCatching sabr
+            }
+        }
+
         val streams = withContext(Dispatchers.IO) {
             if (videoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
         }
