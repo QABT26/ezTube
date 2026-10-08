@@ -1914,17 +1914,18 @@ private fun FullPlayer(
             if (fullscreenControlsVisible) {
                 Row(
                     Modifier.align(Alignment.Center)
+                        .offset(y = 92.dp)
                         .background(
-                            androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.32f),
+                            androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.18f),
                             RoundedCornerShape(50)
                         )
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         Modifier
-                            .size(52.dp)
+                            .size(42.dp)
                             .pointerInput(hasPrevious, fullscreenController, duration) {
                                 if (!hasPrevious) return@pointerInput
                                 awaitEachGesture {
@@ -1957,7 +1958,7 @@ private fun FullPlayer(
                         Icon(
                             Icons.Outlined.SkipPrevious,
                             "Previous / hold to rewind",
-                            Modifier.size(34.dp),
+                            Modifier.size(26.dp),
                             tint = androidx.compose.ui.graphics.Color.White.copy(
                                 alpha = if (hasPrevious) 1f else 0.38f
                             )
@@ -1969,9 +1970,9 @@ private fun FullPlayer(
                             fullscreenController.seekBack()
                             fullscreenControlsEpoch += 1
                         },
-                        modifier = Modifier.size(52.dp)
+                        modifier = Modifier.size(42.dp)
                     ) {
-                        Icon(Icons.Outlined.Replay10, "Back 10 seconds", Modifier.size(27.dp))
+                        Icon(Icons.Outlined.Replay10, "Back 10 seconds", Modifier.size(21.dp))
                     }
 
                     FilledIconButton(
@@ -1979,12 +1980,12 @@ private fun FullPlayer(
                             onToggle()
                             fullscreenControlsEpoch += 1
                         },
-                        modifier = Modifier.size(64.dp)
+                        modifier = Modifier.size(50.dp)
                     ) {
                         Icon(
                             if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
                             if (isPlaying) "Pause" else "Play",
-                            Modifier.size(34.dp)
+                            Modifier.size(26.dp)
                         )
                     }
 
@@ -1993,14 +1994,14 @@ private fun FullPlayer(
                             fullscreenController.seekForward()
                             fullscreenControlsEpoch += 1
                         },
-                        modifier = Modifier.size(52.dp)
+                        modifier = Modifier.size(42.dp)
                     ) {
-                        Icon(Icons.Outlined.Forward10, "Forward 10 seconds", Modifier.size(27.dp))
+                        Icon(Icons.Outlined.Forward10, "Forward 10 seconds", Modifier.size(21.dp))
                     }
 
                     Box(
                         Modifier
-                            .size(52.dp)
+                            .size(42.dp)
                             .pointerInput(hasNext, fullscreenController, duration) {
                                 if (!hasNext) return@pointerInput
                                 awaitEachGesture {
@@ -2034,7 +2035,7 @@ private fun FullPlayer(
                         Icon(
                             Icons.Outlined.SkipNext,
                             "Next / hold to fast-forward",
-                            Modifier.size(34.dp),
+                            Modifier.size(26.dp),
                             tint = androidx.compose.ui.graphics.Color.White.copy(
                                 alpha = if (hasNext) 1f else 0.38f
                             )
@@ -2045,8 +2046,8 @@ private fun FullPlayer(
                 Column(
                     Modifier.align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.42f))
-                        .padding(horizontal = 18.dp, vertical = 8.dp)
+                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.24f))
+                        .padding(horizontal = 16.dp, vertical = 5.dp)
                 ) {
                     Box(
                         Modifier.fillMaxWidth().height(28.dp)
@@ -2075,7 +2076,7 @@ private fun FullPlayer(
                     ) {
                         LinearProgressIndicator(
                             progress = { fullscreenProgress },
-                            modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50))
+                            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(50))
                         )
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
