@@ -88,6 +88,28 @@ class PlaybackQueueManager(
         }
     }
 
+    private fun resolvedPlayback(media: MediaSummary, stream: AudioStream): ResolvedPlayback {
+        val metadata = MediaMetadata.Builder()
+            .setTitle(media.title)
+            .setArtist(media.channel)
+            .setExtras(android.os.Bundle().apply {
+                putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, stream.isFallbackMuxed)
+                putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, stream.videoHeight ?: 0)
+            })
+            .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
+            .build()
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(media.id)
+            .setUri(stream.url)
+            .setMediaMetadata(metadata)
+            .apply { stream.mimeType?.let { setMimeType(it) } }
+            .build()
+        return ResolvedPlayback(
+            mediaItem = mediaItem,
+            mediaSource = mediaSourceFor(mediaItem, stream)
+        )
+    }
+
     private fun invalidatePending() {
         generation += 1
         preloadId = null
@@ -277,7 +299,13 @@ class PlaybackQueueManager(
             warmAlternateStream(media)
             return
         }
-        resolveAndPlay(items, index, positionMs.coerceAtLeast(0L), playWhenReady)
+        resolveAndPlay(
+            items,
+            index,
+            positionMs.coerceAtLeast(0L),
+            playWhenReady,
+            allowFastStart = false
+        )
     }
 
     fun move(delta: Int) {
@@ -354,7 +382,8 @@ class PlaybackQueueManager(
         target: Int,
         positionMs: Long = 0L,
         playWhenReady: Boolean = true,
-        onComplete: ((Result<Unit>) -> Unit)? = null
+        onComplete: ((Result<Unit>) -> Unit)? = null,
+        allowFastStart: Boolean = true
     ) {
         if (target !in items.indices) {
             onComplete?.invoke(Result.failure(IndexOutOfBoundsException("Playback target is out of range")))
@@ -365,7 +394,8 @@ class PlaybackQueueManager(
         val requestGeneration = generation
         scope.launch {
             val media = items[target]
-            val resolved = resolveWithRetry(media)
+            val useFastStart = allowFastStart && preferences.loadVideoMode() && playWhenReady
+            val resolved = resolveWithRetry(media, fastStart = useFastStart)
             resolved.onSuccess { item ->
                 if (requestGeneration != generation) {
                     onComplete?.invoke(Result.failure(IllegalStateException("Playback request was superseded")))
@@ -386,11 +416,60 @@ class PlaybackQueueManager(
                 clearAlternateStream()
                 ensureNext(items, target)
                 warmAlternateStream(media)
+                if (useFastStart) {
+                    scheduleVideoUpgrade(items, target, media, requestGeneration)
+                }
                 onComplete?.invoke(Result.success(Unit))
             }.onFailure { error ->
                 onComplete?.invoke(Result.failure(error))
             }
             busy = false
+        }
+    }
+
+    private fun scheduleVideoUpgrade(
+        items: List<MediaSummary>,
+        target: Int,
+        media: MediaSummary,
+        requestGeneration: Long
+    ) {
+        scope.launch {
+            delay(1_200L)
+            if (requestGeneration != generation) return@launch
+            if (!preferences.loadVideoMode()) return@launch
+            if (player.currentMediaItem?.mediaId != media.id) return@launch
+            if (player.playbackState != Player.STATE_READY) {
+                delay(800L)
+                if (requestGeneration != generation) return@launch
+                if (player.currentMediaItem?.mediaId != media.id) return@launch
+            }
+
+            val streams = runCatching {
+                withContext(Dispatchers.IO) { source.videoStreams(media.id) }
+            }.getOrNull().orEmpty()
+            if (streams.isEmpty()) return@launch
+
+            val targetStream = VideoStreamSelector.select(
+                streams,
+                preferences.loadVideoQuality()
+            ) ?: return@launch
+
+            val currentHeight = player.currentMediaItem?.mediaMetadata?.extras
+                ?.getInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0) ?: 0
+            val targetHeight = targetStream.videoHeight ?: 0
+            if (targetHeight <= currentHeight) return@launch
+
+            val positionMs = player.currentPosition.coerceAtLeast(0L)
+            val shouldPlay = player.playWhenReady
+            val upgraded = resolvedPlayback(media, targetStream)
+            setResolved(upgraded)
+            player.prepare()
+            if (positionMs > 0L) player.seekTo(positionMs)
+            player.setPlaybackSpeed(preferences.loadSpeed())
+            if (shouldPlay) player.play() else player.pause()
+            preferences.saveQueue(items, target)
+            preferences.saveSession(media, positionMs, shouldPlay)
+            ensureNext(items, target)
         }
     }
 
@@ -452,10 +531,13 @@ class PlaybackQueueManager(
         }
     }
 
-    private suspend fun resolveWithRetry(media: MediaSummary): Result<ResolvedPlayback> {
+    private suspend fun resolveWithRetry(
+        media: MediaSummary,
+        fastStart: Boolean = false
+    ): Result<ResolvedPlayback> {
         var lastError: Throwable? = null
         repeat(MAX_RESOLVE_ATTEMPTS) { attempt ->
-            val result = resolve(media)
+            val result = resolve(media, fastStart)
             if (result.isSuccess) return result
             lastError = result.exceptionOrNull()
             if (attempt < MAX_RESOLVE_ATTEMPTS - 1) {
@@ -465,33 +547,24 @@ class PlaybackQueueManager(
         return Result.failure(lastError ?: IllegalStateException("Unable to resolve media"))
     }
 
-    private suspend fun resolve(media: MediaSummary): Result<ResolvedPlayback> = runCatching {
+    private suspend fun resolve(
+        media: MediaSummary,
+        fastStart: Boolean = false
+    ): Result<ResolvedPlayback> = runCatching {
         val videoMode = preferences.loadVideoMode()
         val streams = withContext(Dispatchers.IO) {
             if (videoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
         }
         val stream = if (videoMode) {
-            VideoStreamSelector.select(streams, preferences.loadVideoQuality())
+            val quality = preferences.loadVideoQuality()
+            if (fastStart) {
+                VideoStreamSelector.selectFastStart(streams, quality)
+            } else {
+                VideoStreamSelector.select(streams, quality)
+            }
         } else {
             AudioStreamSelector.select(streams, preferences.loadQuality())
         } ?: error(if (videoMode) "No playable video stream" else "No playable audio stream")
-        val metadata = MediaMetadata.Builder()
-            .setTitle(media.title)
-            .setArtist(media.channel)
-            .setExtras(android.os.Bundle().apply {
-                putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, stream.isFallbackMuxed)
-            })
-            .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
-            .build()
-        val mediaItem = MediaItem.Builder()
-            .setMediaId(media.id)
-            .setUri(stream.url)
-            .setMediaMetadata(metadata)
-            .apply { stream.mimeType?.let { setMimeType(it) } }
-            .build()
-        ResolvedPlayback(
-            mediaItem = mediaItem,
-            mediaSource = mediaSourceFor(mediaItem, stream)
-        )
+        resolvedPlayback(media, stream)
     }
 }
