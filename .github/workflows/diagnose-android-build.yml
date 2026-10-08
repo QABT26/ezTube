@@ -5,6 +5,9 @@ on:
   push:
     paths:
       - ".github/workflows/diagnose-android-build.yml"
+      - "app/build.gradle.kts"
+      - "settings.gradle.kts"
+      - "local-maven/**"
 
 jobs:
   diagnose:
