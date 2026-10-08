@@ -180,7 +180,17 @@ class NewPipeYouTubeSource : YouTubeSource {
 
     override suspend fun videoStreams(mediaId: String): List<AudioStream> {
         val info = StreamInfo.getInfo(mediaId)
-        return info.videoStreams
+
+        val bestAudio = info.audioStreams
+            .asSequence()
+            .filter { it.isUrl && it.content.isNotBlank() }
+            .maxByOrNull {
+                it.averageBitrate.takeIf { bitrate -> bitrate > 0 }
+                    ?: it.bitrate.takeIf { bitrate -> bitrate > 0 }
+                    ?: 0
+            }
+
+        return (info.videoStreams + info.videoOnlyStreams)
             .asSequence()
             .filter { it.isUrl && it.content.isNotBlank() }
             .sortedWith(
@@ -188,15 +198,27 @@ class NewPipeYouTubeSource : YouTubeSource {
                     it.height.takeIf { h -> h > 0 } ?: 0
                 }.thenByDescending { it.bitrate }
             )
-            .map { stream ->
+            .mapNotNull { stream ->
+                val needsAudio = stream.isVideoOnly
+                if (needsAudio && bestAudio == null) return@mapNotNull null
+
                 AudioStream(
                     url = stream.content,
                     bitrateKbps = stream.bitrate.takeIf { it > 0 },
                     codec = null,
                     mimeType = stream.format?.mimeType,
-                    isFallbackMuxed = true,
-                    videoHeight = stream.height.takeIf { it > 0 }
+                    isFallbackMuxed = !needsAudio,
+                    videoHeight = stream.height.takeIf { it > 0 },
+                    companionAudioUrl = if (needsAudio) bestAudio?.content else null,
+                    companionAudioMimeType = if (needsAudio) bestAudio?.format?.mimeType else null
                 )
+            }
+            .distinctBy { stream ->
+                listOf(
+                    stream.videoHeight?.toString().orEmpty(),
+                    stream.mimeType.orEmpty(),
+                    stream.companionAudioUrl?.let { "split" } ?: "muxed"
+                ).joinToString("|")
             }
             .toList()
     }
