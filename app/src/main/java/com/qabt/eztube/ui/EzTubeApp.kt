@@ -47,6 +47,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import coil.compose.AsyncImage
+import com.qabt.eztube.BuildConfig
 import com.qabt.eztube.history.EzTubeDatabase
 import com.qabt.eztube.history.HistoryEntry
 import com.qabt.eztube.history.FavoriteEntry
@@ -766,6 +767,19 @@ private fun SettingsScreen(
             }
 
             HorizontalDivider()
+            Column {
+                Text("About", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "ezTube ${BuildConfig.VERSION_NAME} · build ${BuildConfig.BUILD_ID}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Package: ${BuildConfig.APPLICATION_ID} · versionCode ${BuildConfig.VERSION_CODE}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Text("ezTube plays audio streams only when available. Some YouTube videos require a compatibility stream, which may use more data.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
