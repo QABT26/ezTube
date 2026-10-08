@@ -300,6 +300,9 @@ fun EzTubeApp() {
         if (queue.none { it.id == media.id }) {
             queue = queue + media
             playbackPrefs.saveQueue(queue, queueIndex)
+            // If the current item used to be the end of the queue, the service needs
+            // an immediate refresh so autoplay can preload this newly appended item.
+            notifyQueueChanged()
         }
     }
 
@@ -485,7 +488,9 @@ fun EzTubeApp() {
                 onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) }, repeatMode = repeatMode,
                 onRepeatMode = { repeatMode = it; playbackPrefs.saveRepeatMode(it.ordinal) },
                 queue = queue, queueIndex = queueIndex,
-                hasPrevious = queueIndex > 0, hasNext = queueIndex >= 0 && queueIndex < queue.lastIndex,
+                hasPrevious = queueIndex > 0 || (repeatMode == RepeatMode.ALL && queue.size > 1),
+                hasNext = (queueIndex >= 0 && queueIndex < queue.lastIndex) ||
+                    (repeatMode == RepeatMode.ALL && queue.size > 1),
                 onQueueItem = { index ->
                     if (index in queue.indices && index != queueIndex) {
                         queueIndex = index
