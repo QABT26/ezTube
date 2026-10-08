@@ -949,9 +949,30 @@ private fun SearchResult(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = enabled, onClick = onPlay)
             .padding(7.dp), verticalAlignment = Alignment.CenterVertically
     ) {
-        AsyncImage(media.thumbnailUrl, null,
-            Modifier.size(width = 116.dp, height = 66.dp).clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant), contentScale = ContentScale.Crop)
+        Box(Modifier.size(width = 116.dp, height = 66.dp)) {
+            AsyncImage(
+                media.thumbnailUrl,
+                null,
+                Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentScale = ContentScale.Crop
+            )
+            if (media.durationSeconds >= 0) {
+                Text(
+                    formatDuration(media.durationSeconds),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .background(
+                            MaterialTheme.colorScheme.scrim.copy(alpha = 0.78f),
+                            RoundedCornerShape(4.dp)
+                        )
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                )
+            }
+        }
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
             Text(media.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
@@ -966,7 +987,7 @@ private fun SearchResult(
                 overflow = TextOverflow.Ellipsis,
                 modifier = if (media.channelUrl != null) Modifier.clickable(onClick = onChannel) else Modifier
             )
-            val meta = mediaMeta(media)
+            val meta = mediaMeta(media, includeDuration = false)
             if (meta.isNotBlank()) {
                 Text(meta, style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1577,11 +1598,11 @@ private fun formatDuration(seconds: Long): String {
     else "%d:%02d".format(minutes, secs)
 }
 
-private fun mediaMeta(media: MediaSummary): String =
+private fun mediaMeta(media: MediaSummary, includeDuration: Boolean = true): String =
     buildList {
         if (media.viewCount >= 0) add(formatViews(media.viewCount))
         media.uploadDateText?.takeIf { it.isNotBlank() }?.let(::add)
-        if (media.durationSeconds >= 0) add(formatDuration(media.durationSeconds))
+        if (includeDuration && media.durationSeconds >= 0) add(formatDuration(media.durationSeconds))
     }.joinToString(" · ")
 
 @Composable
@@ -2066,8 +2087,7 @@ private fun FullPlayer(
                 }
             }
         }
-        if (showQueue) {
-            Surface(tonalElevation = 6.dp, shadowElevation = 6.dp) {
+        Surface(tonalElevation = 6.dp, shadowElevation = 6.dp) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
@@ -2094,7 +2114,6 @@ private fun FullPlayer(
                     }
                 }
             }
-        }
     }
 }
 
