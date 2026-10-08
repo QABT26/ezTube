@@ -1790,6 +1790,8 @@ private fun FullPlayer(
     var fullscreenVideo by remember { mutableStateOf(false) }
     var fullscreenControlsVisible by remember { mutableStateOf(true) }
     var fullscreenControlsEpoch by remember { mutableIntStateOf(0) }
+    var fullscreenSeeking by remember { mutableStateOf(false) }
+    var fullscreenSeekPreviewMs by remember { mutableLongStateOf(-1L) }
     val playerScrollState = rememberScrollState()
     val queueScrollState = rememberScrollState()
     val dragScope = rememberCoroutineScope()
@@ -1838,8 +1840,10 @@ private fun FullPlayer(
 
     if (fullscreenVideo && videoMode && controller != null) {
         val fullscreenController = controller
+        val fullscreenDisplayedPosition =
+            fullscreenSeekPreviewMs.takeIf { it >= 0L } ?: position
         val fullscreenProgress = if (duration > 0L) {
-            (position.toFloat() / duration).coerceIn(0f, 1f)
+            (fullscreenDisplayedPosition.toFloat() / duration).coerceIn(0f, 1f)
         } else 0f
 
         Box(
@@ -1862,11 +1866,15 @@ private fun FullPlayer(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Fullscreen surface gesture:
-            // tap toggles controls; hold left/right half continuously rewinds/fast-forwards.
+            // Fullscreen surface gestures:
+            // single tap toggles controls; double tap seeks 5s; hold seeks continuously.
             Box(
                 Modifier.fillMaxSize()
                     .pointerInput(fullscreenController, duration) {
+                        var lastTapAt = 0L
+                        var lastTapForward = false
+                        var singleTapJob: kotlinx.coroutines.Job? = null
+
                         awaitEachGesture {
                             val down = awaitFirstDown()
                             val startedAt = down.uptimeMillis
@@ -1884,17 +1892,24 @@ private fun FullPlayer(
                                     now - startedAt >= viewConfiguration.longPressTimeoutMillis
                                 ) {
                                     longPress = true
+                                    singleTapJob?.cancel()
                                     fullscreenControlsVisible = false
+                                    fullscreenSeeking = true
+                                    fullscreenSeekPreviewMs =
+                                        fullscreenController.currentPosition.coerceAtLeast(0L)
                                 }
 
                                 if (longPress && now - lastSeekAt >= 180L) {
-                                    val current = fullscreenController.currentPosition.coerceAtLeast(0L)
+                                    val current = fullscreenSeekPreviewMs
+                                        .takeIf { it >= 0L }
+                                        ?: fullscreenController.currentPosition.coerceAtLeast(0L)
                                     val target = if (forward) {
                                         val endPosition = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
                                         (current + 2_000L).coerceAtMost(endPosition)
                                     } else {
                                         (current - 2_000L).coerceAtLeast(0L)
                                     }
+                                    fullscreenSeekPreviewMs = target
                                     fullscreenController.seekTo(target)
                                     lastSeekAt = now
                                 }
@@ -1903,9 +1918,49 @@ private fun FullPlayer(
                                 change.consume()
                             }
 
-                            if (!longPress) {
-                                fullscreenControlsVisible = !fullscreenControlsVisible
-                                if (fullscreenControlsVisible) fullscreenControlsEpoch += 1
+                            if (longPress) {
+                                fullscreenSeeking = false
+                                fullscreenSeekPreviewMs = -1L
+                            } else {
+                                val releasedAt = android.os.SystemClock.uptimeMillis()
+                                val isDoubleTap =
+                                    lastTapAt > 0L &&
+                                    releasedAt - lastTapAt <= viewConfiguration.doubleTapTimeoutMillis &&
+                                    forward == lastTapForward
+
+                                if (isDoubleTap) {
+                                    singleTapJob?.cancel()
+                                    singleTapJob = null
+                                    lastTapAt = 0L
+
+                                    val current =
+                                        fullscreenController.currentPosition.coerceAtLeast(0L)
+                                    val target = if (forward) {
+                                        val endPosition = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                        (current + 5_000L).coerceAtMost(endPosition)
+                                    } else {
+                                        (current - 5_000L).coerceAtLeast(0L)
+                                    }
+                                    fullscreenController.seekTo(target)
+                                    fullscreenSeekPreviewMs = target
+                                    fullscreenSeeking = true
+
+                                    launch {
+                                        delay(650L)
+                                        fullscreenSeeking = false
+                                        fullscreenSeekPreviewMs = -1L
+                                    }
+                                } else {
+                                    lastTapAt = releasedAt
+                                    lastTapForward = forward
+                                    singleTapJob?.cancel()
+                                    singleTapJob = launch {
+                                        delay(viewConfiguration.doubleTapTimeoutMillis.toLong())
+                                        fullscreenControlsVisible = !fullscreenControlsVisible
+                                        if (fullscreenControlsVisible) fullscreenControlsEpoch += 1
+                                        lastTapAt = 0L
+                                    }
+                                }
                             }
                         }
                     }
@@ -2043,56 +2098,6 @@ private fun FullPlayer(
                     }
                 }
 
-                Column(
-                    Modifier.align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.24f))
-                        .padding(horizontal = 16.dp, vertical = 5.dp)
-                ) {
-                    Box(
-                        Modifier.fillMaxWidth().height(28.dp)
-                            .pointerInput(duration) {
-                                fun seek(x: Float) {
-                                    if (duration > 0L) {
-                                        val fraction = (x / size.width).coerceIn(0f, 1f)
-                                        fullscreenController.seekTo((duration * fraction).toLong())
-                                    }
-                                }
-                                awaitEachGesture {
-                                    val down = awaitFirstDown()
-                                    seek(down.position.x)
-                                    do {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull() ?: break
-                                        if (change.positionChanged()) {
-                                            seek(change.position.x)
-                                            change.consume()
-                                        }
-                                    } while (!change.changedToUpIgnoreConsumed())
-                                    fullscreenControlsEpoch += 1
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        LinearProgressIndicator(
-                            progress = { fullscreenProgress },
-                            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(50))
-                        )
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(
-                            formatTime(position),
-                            color = androidx.compose.ui.graphics.Color.White,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                        Text(
-                            formatTime(duration),
-                            color = androidx.compose.ui.graphics.Color.White,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                }
-
                 FilledTonalIconButton(
                     onClick = { fullscreenVideo = false },
                     modifier = Modifier.align(Alignment.TopEnd).padding(12.dp).size(42.dp)
@@ -2100,6 +2105,59 @@ private fun FullPlayer(
                     Icon(Icons.Outlined.FullscreenExit, "Exit fullscreen", Modifier.size(24.dp))
                 }
             }
+            if (fullscreenControlsVisible || fullscreenSeeking) {
+            Column(
+                Modifier.align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.24f))
+                    .padding(horizontal = 16.dp, vertical = 5.dp)
+            ) {
+                Box(
+                    Modifier.fillMaxWidth().height(28.dp)
+                        .pointerInput(duration) {
+                            fun seek(x: Float) {
+                                if (duration > 0L) {
+                                    val fraction = (x / size.width).coerceIn(0f, 1f)
+                                    fullscreenController.seekTo((duration * fraction).toLong())
+                                }
+                            }
+                            awaitEachGesture {
+                                val down = awaitFirstDown()
+                                seek(down.position.x)
+                                do {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull() ?: break
+                                    if (change.positionChanged()) {
+                                        seek(change.position.x)
+                                        change.consume()
+                                    }
+                                } while (!change.changedToUpIgnoreConsumed())
+                                fullscreenControlsEpoch += 1
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    LinearProgressIndicator(
+                        progress = { fullscreenProgress },
+                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(50))
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        formatTime(position),
+                        color = androidx.compose.ui.graphics.Color.White,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Text(
+                        formatTime(duration),
+                        color = androidx.compose.ui.graphics.Color.White,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+
+            }
+
         }
         return
     }
