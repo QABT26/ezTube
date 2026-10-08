@@ -2514,27 +2514,37 @@ private fun FullPlayer(
                     )
                 }
             }
-            if (videoMode) Row(
-                Modifier.fillMaxWidth().padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                VideoQuality.entries.forEach { option ->
-                    FilterChip(
-                        modifier = Modifier.weight(1f).height(30.dp),
-                        selected = videoQuality == option,
-                        onClick = { onVideoQuality(option) },
-                        label = {
-                            Text(
-                                when (option) {
-                                    VideoQuality.AUTO -> "Auto"
-                                    VideoQuality.P360 -> "360p"
-                                    VideoQuality.P480 -> "480p"
-                                    VideoQuality.P720 -> "720p"
-                                    VideoQuality.P1080 -> "1080p"
-                                },
-                                maxLines = 1
-                            )
-                        }
+            if (videoMode) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    VideoQuality.entries.forEach { option ->
+                        FilterChip(
+                            modifier = Modifier.weight(1f).height(30.dp),
+                            selected = videoQuality == option,
+                            onClick = { onVideoQuality(option) },
+                            label = {
+                                Text(
+                                    when (option) {
+                                        VideoQuality.AUTO -> "Auto"
+                                        VideoQuality.P360 -> "360p"
+                                        VideoQuality.P480 -> "480p"
+                                        VideoQuality.P720 -> "720p"
+                                        VideoQuality.P1080 -> "1080p"
+                                    },
+                                    maxLines = 1
+                                )
+                            }
+                        )
+                    }
+                }
+                if (actualVideoHeight > 0) {
+                    Text(
+                        "Actual: ${actualVideoHeight}p",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                 }
             }
