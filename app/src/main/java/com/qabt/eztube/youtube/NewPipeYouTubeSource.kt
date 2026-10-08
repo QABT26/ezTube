@@ -162,6 +162,15 @@ class NewPipeYouTubeSource : YouTubeSource {
         }
 
     fun sabrSpec(mediaId: String, quality: VideoQuality): SabrSourceSpec? {
+        // Current YouTube SABR may require attestation / a PO token. PipePipeClient
+        // installs a Local DOM PO-token resolver before enabling SABR. ezTube must
+        // not enter SABR until an equivalent resolver is installed; otherwise the
+        // first media request can fail immediately with SabrAttestationException
+        // and surface as a player source error.
+        if (NewPipe.getYoutubePoTokenResolver() == null) {
+            return null
+        }
+
         val info = streamInfoForClient(mediaId, "mweb")
 
         val sabrInfo = (info.audioStreams.asSequence()
