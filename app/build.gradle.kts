@@ -24,10 +24,10 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "BUILD_ID", "\\\"b5139c4\\\"")
+            buildConfigField("String", "BUILD_ID", "\"b5139c4\"")
         }
         release {
-            buildConfigField("String", "BUILD_ID", "\\\"release\\\"")
+            buildConfigField("String", "BUILD_ID", "\"release\"")
         }
     }
 
