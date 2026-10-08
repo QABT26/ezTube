@@ -436,6 +436,12 @@ class PlaybackQueueManager(
         }
     }
 
+    fun onTracksChanged() {
+        if (activePlaybackEngine != PlaybackService.ENGINE_SABR) return
+        if (preferences.loadVideoQuality().targetHeight == null) return
+        applySabrVideoQualityConstraint()
+    }
+
     fun applyVideoQualityChange(positionMs: Long, playWhenReady: Boolean): String {
         if (activePlaybackEngine == PlaybackService.ENGINE_SABR) {
             applySabrVideoQualityConstraint()
