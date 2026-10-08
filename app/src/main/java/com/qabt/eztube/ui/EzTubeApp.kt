@@ -1887,10 +1887,14 @@ private fun FullPlayer(
                         factory = { context ->
                             androidx.media3.ui.PlayerView(context).apply {
                                 useController = false
+                                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
                                 player = controller
                             }
                         },
-                        update = { it.player = controller },
+                        update = { view ->
+                            view.player = controller
+                            view.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                     FilledTonalIconButton(
