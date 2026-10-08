@@ -106,6 +106,7 @@ fun EzTubeApp() {
     var quality by remember { mutableStateOf(playbackPrefs.loadQuality()) }
     var videoQuality by remember { mutableStateOf(playbackPrefs.loadVideoQuality()) }
     var actualVideoHeight by remember { mutableIntStateOf(0) }
+    var playbackEngine by remember { mutableStateOf(PlaybackService.ENGINE_DIRECT) }
     var videoMode by remember { mutableStateOf(playbackPrefs.loadVideoMode()) }
     val playbackActivity = context as? Activity
     DisposableEffect(videoMode, playbackActivity) {
@@ -165,6 +166,9 @@ fun EzTubeApp() {
                             ?.getBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, false) == true
                         actualVideoHeight = mediaItem.mediaMetadata.extras
                             ?.getInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0) ?: 0
+                        playbackEngine = mediaItem.mediaMetadata.extras
+                            ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE)
+                            ?: PlaybackService.ENGINE_DIRECT
                         val saved = playbackPrefs.loadQueue()
                         val media = saved?.first?.firstOrNull { it.id == id }
                             ?: playbackPrefs.load()?.first?.takeIf { it.id == id }
@@ -182,6 +186,28 @@ fun EzTubeApp() {
                             ?.getBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, false) == true
                         actualVideoHeight = mediaMetadata.extras
                             ?.getInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0) ?: 0
+                        playbackEngine = mediaMetadata.extras
+                            ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE)
+                            ?: PlaybackService.ENGINE_DIRECT
+                    }
+
+                    override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                        val selectedHeight = tracks.groups
+                            .asSequence()
+                            .flatMap { group ->
+                                (0 until group.length).asSequence()
+                                    .filter { index -> group.isTrackSelected(index) }
+                                    .map { index -> group.getTrackFormat(index) }
+                            }
+                            .filter { format ->
+                                format.sampleMimeType?.startsWith("video/") == true
+                            }
+                            .map { it.height }
+                            .filter { it > 0 }
+                            .maxOrNull()
+                        if (selectedHeight != null) {
+                            actualVideoHeight = selectedHeight
+                        }
                     }
 
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -246,6 +272,14 @@ fun EzTubeApp() {
             androidx.media3.session.SessionCommand(PlaybackService.COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY),
             android.os.Bundle.EMPTY
         )
+    }
+
+    fun applyVideoQualityConstraint(active: MediaController, quality: VideoQuality) {
+        val maxHeight = quality.targetHeight ?: Int.MAX_VALUE
+        active.trackSelectionParameters = active.trackSelectionParameters
+            .buildUpon()
+            .setMaxVideoSize(Int.MAX_VALUE, maxHeight)
+            .build()
     }
 
     fun reloadCurrentForModeChange() {
@@ -535,7 +569,17 @@ fun EzTubeApp() {
                     if (videoQuality != it) {
                         videoQuality = it
                         playbackPrefs.saveVideoQuality(it)
-                        if (videoMode) reloadCurrentForModeChange()
+                        if (videoMode) {
+                            val active = controller
+                            if (
+                                active != null &&
+                                playbackEngine == PlaybackService.ENGINE_SABR
+                            ) {
+                                applyVideoQualityConstraint(active, it)
+                            } else {
+                                reloadCurrentForModeChange()
+                            }
+                        }
                     }
                 },
                 playbackSpeed = playbackSpeed,
