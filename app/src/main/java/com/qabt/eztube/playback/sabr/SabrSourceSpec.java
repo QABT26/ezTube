@@ -20,8 +20,8 @@ public final class SabrSourceSpec {
     private final YoutubeSabrInfo.Format bootstrapVideoFormat;
     private final Map<String, YoutubeSabrInfo.Format> formatsByKey;
     private final Map<YoutubeSabrInfo.Format, String> keysByFormat;
-    private final AtomicReference<byte[]> audioInitializationData = new AtomicReference<>();
-    private final AtomicReference<byte[]> videoInitializationData = new AtomicReference<>();
+    private final Map<YoutubeSabrInfo.Format, byte[]> initializationData =
+            new ConcurrentHashMap<>();
     private final AtomicReference<List<SabrMediaSegment>> bootstrapMediaSegments;
 
     public SabrSourceSpec(
@@ -78,15 +78,12 @@ public final class SabrSourceSpec {
     }
 
     byte[] getInitializationData(YoutubeSabrInfo.Format format) {
-        final byte[] data = format.isAudio()
-                ? audioInitializationData.get()
-                : format.isVideo() ? videoInitializationData.get() : null;
+        final byte[] data = initializationData.get(format);
         return data == null ? null : data.clone();
     }
 
     void putInitializationData(YoutubeSabrInfo.Format format, byte[] data) {
-        if (format.isAudio()) audioInitializationData.compareAndSet(null, data.clone());
-        else if (format.isVideo()) videoInitializationData.compareAndSet(null, data.clone());
+        initializationData.putIfAbsent(format, data.clone());
     }
 
     long getDurationMs() {
