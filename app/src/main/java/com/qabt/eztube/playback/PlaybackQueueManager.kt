@@ -44,7 +44,7 @@ class PlaybackQueueManager(
     }
 
     fun onPlaybackEnded() {
-        if (busy || !preferences.loadAutoplay()) return
+        if (busy) return
         val saved = preferences.loadQueue() ?: return
         val items = saved.first
         if (items.isEmpty()) return
