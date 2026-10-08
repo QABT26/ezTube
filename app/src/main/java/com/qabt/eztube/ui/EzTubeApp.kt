@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.foundation.layout.*
@@ -37,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,12 +48,14 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import coil.compose.AsyncImage
+import com.qabt.eztube.BuildConfig
 import com.qabt.eztube.history.EzTubeDatabase
 import com.qabt.eztube.history.HistoryEntry
 import com.qabt.eztube.history.FavoriteEntry
 import com.qabt.eztube.history.FavoriteRepository
 import com.qabt.eztube.history.HistoryRepository
 import com.qabt.eztube.history.toMediaSummary
+import com.qabt.eztube.history.progress
 import com.qabt.eztube.playback.AudioQuality
 import com.qabt.eztube.playback.AudioStreamSelector
 import com.qabt.eztube.playback.PlaybackService
@@ -69,6 +73,9 @@ import kotlinx.coroutines.withContext
 private enum class Tab(val label: String) { HOME("Home"), SEARCH("Search"), LIBRARY("Library") }
 private enum class RepeatMode { OFF, ONE, ALL }
 private enum class NextMode { LIST, RECOMMENDED }
+private enum class SearchSort(val label: String) {
+    RELEVANCE("Relevance"), NEWEST("Newest"), VIEWS("Views"), DURATION("Duration")
+}
 
 @Composable
 fun EzTubeApp() {
@@ -94,6 +101,7 @@ fun EzTubeApp() {
     var nowPlaying by remember { mutableStateOf<MediaSummary?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
     var quality by remember { mutableStateOf(playbackPrefs.loadQuality()) }
+    var videoMode by remember { mutableStateOf(playbackPrefs.loadVideoMode()) }
     var autoplay by remember { mutableStateOf(playbackPrefs.loadAutoplay()) }
     var nextMode by remember { mutableStateOf(runCatching { NextMode.valueOf(playbackPrefs.loadNextMode()) }.getOrDefault(NextMode.LIST)) }
     var repeatMode by remember {
@@ -115,6 +123,7 @@ fun EzTubeApp() {
     var trendingLanguage by remember { mutableStateOf(playbackPrefs.loadTrendingLanguage()) }
     val searchListState = rememberLazyListState()
     val homeListState = rememberLazyListState()
+    val libraryListState = rememberLazyListState()
     var channelDetail by remember { mutableStateOf<ChannelSummary?>(null) }
     var channelLoading by remember { mutableStateOf(false) }
     var channelError by remember { mutableStateOf<String?>(null) }
@@ -150,6 +159,10 @@ fun EzTubeApp() {
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         isBuffering = state == Player.STATE_BUFFERING
+                        isPlaying = mediaController.isPlaying
+                    }
+                    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                        isPlaying = mediaController.isPlaying
                     }
                 })
             }.onFailure { errorMessage = it.message ?: "Playback service unavailable" }
@@ -198,6 +211,25 @@ fun EzTubeApp() {
         return listOf(media) + pool.shuffled(kotlin.random.Random(seed))
     }
 
+    fun notifyQueueChanged() {
+        controller?.sendCustomCommand(
+            androidx.media3.session.SessionCommand(PlaybackService.COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY),
+            android.os.Bundle.EMPTY
+        )
+    }
+
+    fun reloadCurrentForModeChange() {
+        val active = controller ?: return
+        val args = android.os.Bundle().apply {
+            putLong(PlaybackService.ARG_POSITION_MS, active.currentPosition.coerceAtLeast(0L))
+            putBoolean(PlaybackService.ARG_PLAY_WHEN_READY, active.playWhenReady)
+        }
+        active.sendCustomCommand(
+            androidx.media3.session.SessionCommand(PlaybackService.COMMAND_RELOAD_CURRENT, android.os.Bundle.EMPTY),
+            args
+        )
+    }
+
     fun playMedia(media: MediaSummary, startPositionMs: Long = 0L) {
         if (resolvingId != null) return
         scope.launch {
@@ -209,10 +241,14 @@ fun EzTubeApp() {
                 playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
             }
             runCatching {
-                val streams = withContext(Dispatchers.IO) { source.audioStreams(media.id) }
-                AudioStreamSelector.select(streams, quality) ?: error("No playable audio stream")
+                val streams = withContext(Dispatchers.IO) {
+                    if (videoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
+                }
+                (if (videoMode) streams.firstOrNull()
+                else AudioStreamSelector.select(streams, quality))
+                    ?: error(if (videoMode) "No playable video stream" else "No playable audio stream")
             }.onSuccess { stream ->
-                compatibilityFallback = stream.isFallbackMuxed
+                compatibilityFallback = !videoMode && stream.isFallbackMuxed
                 playerError = null
                 controller?.apply {
                     val metadata = MediaMetadata.Builder()
@@ -236,21 +272,55 @@ fun EzTubeApp() {
                         val idx = queue.indexOfFirst { it.id == media.id }
                         if (idx >= 0) queueIndex = idx
                         playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
+                        notifyQueueChanged()
                     }
                     resumePositionMs = 0L
                     playbackPrefs.save(media, startPositionMs)
-                    withContext(Dispatchers.IO) { history.record(media) }
+                    // MediaController is application-thread confined. Read controller state here,
+                    // then cross to IO only for the Room write.
+                    val initialDurationMs = duration.takeIf { it > 0 } ?: 0L
+                    withContext(Dispatchers.IO) {
+                        history.record(media, startPositionMs, initialDurationMs)
+                    }
                 } ?: run { errorMessage = "Playback service is not ready yet" }
             }.onFailure { errorMessage = it.message ?: "Unable to play this item" }
             resolvingId = null
         }
     }
-
     fun startQueue(media: MediaSummary, sourceItems: List<MediaSummary>, startPositionMs: Long = 0L) {
         queue = queueForStart(media, sourceItems)
         queueIndex = queue.indexOfFirst { it.id == media.id }.coerceAtLeast(0)
         playbackPrefs.saveQueue(queue, queueIndex)
         playMedia(media, startPositionMs)
+    }
+
+    fun playNext(media: MediaSummary) {
+        if (queue.isEmpty() || queueIndex !in queue.indices) {
+            startQueue(media, listOf(media))
+            return
+        }
+        val currentId = queue[queueIndex].id
+        val updated = queue.filterNot { it.id == media.id }.toMutableList()
+        val current = updated.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+        updated.add((current + 1).coerceAtMost(updated.size), media)
+        queue = updated
+        queueIndex = current
+        playbackPrefs.saveQueue(queue, queueIndex)
+        notifyQueueChanged()
+    }
+
+    fun addToQueue(media: MediaSummary) {
+        if (queue.isEmpty() || queueIndex !in queue.indices) {
+            startQueue(media, listOf(media))
+            return
+        }
+        if (queue.none { it.id == media.id }) {
+            queue = queue + media
+            playbackPrefs.saveQueue(queue, queueIndex)
+            // If the current item used to be the end of the queue, the service needs
+            // an immediate refresh so autoplay can preload this newly appended item.
+            notifyQueueChanged()
+        }
     }
 
     LaunchedEffect(controller, repeatMode) {
@@ -282,6 +352,8 @@ fun EzTubeApp() {
             val media = nowPlaying ?: continue
             val position = controller?.currentPosition?.takeIf { it >= 0 } ?: resumePositionMs
             playbackPrefs.save(media, position)
+            val duration = controller?.duration?.takeIf { it > 0 } ?: 0L
+            withContext(Dispatchers.IO) { history.updateProgress(media, position, duration) }
         }
     }
 
@@ -414,16 +486,28 @@ fun EzTubeApp() {
         } else if (showPlayer && nowPlaying != null) {
             FullPlayer(
                 media = requireNotNull(nowPlaying), controller = controller, isPlaying = isPlaying, quality = quality,
+                videoMode = videoMode,
+                onVideoMode = { enabled ->
+                    if (videoMode != enabled) {
+                        videoMode = enabled
+                        playbackPrefs.saveVideoMode(enabled)
+                        // The service owns stream replacement so a mode switch cannot race
+                        // the UI resolver or lose queue identity/position.
+                        reloadCurrentForModeChange()
+                    }
+                },
                 onQuality = { quality = it; playbackPrefs.saveQuality(it) }, playbackSpeed = playbackSpeed,
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 compatibilityFallback = compatibilityFallback, isBuffering = isBuffering, playerError = playerError,
                 onRetry = { playerError = null; nowPlaying?.let { playMedia(it, controller?.currentPosition ?: 0L) } },
                 sleepMinutes = sleepMinutes, onSleep = { sleepMinutes = it }, autoplay = autoplay,
-                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) }, nextMode = nextMode,
+                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it); notifyQueueChanged() }, nextMode = nextMode,
                 onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) }, repeatMode = repeatMode,
                 onRepeatMode = { repeatMode = it; playbackPrefs.saveRepeatMode(it.ordinal) },
                 queue = queue, queueIndex = queueIndex,
-                hasPrevious = queueIndex > 0, hasNext = queueIndex >= 0 && queueIndex < queue.lastIndex,
+                hasPrevious = queueIndex > 0 || (repeatMode == RepeatMode.ALL && queue.size > 1),
+                hasNext = (queueIndex >= 0 && queueIndex < queue.lastIndex) ||
+                    (repeatMode == RepeatMode.ALL && queue.size > 1),
                 onQueueItem = { index ->
                     if (index in queue.indices && index != queueIndex) {
                         queueIndex = index
@@ -437,6 +521,7 @@ fun EzTubeApp() {
                         queueIndex = if (index < queueIndex) queueIndex - 1 else queueIndex
                         queue = updated
                         playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
+                        notifyQueueChanged()
                     }
                 },
                 onQueueMove = { from, to ->
@@ -452,25 +537,21 @@ fun EzTubeApp() {
                         }
                         queue = updated
                         playbackPrefs.saveQueue(queue, queueIndex)
+                        notifyQueueChanged()
                     }
                 },
                 onQueueClearUpcoming = {
                     if (queueIndex in queue.indices && queueIndex < queue.lastIndex) {
                         queue = queue.take(queueIndex + 1)
                         playbackPrefs.saveQueue(queue, queueIndex)
+                        notifyQueueChanged()
                     }
                 },
                 onPrevious = {
-                    controller?.let { mc ->
-                        if (mc.hasPreviousMediaItem()) mc.seekToPreviousMediaItem()
-                        else if (queueIndex > 0) { queueIndex -= 1; playMedia(queue[queueIndex]) }
-                    }
+                    controller?.seekToPrevious()
                 },
                 onNext = {
-                    controller?.let { mc ->
-                        if (mc.hasNextMediaItem()) mc.seekToNextMediaItem()
-                        else if (queueIndex >= 0 && queueIndex < queue.lastIndex) { queueIndex += 1; playMedia(queue[queueIndex]) }
-                    }
+                    controller?.seekToNext()
                 },
                 isFavorite = favorites.any { it.mediaId == nowPlaying?.id }, onChannel = { openChannel(nowPlaying?.channelUrl) },
                 onFavorite = { nowPlaying?.let { media -> scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } } },
@@ -484,7 +565,7 @@ fun EzTubeApp() {
                 speed = playbackSpeed,
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 autoplay = autoplay,
-                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it) },
+                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it); notifyQueueChanged() },
                 trendingTopic = trendingTopic,
                 onTrendingTopic = { trendingTopic = it; playbackPrefs.saveTrendingTopic(it) },
                 trendingLanguage = trendingLanguage,
@@ -493,7 +574,7 @@ fun EzTubeApp() {
             )
         } else {
             Scaffold(
-                topBar = { AppHeader(onSettings = { showSettings = true }, onDoubleTapCenter = { scope.launch { when (selected) { Tab.HOME -> homeListState.animateScrollToItem(0); Tab.SEARCH -> searchListState.animateScrollToItem(0); Tab.LIBRARY -> Unit } } }) },
+                topBar = { AppHeader(onSettings = { showSettings = true }, onDoubleTapCenter = { scope.launch { when (selected) { Tab.HOME -> homeListState.animateScrollToItem(0); Tab.SEARCH -> searchListState.animateScrollToItem(0); Tab.LIBRARY -> libraryListState.animateScrollToItem(0) } } }) },
                 bottomBar = {
                     Column {
                         nowPlaying?.let { media ->
@@ -540,14 +621,15 @@ fun EzTubeApp() {
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
                         results = searchResults,
+                        historyEntries = recent,
                         listState = searchListState,
                         onResultsChange = { searchResults = it },
                         recentSearches = recentSearches,
                         onSearchSubmitted = { q -> playbackPrefs.saveSearch(q); recentSearches = playbackPrefs.loadRecentSearches() },
                         onChannel = { openChannel(it.channelUrl) },
-                        onPlay = { media, resultQueue ->
-                            startQueue(media, resultQueue)
-                        }
+                        onPlay = { media, resultQueue -> startQueue(media, resultQueue) },
+                        onPlayNext = { playNext(it) },
+                        onAddToQueue = { addToQueue(it) }
                     )
                     Tab.HOME -> HomeScreen(
                         modifier = Modifier.fillMaxSize().padding(padding),
@@ -567,6 +649,7 @@ fun EzTubeApp() {
                         modifier = Modifier.fillMaxSize().padding(padding),
                         recent = recent,
                         favorites = favorites,
+                        listState = libraryListState,
                         resolvingId = resolvingId,
                         onPlay = { entry ->
                             val items = recent.map { it.toMediaSummary() }
@@ -706,6 +789,19 @@ private fun SettingsScreen(
             }
 
             HorizontalDivider()
+            Column {
+                Text("About", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "ezTube ${BuildConfig.VERSION_NAME} · build ${BuildConfig.BUILD_ID}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Package: ${BuildConfig.APPLICATION_ID} · versionCode ${BuildConfig.VERSION_CODE}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Text("ezTube plays audio streams only when available. Some YouTube videos require a compatibility stream, which may use more data.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -713,6 +809,7 @@ private fun SettingsScreen(
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SearchScreen(
     modifier: Modifier,
@@ -722,24 +819,38 @@ private fun SearchScreen(
     query: String,
     onQueryChange: (String) -> Unit,
     results: List<MediaSummary>,
+    historyEntries: List<HistoryEntry>,
     listState: androidx.compose.foundation.lazy.LazyListState,
     onResultsChange: (List<MediaSummary>) -> Unit,
     recentSearches: List<String>,
     onSearchSubmitted: (String) -> Unit,
     onChannel: (MediaSummary) -> Unit,
-    onPlay: (MediaSummary, List<MediaSummary>) -> Unit
+    onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
+    onPlayNext: (MediaSummary) -> Unit,
+    onAddToQueue: (MediaSummary) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
+    var searchSort by remember { mutableStateOf(SearchSort.RELEVANCE) }
+    val displayResults = remember(results, searchSort) {
+        when (searchSort) {
+            SearchSort.RELEVANCE -> results
+            SearchSort.NEWEST -> results.sortedBy { searchAgeRank(it.uploadDateText) }
+            SearchSort.VIEWS -> results.sortedByDescending { it.viewCount }
+            SearchSort.DURATION -> results.sortedByDescending { it.durationSeconds }
+        }
+    }
 
-    fun submit() {
-        if (query.isBlank() || loading) return
+    fun submit(searchText: String = query) {
+        val normalized = searchText.trim()
+        if (normalized.isBlank() || loading) return
+        if (normalized != query) onQueryChange(normalized)
         scope.launch {
             loading = true
             searchError = null
-            onSearchSubmitted(query)
-            runCatching { withContext(Dispatchers.IO) { source.search(query) } }
+            onSearchSubmitted(normalized)
+            runCatching { withContext(Dispatchers.IO) { source.search(normalized) } }
                 .onSuccess { onResultsChange(it) }
                 .onFailure { searchError = it.message ?: "Search failed" }
             loading = false
@@ -764,14 +875,38 @@ private fun SearchScreen(
             shape = RoundedCornerShape(18.dp)
         )
         if (query.isBlank() && recentSearches.isNotEmpty()) {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 recentSearches.take(5).forEach { recent ->
-                    AssistChip(onClick = { onQueryChange(recent) }, label = {
-                        Text(recent, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }, modifier = Modifier.weight(1f))
+                    AssistChip(
+                        onClick = { submit(recent) },
+                        label = {
+                            Text(
+                                recent,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 280.dp)
+                            )
+                        }
+                    )
+                }
+            }
+        }
+        if (results.isNotEmpty()) {
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                SearchSort.entries.forEach { option ->
+                    FilterChip(
+                        selected = searchSort == option,
+                        onClick = { searchSort = option },
+                        label = { Text(option.label, maxLines = 1) }
+                    )
                 }
             }
         }
@@ -787,13 +922,16 @@ private fun SearchScreen(
         } else {
             LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                itemsIndexed(results, key = { index, media -> "search-" + index + "-" + media.id }) { _, media ->
+                itemsIndexed(displayResults, key = { index, media -> "search-" + index + "-" + media.id }) { _, media ->
                     SearchResult(
                         media = media,
+                        progressEntry = historyEntries.firstOrNull { it.mediaId == media.id },
                         resolving = resolvingId == media.id,
                         enabled = resolvingId == null,
                         onChannel = { onChannel(media) },
-                        onPlay = { onPlay(media, results) }
+                        onPlay = { onPlay(media, displayResults) },
+                        onPlayNext = { onPlayNext(media) },
+                        onAddToQueue = { onAddToQueue(media) }
                     )
                 }
             }
@@ -801,21 +939,62 @@ private fun SearchScreen(
     }
 }
 
+private fun searchAgeRank(text: String?): Long {
+    val value = text?.lowercase()?.trim().orEmpty()
+    if (value.isBlank()) return Long.MAX_VALUE
+    val number = Regex("""\d+""").find(value)?.value?.toLongOrNull() ?: 1L
+    val unit = when {
+        "minute" in value || "phút" in value -> 60L
+        "hour" in value || "giờ" in value -> 3_600L
+        "day" in value || "ngày" in value -> 86_400L
+        "week" in value || "tuần" in value -> 604_800L
+        "month" in value || "tháng" in value -> 2_629_800L
+        "year" in value || "năm" in value -> 31_557_600L
+        else -> Long.MAX_VALUE / 4
+    }
+    return if (unit >= Long.MAX_VALUE / 4) unit else number * unit
+}
+
 @Composable
 private fun SearchResult(
     media: MediaSummary,
+    progressEntry: HistoryEntry? = null,
     resolving: Boolean,
     enabled: Boolean,
     onChannel: () -> Unit,
-    onPlay: () -> Unit
+    onPlay: () -> Unit,
+    onPlayNext: (() -> Unit)? = null,
+    onAddToQueue: (() -> Unit)? = null
 ) {
+    var showMenu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = enabled, onClick = onPlay)
             .padding(7.dp), verticalAlignment = Alignment.CenterVertically
     ) {
-        AsyncImage(media.thumbnailUrl, null,
-            Modifier.size(width = 116.dp, height = 66.dp).clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant), contentScale = ContentScale.Crop)
+        Box(Modifier.size(width = 116.dp, height = 66.dp)) {
+            AsyncImage(
+                media.thumbnailUrl,
+                null,
+                Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentScale = ContentScale.Crop
+            )
+            if (media.durationSeconds >= 0) {
+                Text(
+                    formatDuration(media.durationSeconds),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .background(
+                            MaterialTheme.colorScheme.scrim.copy(alpha = 0.78f),
+                            RoundedCornerShape(4.dp)
+                        )
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                )
+            }
+        }
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
             Text(media.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
@@ -830,10 +1009,39 @@ private fun SearchResult(
                 overflow = TextOverflow.Ellipsis,
                 modifier = if (media.channelUrl != null) Modifier.clickable(onClick = onChannel) else Modifier
             )
+            val meta = mediaMeta(media, includeDuration = false)
+            if (meta.isNotBlank()) {
+                Text(meta, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            progressEntry?.let { entry ->
+                PlaybackProgress(progress = entry.progress)
+            }
         }
         Spacer(Modifier.width(6.dp))
         if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-        else Icon(Icons.Outlined.PlayCircle, "Play")
+        else if (onPlayNext != null || onAddToQueue != null) {
+            Box {
+                IconButton(onClick = { showMenu = true }) { Icon(Icons.Outlined.MoreVert, "Queue actions") }
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    onPlayNext?.let { action ->
+                        DropdownMenuItem(
+                            text = { Text("Play next") },
+                            leadingIcon = { Icon(Icons.Outlined.SkipNext, null) },
+                            onClick = { showMenu = false; action() }
+                        )
+                    }
+                    onAddToQueue?.let { action ->
+                        DropdownMenuItem(
+                            text = { Text("Add to queue") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Outlined.PlaylistPlay, null) },
+                            onClick = { showMenu = false; action() }
+                        )
+                    }
+                }
+            }
+        } else Icon(Icons.Outlined.PlayCircle, "Play")
     }
 }
 
@@ -935,8 +1143,7 @@ private fun HomeScreen(
         if (suggestions.isNotEmpty()) {
             item { Text("Recommended", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             itemsIndexed(suggestions, key = { index, media -> "home-s-" + index + "-" + media.id }) { _, media ->
-                CompactMediaRow(media.title, media.channel, media.thumbnailUrl,
-                    resolvingId == media.id) { onPlay(media, suggestions) }
+                CompactMediaRow(media, resolvingId == media.id) { onPlay(media, suggestions) }
             }
             item {
                 Spacer(Modifier.height(6.dp))
@@ -963,8 +1170,7 @@ private fun HomeScreen(
                 Text((index + 1).toString(), style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold, modifier = Modifier.width(28.dp))
                 Box(Modifier.weight(1f)) {
-                    CompactMediaRow(media.title, media.channel, media.thumbnailUrl,
-                        resolvingId == media.id) { onPlay(media, trending) }
+                    CompactMediaRow(media, resolvingId == media.id) { onPlay(media, trending) }
                 }
             }
         }
@@ -979,9 +1185,7 @@ private fun HomeScreen(
 
 @Composable
 private fun CompactMediaRow(
-    title: String,
-    channel: String,
-    thumbnailUrl: String?,
+    media: MediaSummary,
     resolving: Boolean,
     onClick: () -> Unit
 ) {
@@ -990,14 +1194,20 @@ private fun CompactMediaRow(
             .clickable(enabled = !resolving, onClick = onClick).padding(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        AsyncImage(thumbnailUrl, null, Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)),
+        AsyncImage(media.thumbnailUrl, null, Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)),
             contentScale = ContentScale.Crop)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+            Text(media.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
-            Text(channel, style = MaterialTheme.typography.bodySmall,
+            Text(media.channel, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            val meta = mediaMeta(media)
+            if (meta.isNotBlank()) {
+                Text(meta, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         if (resolving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         else Icon(Icons.Outlined.PlayArrow, "Play")
@@ -1005,10 +1215,51 @@ private fun CompactMediaRow(
 }
 
 @Composable
+private fun PlaybackProgress(progress: Float) {
+    if (progress <= 0f) return
+    val percent = (progress * 100).toInt().coerceIn(1, 100)
+    Column(Modifier.fillMaxWidth().padding(top = 3.dp)) {
+        LinearProgressIndicator(
+            progress = { progress.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(50))
+        )
+        Text(
+            if (progress >= 0.95f) "Watched" else "Watched $percent%",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun ProgressMediaRow(entry: HistoryEntry, resolving: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+            .clickable(enabled = !resolving, onClick = onClick).padding(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AsyncImage(entry.thumbnailUrl, null, Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)),
+            contentScale = ContentScale.Crop)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            Text(entry.channel, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            PlaybackProgress(entry.progress)
+        }
+        if (resolving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        else Icon(Icons.Outlined.PlayArrow, "Play")
+    }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
 private fun LibraryScreen(
     modifier: Modifier,
     recent: List<HistoryEntry>,
     favorites: List<FavoriteEntry>,
+    listState: androidx.compose.foundation.lazy.LazyListState,
     resolvingId: String?,
     onPlay: (HistoryEntry) -> Unit,
     onPlayFavorite: (FavoriteEntry) -> Unit,
@@ -1017,15 +1268,26 @@ private fun LibraryScreen(
     onDelete: (HistoryEntry) -> Unit,
     onClear: () -> Unit
 ) {
+    var showAllFavorites by remember { mutableStateOf(false) }
+    var showAllRecent by remember { mutableStateOf(false) }
+    var showAllHistory by remember { mutableStateOf(false) }
+
     LazyColumn(
         modifier = modifier.padding(horizontal = 14.dp),
+        state = listState,
         contentPadding = PaddingValues(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        stickyHeader {
+            Surface(tonalElevation = if (showAllFavorites) 2.dp else 0.dp) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Favorites", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f))
+                if (favorites.size > 3) {
+                    TextButton(onClick = { showAllFavorites = !showAllFavorites }) {
+                        Text(if (showAllFavorites) "Show less" else "View all")
+                    }
+                }
                 if (favorites.isNotEmpty()) {
                     FilledTonalButton(
                         onClick = onPlayAllFavorites,
@@ -1038,11 +1300,12 @@ private fun LibraryScreen(
                     }
                 }
             }
+            }
         }
         if (favorites.isEmpty()) {
             item { Text("Favorite tracks will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
         } else {
-            items(favorites, key = { "fav-" + it.mediaId }) { entry ->
+            items(if (showAllFavorites) favorites else favorites.take(3), key = { "fav-" + it.mediaId }) { entry ->
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                         .clickable(enabled = resolvingId == null) { onPlayFavorite(entry) }.padding(7.dp),
@@ -1059,29 +1322,48 @@ private fun LibraryScreen(
             }
         }
 
-        item {
-            Spacer(Modifier.height(10.dp))
-            Text("Recent", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Jump back into your latest listening", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        stickyHeader {
+            Surface(tonalElevation = if (showAllRecent) 2.dp else 0.dp) {
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Recent", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Jump back into your latest listening", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (recent.size > 3) {
+                    TextButton(onClick = { showAllRecent = !showAllRecent }) {
+                        Text(if (showAllRecent) "Show less" else "View all")
+                    }
+                }
+            }
+            }
         }
         if (recent.isEmpty()) {
             item { Text("Nothing played yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
         } else {
-            items(recent.take(5), key = { "recent-" + it.mediaId }) { entry ->
-                CompactMediaRow(entry.title, entry.channel, entry.thumbnailUrl, resolvingId == entry.mediaId) { onPlay(entry) }
+            items(if (showAllRecent) recent else recent.take(3), key = { "recent-" + it.mediaId }) { entry ->
+                ProgressMediaRow(entry = entry, resolving = resolvingId == entry.mediaId) { onPlay(entry) }
             }
         }
 
-        item {
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        stickyHeader {
+            Surface(tonalElevation = if (showAllHistory) 2.dp else 0.dp) {
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("History", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text(recent.size.toString() + " items", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (recent.isNotEmpty()) TextButton(onClick = onClear) { Text("Clear all") }
+                if (recent.size > 3) {
+                    TextButton(onClick = { showAllHistory = !showAllHistory }) {
+                        Text(if (showAllHistory) "Show less" else "View all")
+                    }
+                }
+                if (recent.isNotEmpty()) {
+                    IconButton(onClick = onClear) { Icon(Icons.Outlined.DeleteSweep, "Clear history") }
+                }
+            }
             }
         }
-        items(recent, key = { "history-" + it.mediaId }) { entry ->
+        items(if (showAllHistory) recent else recent.take(3), key = { "history-" + it.mediaId }) { entry ->
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                     .clickable(enabled = resolvingId == null) { onPlay(entry) }.padding(7.dp),
@@ -1096,6 +1378,7 @@ private fun LibraryScreen(
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(entry.channel, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    PlaybackProgress(progress = entry.progress)
                 }
                 if (resolvingId == entry.mediaId) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 else IconButton(onClick = { onDelete(entry) }) { Icon(Icons.Outlined.Close, "Remove from history") }
@@ -1104,7 +1387,10 @@ private fun LibraryScreen(
 
         item {
             Spacer(Modifier.height(12.dp))
-            Text("Downloads", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Downloads", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f))
+            }
             Text("Offline downloads are not enabled in this beta.", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
@@ -1195,9 +1481,9 @@ private fun PlaylistDetailScreen(
                         }
                         Box(Modifier.weight(1f)) {
                             SearchResult(
-                                media,
-                                resolvingId == media.id,
-                                resolvingId == null,
+                                media = media,
+                                resolving = resolvingId == media.id,
+                                enabled = resolvingId == null,
                                 onChannel = { onChannel(media) },
                                 onPlay = { onPlay(media, playlist.items) }
                             )
@@ -1325,12 +1611,30 @@ private fun formatViews(value: Long): String = when {
     else -> "$value views"
 }
 
+private fun formatDuration(seconds: Long): String {
+    if (seconds < 0) return ""
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val secs = seconds % 60
+    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, secs)
+    else "%d:%02d".format(minutes, secs)
+}
+
+private fun mediaMeta(media: MediaSummary, includeDuration: Boolean = true): String =
+    buildList {
+        if (media.viewCount >= 0) add(formatViews(media.viewCount))
+        media.uploadDateText?.takeIf { it.isNotBlank() }?.let(::add)
+        if (includeDuration && media.durationSeconds >= 0) add(formatDuration(media.durationSeconds))
+    }.joinToString(" · ")
+
 @Composable
 private fun FullPlayer(
     media: MediaSummary,
     controller: MediaController?,
     isPlaying: Boolean,
     quality: AudioQuality,
+    videoMode: Boolean,
+    onVideoMode: (Boolean) -> Unit,
     onQuality: (AudioQuality) -> Unit,
     playbackSpeed: Float,
     onSpeed: (Float) -> Unit,
@@ -1365,6 +1669,14 @@ private fun FullPlayer(
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var showQueue by remember { mutableStateOf(false) }
+    var draggedQueueId by remember { mutableStateOf<String?>(null) }
+    var draggedQueueIndex by remember { mutableIntStateOf(-1) }
+    var draggedQueueStartIndex by remember { mutableIntStateOf(-1) }
+    var dragQueueY by remember { mutableFloatStateOf(0f) }
+    var holdSeekPreviewMs by remember { mutableLongStateOf(-1L) }
+    val playerScrollState = rememberScrollState()
+    val queueScrollState = rememberScrollState()
+    val dragScope = rememberCoroutineScope()
     LaunchedEffect(controller, media.id) {
         while (true) {
             position = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
@@ -1386,15 +1698,31 @@ private fun FullPlayer(
         }
 
         Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)
+            Modifier.weight(1f).verticalScroll(playerScrollState).padding(horizontal = 14.dp)
         ) {
+            if (!showQueue) {
             Spacer(Modifier.height(8.dp))
-            AsyncImage(
-                media.thumbnailUrl, null,
-                Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(20.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentScale = ContentScale.Crop
-            )
+            if (videoMode && controller != null) {
+                AndroidView(
+                    factory = { context ->
+                        androidx.media3.ui.PlayerView(context).apply {
+                            useController = false
+                            player = controller
+                        }
+                    },
+                    update = { it.player = controller },
+                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+            } else {
+                AsyncImage(
+                    media.thumbnailUrl, null,
+                    Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentScale = ContentScale.Crop
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Text(media.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1421,9 +1749,28 @@ private fun FullPlayer(
 
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(
+                    modifier = Modifier.height(32.dp),
+                    selected = !videoMode,
+                    onClick = { onVideoMode(false) },
+                    label = { Text("AUDIO") },
+                    leadingIcon = { Icon(Icons.Outlined.Headphones, null, Modifier.size(16.dp)) }
+                )
+                FilterChip(
+                    modifier = Modifier.height(32.dp),
+                    selected = videoMode,
+                    onClick = { onVideoMode(true) },
+                    label = { Text("VIDEO") },
+                    leadingIcon = { Icon(Icons.Outlined.OndemandVideo, null, Modifier.size(16.dp)) }
+                )
+            }
+            if (!videoMode) Row(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 AudioQuality.entries.forEach { option ->
                     FilterChip(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).height(30.dp),
                         selected = quality == option,
                         onClick = { onQuality(option) },
                         label = {
@@ -1437,15 +1784,13 @@ private fun FullPlayer(
                 }
             }
             Text(
-                if (compatibilityFallback) "Compatibility stream · may use more data"
+                if (videoMode) "Video mode · queue and position are preserved"
+                else if (compatibilityFallback) "Compatibility stream · may use more data"
                 else "Audio-only · quality applies to next track",
                 style = MaterialTheme.typography.labelSmall,
                 color = if (compatibilityFallback) MaterialTheme.colorScheme.error
                 else MaterialTheme.colorScheme.onSurfaceVariant
             )
-            if (isBuffering) {
-                LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
-            }
             playerError?.let {
                 Row(
                     Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -1501,7 +1846,7 @@ private fun FullPlayer(
                         Text("Auto next", modifier = Modifier.fillMaxWidth(),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
                     },
-                    modifier = Modifier.weight(1f).height(32.dp)
+                    modifier = Modifier.weight(1f).height(30.dp)
                 )
                 FilterChip(
                     selected = nextMode == NextMode.RECOMMENDED,
@@ -1523,7 +1868,7 @@ private fun FullPlayer(
                             maxLines = 1
                         )
                     },
-                    modifier = Modifier.weight(1f).height(32.dp)
+                    modifier = Modifier.weight(1f).height(30.dp)
                 )
                 FilterChip(
                     selected = repeatMode != RepeatMode.OFF,
@@ -1555,13 +1900,15 @@ private fun FullPlayer(
                             maxLines = 1
                         )
                     },
-                    modifier = Modifier.weight(1f).height(32.dp)
+                    modifier = Modifier.weight(1f).height(30.dp)
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
+            }
+            Spacer(Modifier.height(if (showQueue) 2.dp else 8.dp))
+            val displayedPosition = holdSeekPreviewMs.takeIf { it >= 0L } ?: position
             val progress = if (duration > 0) {
-                (position.toFloat() / duration).coerceIn(0f, 1f)
+                (displayedPosition.toFloat() / duration).coerceIn(0f, 1f)
             } else 0f
             Box(
                 Modifier
@@ -1595,7 +1942,7 @@ private fun FullPlayer(
                 )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatTime(position), style = MaterialTheme.typography.labelSmall)
+                Text(formatTime(displayedPosition), style = MaterialTheme.typography.labelSmall)
                 Text(formatTime(duration), style = MaterialTheme.typography.labelSmall)
             }
             Row(
@@ -1626,12 +1973,18 @@ private fun FullPlayer(
             }
             if (showQueue) {
                 Surface(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false).padding(bottom = 2.dp),
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                 ) {
-                    Column(Modifier.padding(vertical = 5.dp)) {
+                    Column(
+                        Modifier
+                            .fillMaxHeight()
+                            .verticalScroll(queueScrollState)
+                            .padding(vertical = 5.dp)
+                    ) {
                         queue.forEachIndexed { index, item ->
+                            key(item.id) {
                             val current = index == queueIndex
                             Row(
                                 Modifier.fillMaxWidth()
@@ -1650,7 +2003,7 @@ private fun FullPlayer(
                                         item.title,
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
-                                        maxLines = 1,
+                                        maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                         color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                     )
@@ -1666,27 +2019,59 @@ private fun FullPlayer(
                                     Icon(Icons.Outlined.GraphicEq, "Playing", Modifier.size(19.dp),
                                         tint = MaterialTheme.colorScheme.primary)
                                 } else {
-                                    var dragY by remember(item.id) { mutableFloatStateOf(0f) }
                                     Icon(
                                         Icons.Outlined.DragHandle,
                                         "Drag to reorder",
                                         Modifier
                                             .size(32.dp)
-                                            .pointerInput(item.id, index, queue.size) {
+                                            .pointerInput(item.id) {
                                                 detectDragGesturesAfterLongPress(
-                                                    onDragStart = { dragY = 0f },
-                                                    onDragCancel = { dragY = 0f },
-                                                    onDragEnd = { dragY = 0f },
+                                                    onDragStart = {
+                                                        draggedQueueId = item.id
+                                                        draggedQueueIndex = queue.indexOfFirst { it.id == item.id }
+                                                        draggedQueueStartIndex = draggedQueueIndex
+                                                        dragQueueY = 0f
+                                                    },
+                                                    onDragCancel = {
+                                                        draggedQueueId = null
+                                                        draggedQueueIndex = -1
+                                                        draggedQueueStartIndex = -1
+                                                        dragQueueY = 0f
+                                                    },
+                                                    onDragEnd = {
+                                                        draggedQueueId = null
+                                                        draggedQueueIndex = -1
+                                                        draggedQueueStartIndex = -1
+                                                        dragQueueY = 0f
+                                                    },
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
-                                                        dragY += dragAmount.y
-                                                        val threshold = 36.dp.toPx()
-                                                        if (dragY > threshold && index < queue.lastIndex) {
-                                                            onQueueMove(index, index + 1)
-                                                            dragY = 0f
-                                                        } else if (dragY < -threshold && index > 0) {
-                                                            onQueueMove(index, index - 1)
-                                                            dragY = 0f
+                                                        if (draggedQueueId != item.id) return@detectDragGesturesAfterLongPress
+                                                        dragQueueY += dragAmount.y
+                                                        val rowHeight = 54.dp.toPx()
+                                                        val deltaRows = (dragQueueY / rowHeight).toInt()
+                                                        val target = (draggedQueueStartIndex + deltaRows)
+                                                            .coerceIn(0, queue.lastIndex)
+                                                        if (draggedQueueIndex >= 0 && target != draggedQueueIndex) {
+                                                            onQueueMove(draggedQueueIndex, target)
+                                                            draggedQueueIndex = target
+                                                        }
+
+                                                        // Keep exposing more queue while the finger continues
+                                                        // beyond roughly two rows. Reorder target is based on the
+                                                        // gesture's total displacement, not on the mutated row.
+                                                        if (dragQueueY > rowHeight * 2 && queueScrollState.value < queueScrollState.maxValue) {
+                                                            dragScope.launch {
+                                                                queueScrollState.scrollTo(
+                                                                    (queueScrollState.value + rowHeight.toInt()).coerceAtMost(queueScrollState.maxValue)
+                                                                )
+                                                            }
+                                                        } else if (dragQueueY < -rowHeight * 2 && queueScrollState.value > 0) {
+                                                            dragScope.launch {
+                                                                queueScrollState.scrollTo(
+                                                                    (queueScrollState.value - rowHeight.toInt()).coerceAtLeast(0)
+                                                                )
+                                                            }
                                                         }
                                                     }
                                                 )
@@ -1699,31 +2084,129 @@ private fun FullPlayer(
                                     }
                                 }
                             }
+                            }
                         }
                     }
                 }
             }
 
-            Row(
-                Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onPrevious, enabled = hasPrevious) {
-                    Icon(Icons.Outlined.SkipPrevious, "Previous")
+        }
+        Surface(tonalElevation = 6.dp, shadowElevation = 6.dp) {
+            Column {
+                if (isBuffering) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(3.dp)
+                    )
                 }
-                FilledTonalIconButton(onClick = { controller?.seekBack() }) {
-                    Icon(Icons.Outlined.Replay10, "Back 10 seconds")
-                }
-                FilledIconButton(onClick = onToggle, modifier = Modifier.size(68.dp)) {
-                    Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                        if (isPlaying) "Pause" else "Play", modifier = Modifier.size(34.dp))
-                }
-                FilledTonalIconButton(onClick = { controller?.seekForward() }) {
-                    Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
-                }
-                IconButton(onClick = onNext, enabled = hasNext) {
-                    Icon(Icons.Outlined.SkipNext, "Next")
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier
+                            .size(48.dp)
+                            .pointerInput(hasPrevious, controller, duration) {
+                                if (!hasPrevious) return@pointerInput
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
+                                    val startedAt = down.uptimeMillis
+                                    var longPress = false
+                                    var preview = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
+                                    var lastPreviewAt = startedAt
+                                    var released = false
+                                    while (!released) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull() ?: break
+                                        val now = change.uptimeMillis
+                                        if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
+                                            longPress = true
+                                            holdSeekPreviewMs = preview
+                                        }
+                                        if (longPress && now - lastPreviewAt >= 180L) {
+                                            preview = (preview - 2_000L).coerceAtLeast(0L)
+                                            holdSeekPreviewMs = preview
+                                            lastPreviewAt = now
+                                        }
+                                        released = change.changedToUpIgnoreConsumed()
+                                        change.consume()
+                                    }
+                                    if (longPress) {
+                                        controller?.seekTo(preview)
+                                        holdSeekPreviewMs = -1L
+                                    } else {
+                                        onPrevious()
+                                    }
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Outlined.SkipPrevious,
+                            "Previous / hold to rewind",
+                            tint = if (hasPrevious) LocalContentColor.current
+                            else LocalContentColor.current.copy(alpha = 0.38f)
+                        )
+                    }
+                    FilledTonalIconButton(onClick = { controller?.seekBack() }) {
+                        Icon(Icons.Outlined.Replay10, "Back 10 seconds")
+                    }
+                    FilledIconButton(onClick = onToggle, modifier = Modifier.size(58.dp)) {
+                        Icon(
+                            if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                            if (isPlaying) "Pause" else "Play",
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                    FilledTonalIconButton(onClick = { controller?.seekForward() }) {
+                        Icon(Icons.Outlined.Forward10, "Forward 10 seconds")
+                    }
+                    Box(
+                        Modifier
+                            .size(48.dp)
+                            .pointerInput(hasNext, controller, duration) {
+                                if (!hasNext) return@pointerInput
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
+                                    val startedAt = down.uptimeMillis
+                                    var longPress = false
+                                    var preview = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
+                                    var lastPreviewAt = startedAt
+                                    var released = false
+                                    while (!released) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull() ?: break
+                                        val now = change.uptimeMillis
+                                        if (!longPress && now - startedAt >= viewConfiguration.longPressTimeoutMillis) {
+                                            longPress = true
+                                            holdSeekPreviewMs = preview
+                                        }
+                                        if (longPress && now - lastPreviewAt >= 180L) {
+                                            val end = duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                                            preview = (preview + 2_000L).coerceAtMost(end)
+                                            holdSeekPreviewMs = preview
+                                            lastPreviewAt = now
+                                        }
+                                        released = change.changedToUpIgnoreConsumed()
+                                        change.consume()
+                                    }
+                                    if (longPress) {
+                                        controller?.seekTo(preview)
+                                        holdSeekPreviewMs = -1L
+                                    } else {
+                                        onNext()
+                                    }
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Outlined.SkipNext,
+                            "Next / hold to fast-forward",
+                            tint = if (hasNext) LocalContentColor.current
+                            else LocalContentColor.current.copy(alpha = 0.38f)
+                        )
+                    }
                 }
             }
         }
@@ -1743,7 +2226,7 @@ private fun CompactPresetButton(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = modifier.height(32.dp).clickable(onClick = onClick),
+        modifier = modifier.height(30.dp).clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
         border = if (selected) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)

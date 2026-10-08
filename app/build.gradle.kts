@@ -13,11 +13,23 @@ android {
         applicationId = "com.qabt.eztube"
         minSdk = 23
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.2.0-beta.2"
+        versionCode = 4
+        versionName = "0.2.0-beta.3"
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    buildTypes {
+        debug {
+            buildConfigField("String", "BUILD_ID", "\"b5139c4\"")
+        }
+        release {
+            buildConfigField("String", "BUILD_ID", "\"release\"")
+        }
+    }
 
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
@@ -44,7 +56,9 @@ dependencies {
 
     implementation("androidx.media3:media3-exoplayer:1.6.1")
     implementation("androidx.media3:media3-session:1.6.1")
+    implementation("androidx.media3:media3-ui:1.6.1")
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

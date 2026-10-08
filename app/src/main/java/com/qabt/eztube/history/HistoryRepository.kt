@@ -6,7 +6,8 @@ import kotlinx.coroutines.flow.Flow
 class HistoryRepository(private val dao: HistoryDao) {
     val recent: Flow<List<HistoryEntry>> = dao.observeRecent()
 
-    suspend fun record(media: MediaSummary) {
+    suspend fun record(media: MediaSummary, positionMs: Long = 0L, durationMs: Long = 0L) {
+        val now = System.currentTimeMillis()
         dao.upsert(
             HistoryEntry(
                 mediaId = media.id,
@@ -14,7 +15,29 @@ class HistoryRepository(private val dao: HistoryDao) {
                 channel = media.channel,
                 thumbnailUrl = media.thumbnailUrl,
                 channelUrl = media.channelUrl,
-                playedAt = System.currentTimeMillis()
+                playedAt = now,
+                positionMs = positionMs.coerceAtLeast(0L),
+                durationMs = durationMs.coerceAtLeast(0L),
+                updatedAt = now,
+                syncState = "LOCAL"
+            )
+        )
+    }
+
+    suspend fun updateProgress(media: MediaSummary, positionMs: Long, durationMs: Long) {
+        val now = System.currentTimeMillis()
+        dao.upsert(
+            HistoryEntry(
+                mediaId = media.id,
+                title = media.title,
+                channel = media.channel,
+                thumbnailUrl = media.thumbnailUrl,
+                channelUrl = media.channelUrl,
+                playedAt = now,
+                positionMs = positionMs.coerceAtLeast(0L),
+                durationMs = durationMs.coerceAtLeast(0L),
+                updatedAt = now,
+                syncState = "LOCAL"
             )
         )
     }

@@ -22,6 +22,12 @@ import androidx.media3.session.SessionResult
 
 @UnstableApi
 class PlaybackService : MediaSessionService() {
+    companion object {
+        const val COMMAND_QUEUE_CHANGED = "com.qabt.eztube.QUEUE_CHANGED"
+        const val COMMAND_RELOAD_CURRENT = "com.qabt.eztube.RELOAD_CURRENT"
+        const val ARG_POSITION_MS = "position_ms"
+        const val ARG_PLAY_WHEN_READY = "play_when_ready"
+    }
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -73,6 +79,10 @@ class PlaybackService : MediaSessionService() {
                     controller: MediaSession.ControllerInfo
                 ): ConnectionResult {
                     val sessionCommands = ConnectionResult.DEFAULT_SESSION_COMMANDS
+                        .buildUpon()
+                        .add(androidx.media3.session.SessionCommand(COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY))
+                        .add(androidx.media3.session.SessionCommand(COMMAND_RELOAD_CURRENT, android.os.Bundle.EMPTY))
+                        .build()
                     val playerCommands = ConnectionResult.DEFAULT_PLAYER_COMMANDS
                         .buildUpon()
                         .add(Player.COMMAND_SEEK_TO_NEXT)
@@ -85,15 +95,39 @@ class PlaybackService : MediaSessionService() {
                         .setAvailablePlayerCommands(playerCommands)
 
                     val previousButton = CommandButton.Builder(CommandButton.ICON_PREVIOUS)
-                        .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                        .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
                         .setSlots(CommandButton.SLOT_BACK)
                         .build()
                     val nextButton = CommandButton.Builder(CommandButton.ICON_NEXT)
-                        .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
                         .setSlots(CommandButton.SLOT_FORWARD)
                         .build()
                     result.setMediaButtonPreferences(listOf(previousButton, nextButton))
                     return result.build()
+                }
+
+                override fun onCustomCommand(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    customCommand: androidx.media3.session.SessionCommand,
+                    args: android.os.Bundle
+                ): com.google.common.util.concurrent.ListenableFuture<SessionResult> {
+                    if (customCommand.customAction == COMMAND_QUEUE_CHANGED) {
+                        queueManager.refreshFromPreferences()
+                        return com.google.common.util.concurrent.Futures.immediateFuture(
+                            SessionResult(SessionResult.RESULT_SUCCESS)
+                        )
+                    }
+                    if (customCommand.customAction == COMMAND_RELOAD_CURRENT) {
+                        queueManager.reloadCurrent(
+                            positionMs = args.getLong(ARG_POSITION_MS, 0L),
+                            playWhenReady = args.getBoolean(ARG_PLAY_WHEN_READY, true)
+                        )
+                        return com.google.common.util.concurrent.Futures.immediateFuture(
+                            SessionResult(SessionResult.RESULT_SUCCESS)
+                        )
+                    }
+                    return super.onCustomCommand(session, controller, customCommand, args)
                 }
 
                 override fun onPlayerCommandRequest(
@@ -101,12 +135,21 @@ class PlaybackService : MediaSessionService() {
                     controller: MediaSession.ControllerInfo,
                     playerCommand: Int
                 ): Int {
-                    when (playerCommand) {
-                        Player.COMMAND_SEEK_TO_NEXT -> queueManager.move(1)
-                        Player.COMMAND_SEEK_TO_PREVIOUS -> queueManager.move(-1)
-                        // MEDIA_ITEM commands are handled by ExoPlayer's real timeline.
+                    return when (playerCommand) {
+                        Player.COMMAND_SEEK_TO_NEXT,
+                        Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> {
+                            queueManager.move(1)
+                            // PlaybackQueueManager owns the logical queue. Reject the native
+                            // timeline mutation after dispatch so Media3 cannot advance twice.
+                            SessionResult.RESULT_ERROR_NOT_SUPPORTED
+                        }
+                        Player.COMMAND_SEEK_TO_PREVIOUS,
+                        Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> {
+                            queueManager.move(-1)
+                            SessionResult.RESULT_ERROR_NOT_SUPPORTED
+                        }
+                        else -> SessionResult.RESULT_SUCCESS
                     }
-                    return SessionResult.RESULT_SUCCESS
                 }
             })
             .build()
