@@ -2491,7 +2491,19 @@ private fun FullPlayer(
                     modifier = Modifier.height(32.dp),
                     selected = videoMode,
                     onClick = { onVideoMode(true) },
-                    label = { Text("VIDEO") },
+                    label = {
+                        Text(
+                            if (videoMode) {
+                                when {
+                                    actualVideoHeight > 0 -> "${actualVideoHeight}p"
+                                    videoQuality == VideoQuality.AUTO -> "Auto"
+                                    else -> "${videoQuality.targetHeight ?: 0}p"
+                                }
+                            } else {
+                                "VIDEO"
+                            }
+                        )
+                    },
                     leadingIcon = { Icon(Icons.Outlined.OndemandVideo, null, Modifier.size(16.dp)) }
                 )
             }
@@ -2538,14 +2550,6 @@ private fun FullPlayer(
                             }
                         )
                     }
-                }
-                if (actualVideoHeight > 0) {
-                    Text(
-                        "Actual: ${actualVideoHeight}p",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
                 }
             }
             if (!videoMode) {
