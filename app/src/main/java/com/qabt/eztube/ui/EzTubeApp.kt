@@ -1061,7 +1061,7 @@ private fun SearchResult(
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             progressEntry?.let { entry ->
-                PlaybackProgress(progress = entry.progress)
+                SearchPlaybackProgress(progress = entry.progress)
             }
         }
         Spacer(Modifier.width(2.dp))
@@ -1265,6 +1265,27 @@ private fun CompactMediaRow(
         }
         if (resolving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         else Icon(Icons.Outlined.PlayArrow, "Play")
+    }
+}
+
+@Composable
+private fun SearchPlaybackProgress(progress: Float) {
+    if (progress <= 0f) return
+    val percent = (progress * 100).toInt().coerceIn(1, 100)
+    Row(
+        Modifier.fillMaxWidth().padding(top = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "$percent%",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.widthIn(min = 28.dp)
+        )
+        LinearProgressIndicator(
+            progress = { progress.coerceIn(0f, 1f) },
+            modifier = Modifier.weight(1f).height(3.dp).clip(RoundedCornerShape(50))
+        )
     }
 }
 
