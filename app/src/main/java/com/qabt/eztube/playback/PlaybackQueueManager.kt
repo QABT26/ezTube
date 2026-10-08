@@ -9,6 +9,7 @@ import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -24,12 +25,19 @@ class PlaybackQueueManager(
     private val source: NewPipeYouTubeSource,
     private val scope: CoroutineScope
 ) {
+    companion object {
+        private const val MAX_SOURCE_RECOVERY_ATTEMPTS = 3
+    }
+
     @Volatile private var busy = false
     @Volatile private var preloadId: String? = null
     @Volatile private var generation = 0L
     @Volatile private var alternateStreamId: String? = null
     @Volatile private var alternateStreamVideoMode: Boolean? = null
     @Volatile private var alternateStream: AudioStream? = null
+    @Volatile private var recoveryJobActive = false
+    @Volatile private var recoveryMediaId: String? = null
+    @Volatile private var recoveryAttempts = 0
 
     private fun invalidatePending() {
         generation += 1
@@ -111,6 +119,56 @@ class PlaybackQueueManager(
             positionMs = player.currentPosition.coerceAtLeast(0L),
             playWhenReady = player.playWhenReady && player.playbackState != Player.STATE_ENDED
         )
+    }
+
+    fun recoverSourceError() {
+        if (busy || recoveryJobActive) return
+        val saved = preferences.loadQueue() ?: return
+        val items = saved.first
+        val currentId = player.currentMediaItem?.mediaId ?: return
+        val index = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
+        if (index !in items.indices) return
+
+        if (recoveryMediaId != currentId) {
+            recoveryMediaId = currentId
+            recoveryAttempts = 0
+        }
+        if (recoveryAttempts >= MAX_SOURCE_RECOVERY_ATTEMPTS) return
+
+        val positionMs = player.currentPosition.coerceAtLeast(0L)
+        val shouldPlay = player.playWhenReady
+        recoveryAttempts += 1
+        recoveryJobActive = true
+        invalidatePending()
+        clearAlternateStream()
+        val requestGeneration = generation
+
+        scope.launch {
+            if (recoveryAttempts > 1) delay((recoveryAttempts - 1) * 500L)
+            val media = items[index]
+            resolve(media).onSuccess { item ->
+                if (requestGeneration != generation) return@onSuccess
+                val latest = preferences.loadQueue()
+                if (latest == null || latest.first.getOrNull(index)?.id != media.id) return@onSuccess
+                player.setMediaItem(item)
+                player.prepare()
+                if (positionMs > 0L) player.seekTo(positionMs)
+                player.setPlaybackSpeed(preferences.loadSpeed())
+                if (shouldPlay) player.play() else player.pause()
+                preferences.saveQueue(items, index)
+                preferences.saveSession(media, positionMs, shouldPlay)
+                ensureNext(items, index)
+                warmAlternateStream(media)
+            }
+            recoveryJobActive = false
+        }
+    }
+
+    fun onPlaybackHealthy() {
+        if (player.playbackState == Player.STATE_READY) {
+            recoveryMediaId = player.currentMediaItem?.mediaId
+            recoveryAttempts = 0
+        }
     }
 
     fun reloadCurrent(positionMs: Long, playWhenReady: Boolean) {
