@@ -105,6 +105,7 @@ fun EzTubeApp() {
     var isPlaying by remember { mutableStateOf(false) }
     var quality by remember { mutableStateOf(playbackPrefs.loadQuality()) }
     var videoQuality by remember { mutableStateOf(playbackPrefs.loadVideoQuality()) }
+    var actualVideoHeight by remember { mutableIntStateOf(0) }
     var videoMode by remember { mutableStateOf(playbackPrefs.loadVideoMode()) }
     val playbackActivity = context as? Activity
     DisposableEffect(videoMode, playbackActivity) {
@@ -162,6 +163,8 @@ fun EzTubeApp() {
                         val id = mediaItem?.mediaId ?: return
                         compatibilityFallback = mediaItem.mediaMetadata.extras
                             ?.getBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, false) == true
+                        actualVideoHeight = mediaItem.mediaMetadata.extras
+                            ?.getInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0) ?: 0
                         val saved = playbackPrefs.loadQueue()
                         val media = saved?.first?.firstOrNull { it.id == id }
                             ?: playbackPrefs.load()?.first?.takeIf { it.id == id }
@@ -174,6 +177,13 @@ fun EzTubeApp() {
                         }
                         resumePositionMs = 0L
                     }
+                    override fun onMediaMetadataChanged(mediaMetadata: androidx.media3.common.MediaMetadata) {
+                        compatibilityFallback = mediaMetadata.extras
+                            ?.getBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, false) == true
+                        actualVideoHeight = mediaMetadata.extras
+                            ?.getInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0) ?: 0
+                    }
+
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                         playerError = error.message ?: "Playback error"
                     }
@@ -509,6 +519,7 @@ fun EzTubeApp() {
             FullPlayer(
                 media = requireNotNull(nowPlaying), controller = controller, isPlaying = isPlaying, quality = quality,
                 videoQuality = videoQuality,
+                actualVideoHeight = actualVideoHeight,
                 videoMode = videoMode,
                 onVideoMode = { enabled ->
                     if (videoMode != enabled) {
@@ -1758,6 +1769,7 @@ private fun FullPlayer(
     isPlaying: Boolean,
     quality: AudioQuality,
     videoQuality: VideoQuality,
+    actualVideoHeight: Int,
     videoMode: Boolean,
     onVideoMode: (Boolean) -> Unit,
     onQuality: (AudioQuality) -> Unit,
@@ -1806,6 +1818,9 @@ private fun FullPlayer(
     var fullscreenControlsEpoch by remember { mutableIntStateOf(0) }
     var fullscreenSeeking by remember { mutableStateOf(false) }
     var fullscreenSeekPreviewMs by remember { mutableLongStateOf(-1L) }
+    var fullscreenSpeedMenu by remember { mutableStateOf(false) }
+    var fullscreenQualityMenu by remember { mutableStateOf(false) }
+    var fullscreenSleepMenu by remember { mutableStateOf(false) }
     val playerScrollState = rememberScrollState()
     val queueScrollState = rememberScrollState()
     val dragScope = rememberCoroutineScope()
@@ -1982,76 +1997,153 @@ private fun FullPlayer(
 
             if (fullscreenControlsVisible) {
                 Row(
-                    Modifier.align(Alignment.TopStart)
-                        .padding(start = 12.dp, top = 10.dp)
-                        .background(
-                            androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.16f),
-                            RoundedCornerShape(50)
-                        )
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    Modifier.align(Alignment.BottomEnd)
+                        .padding(end = 12.dp, bottom = 46.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Bottom
                 ) {
-                    Surface(
-                        modifier = Modifier.height(30.dp).clickable {
-                            val speeds = listOf(0.5f, 1f, 1.25f, 1.5f, 2f)
-                            val current = speeds.indexOfFirst { it == playbackSpeed }
-                                .takeIf { it >= 0 } ?: 1
-                            onSpeed(speeds[(current + 1) % speeds.size])
-                            fullscreenControlsEpoch += 1
-                        },
-                        shape = RoundedCornerShape(50),
-                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.22f)
-                    ) {
-                        Box(
-                            Modifier.padding(horizontal = 10.dp),
-                            contentAlignment = Alignment.Center
+                    Box {
+                        Surface(
+                            modifier = Modifier.height(28.dp).clickable {
+                                fullscreenSpeedMenu = !fullscreenSpeedMenu
+                                fullscreenQualityMenu = false
+                                fullscreenSleepMenu = false
+                                fullscreenControlsEpoch += 1
+                            },
+                            shape = RoundedCornerShape(50),
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.22f)
                         ) {
-                            Text(
-                                when (playbackSpeed) {
-                                    0.5f -> "0.5×"
-                                    1f -> "1×"
-                                    1.25f -> "1.25×"
-                                    1.5f -> "1.5×"
-                                    else -> "2×"
-                                },
-                                color = androidx.compose.ui.graphics.Color.White,
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1
-                            )
+                            Box(Modifier.padding(horizontal = 9.dp), contentAlignment = Alignment.Center) {
+                                Text(
+                                    when (playbackSpeed) {
+                                        0.5f -> "0.5×"
+                                        1f -> "1×"
+                                        1.25f -> "1.25×"
+                                        1.5f -> "1.5×"
+                                        else -> "2×"
+                                    },
+                                    color = androidx.compose.ui.graphics.Color.White,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                        DropdownMenu(expanded = fullscreenSpeedMenu, onDismissRequest = { fullscreenSpeedMenu = false }) {
+                            listOf(0.5f, 1f, 1.25f, 1.5f, 2f).forEach { option ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            (if (playbackSpeed == option) "✓ " else "") +
+                                                when (option) {
+                                                    0.5f -> "0.5×"
+                                                    1f -> "1×"
+                                                    1.25f -> "1.25×"
+                                                    1.5f -> "1.5×"
+                                                    else -> "2×"
+                                                }
+                                        )
+                                    },
+                                    onClick = {
+                                        fullscreenSpeedMenu = false
+                                        onSpeed(option)
+                                        fullscreenControlsEpoch += 1
+                                    }
+                                )
+                            }
                         }
                     }
 
-                    Surface(
-                        modifier = Modifier.height(30.dp).clickable {
-                            val qualities = VideoQuality.entries
-                            val current = qualities.indexOf(videoQuality).coerceAtLeast(0)
-                            onVideoQuality(qualities[(current + 1) % qualities.size])
-                            fullscreenControlsEpoch += 1
-                        },
-                        shape = RoundedCornerShape(50),
-                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.22f)
-                    ) {
-                        Box(
-                            Modifier.padding(horizontal = 10.dp),
-                            contentAlignment = Alignment.Center
+                    Box {
+                        val displayedQuality = if (actualVideoHeight > 0) {
+                            actualVideoHeight.toString() + "p"
+                        } else {
+                            when (videoQuality) {
+                                VideoQuality.AUTO -> "Auto"
+                                VideoQuality.P360 -> "360p"
+                                VideoQuality.P480 -> "480p"
+                                VideoQuality.P720 -> "720p"
+                                VideoQuality.P1080 -> "1080p"
+                            }
+                        }
+                        Surface(
+                            modifier = Modifier.height(28.dp).clickable {
+                                fullscreenQualityMenu = !fullscreenQualityMenu
+                                fullscreenSpeedMenu = false
+                                fullscreenSleepMenu = false
+                                fullscreenControlsEpoch += 1
+                            },
+                            shape = RoundedCornerShape(50),
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.22f)
                         ) {
-                            Text(
-                                when (videoQuality) {
+                            Box(Modifier.padding(horizontal = 9.dp), contentAlignment = Alignment.Center) {
+                                Text(
+                                    displayedQuality,
+                                    color = androidx.compose.ui.graphics.Color.White,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                        DropdownMenu(expanded = fullscreenQualityMenu, onDismissRequest = { fullscreenQualityMenu = false }) {
+                            VideoQuality.entries.forEach { option ->
+                                val label = when (option) {
                                     VideoQuality.AUTO -> "Auto"
                                     VideoQuality.P360 -> "360p"
                                     VideoQuality.P480 -> "480p"
                                     VideoQuality.P720 -> "720p"
                                     VideoQuality.P1080 -> "1080p"
-                                },
-                                color = androidx.compose.ui.graphics.Color.White,
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1
-                            )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text((if (videoQuality == option) "✓ " else "") + label) },
+                                    onClick = {
+                                        fullscreenQualityMenu = false
+                                        onVideoQuality(option)
+                                        fullscreenControlsEpoch += 1
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Box {
+                        Surface(
+                            modifier = Modifier.height(28.dp).clickable {
+                                fullscreenSleepMenu = !fullscreenSleepMenu
+                                fullscreenSpeedMenu = false
+                                fullscreenQualityMenu = false
+                                fullscreenControlsEpoch += 1
+                            },
+                            shape = RoundedCornerShape(50),
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.22f)
+                        ) {
+                            Box(Modifier.padding(horizontal = 9.dp), contentAlignment = Alignment.Center) {
+                                Text(
+                                    sleepMinutes?.let { it.toString() + "m" } ?: "Sleep",
+                                    color = androidx.compose.ui.graphics.Color.White,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                        DropdownMenu(expanded = fullscreenSleepMenu, onDismissRequest = { fullscreenSleepMenu = false }) {
+                            listOf<Int?>(null, 15, 30, 60, 120).forEach { option ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            (if (sleepMinutes == option) "✓ " else "") +
+                                                (option?.let { it.toString() + " phút" } ?: "Tắt")
+                                        )
+                                    },
+                                    onClick = {
+                                        fullscreenSleepMenu = false
+                                        onSleep(option)
+                                        fullscreenControlsEpoch += 1
+                                    }
+                                )
+                            }
                         }
                     }
                 }
-
                 Row(
                     Modifier.align(Alignment.Center)
                         .offset(y = 92.dp)
