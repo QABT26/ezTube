@@ -1631,6 +1631,7 @@ private fun FullPlayer(
     var draggedQueueStartIndex by remember { mutableIntStateOf(-1) }
     var dragQueueY by remember { mutableFloatStateOf(0f) }
     val playerScrollState = rememberScrollState()
+    val queueScrollState = rememberScrollState()
     val dragScope = rememberCoroutineScope()
     LaunchedEffect(controller, media.id) {
         while (true) {
@@ -1927,8 +1928,14 @@ private fun FullPlayer(
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                 ) {
-                    Column(Modifier.padding(vertical = 5.dp)) {
+                    Column(
+                        Modifier
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(queueScrollState)
+                            .padding(vertical = 5.dp)
+                    ) {
                         queue.forEachIndexed { index, item ->
+                            key(item.id) {
                             val current = index == queueIndex
                             Row(
                                 Modifier.fillMaxWidth()
@@ -2004,16 +2011,16 @@ private fun FullPlayer(
                                                         // Keep exposing more queue while the finger continues
                                                         // beyond roughly two rows. Reorder target is based on the
                                                         // gesture's total displacement, not on the mutated row.
-                                                        if (dragQueueY > rowHeight * 2 && playerScrollState.value < playerScrollState.maxValue) {
+                                                        if (dragQueueY > rowHeight * 2 && queueScrollState.value < queueScrollState.maxValue) {
                                                             dragScope.launch {
-                                                                playerScrollState.scrollTo(
-                                                                    (playerScrollState.value + rowHeight.toInt()).coerceAtMost(playerScrollState.maxValue)
+                                                                queueScrollState.scrollTo(
+                                                                    (queueScrollState.value + rowHeight.toInt()).coerceAtMost(queueScrollState.maxValue)
                                                                 )
                                                             }
-                                                        } else if (dragQueueY < -rowHeight * 2 && playerScrollState.value > 0) {
+                                                        } else if (dragQueueY < -rowHeight * 2 && queueScrollState.value > 0) {
                                                             dragScope.launch {
-                                                                playerScrollState.scrollTo(
-                                                                    (playerScrollState.value - rowHeight.toInt()).coerceAtLeast(0)
+                                                                queueScrollState.scrollTo(
+                                                                    (queueScrollState.value - rowHeight.toInt()).coerceAtLeast(0)
                                                                 )
                                                             }
                                                         }
@@ -2027,6 +2034,7 @@ private fun FullPlayer(
                                         Icon(Icons.Outlined.Close, "Remove from queue", Modifier.size(18.dp))
                                     }
                                 }
+                            }
                             }
                         }
                     }
