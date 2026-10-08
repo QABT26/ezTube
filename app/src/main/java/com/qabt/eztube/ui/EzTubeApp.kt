@@ -896,17 +896,32 @@ private fun SearchScreen(
             }
         }
         if (results.isNotEmpty()) {
-            androidx.compose.foundation.layout.FlowRow(
+            Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 SearchSort.entries.forEach { option ->
-                    FilterChip(
-                        selected = searchSort == option,
-                        onClick = { searchSort = option },
-                        label = { Text(option.label, maxLines = 1) }
-                    )
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(30.dp)
+                            .clickable { searchSort = option },
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (searchSort == option) MaterialTheme.colorScheme.secondaryContainer
+                            else MaterialTheme.colorScheme.surface,
+                        border = if (searchSort == option) null else androidx.compose.foundation.BorderStroke(
+                            1.dp, MaterialTheme.colorScheme.outline
+                        )
+                    ) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                option.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1019,18 +1034,18 @@ private fun SearchResult(
                 PlaybackProgress(progress = entry.progress)
             }
         }
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(2.dp))
         if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
         else if (onPlayNext != null || onAddToQueue != null) {
             Box {
                 IconButton(
                     onClick = { showMenu = true },
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(20.dp)
                 ) {
                     Icon(
                         Icons.Outlined.MoreVert,
                         "Queue actions",
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(14.dp)
                     )
                 }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
