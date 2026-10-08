@@ -194,7 +194,8 @@ class NewPipeYouTubeSource : YouTubeSource {
                     bitrateKbps = stream.bitrate.takeIf { it > 0 },
                     codec = null,
                     mimeType = stream.format?.mimeType,
-                    isFallbackMuxed = true
+                    isFallbackMuxed = true,
+                    videoHeight = stream.height.takeIf { it > 0 }
                 )
             }
             .toList()
