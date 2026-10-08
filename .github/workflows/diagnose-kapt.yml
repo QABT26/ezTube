@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - ".github/workflows/diagnose-kapt.yml"
+      - "app/build.gradle.kts"
 
 jobs:
   diagnose:
