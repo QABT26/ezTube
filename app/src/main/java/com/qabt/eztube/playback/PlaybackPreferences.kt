@@ -17,15 +17,37 @@ class PlaybackPreferences(context: Context) {
             .apply()
     }
 
-    fun load(): Pair<MediaSummary, Long>? {
+    data class SavedSession(
+        val media: MediaSummary,
+        val positionMs: Long,
+        val playWhenReady: Boolean,
+        val updatedAtMs: Long
+    )
+
+    fun load(): Pair<MediaSummary, Long>? = loadSession()?.let { it.media to it.positionMs }
+
+    fun saveSession(media: MediaSummary, positionMs: Long, playWhenReady: Boolean) {
+        save(media, positionMs)
+        prefs.edit()
+            .putBoolean("session_play_when_ready", playWhenReady)
+            .putLong("session_updated_at", System.currentTimeMillis())
+            .apply()
+    }
+
+    fun loadSession(): SavedSession? {
         val id = prefs.getString("id", null) ?: return null
-        return MediaSummary(
-            id = id,
-            title = prefs.getString("title", "").orEmpty(),
-            channel = prefs.getString("channel", "").orEmpty(),
-            thumbnailUrl = prefs.getString("thumbnail", null),
-            channelUrl = prefs.getString("channel_url", null)
-        ) to prefs.getLong("position", 0L)
+        return SavedSession(
+            media = MediaSummary(
+                id = id,
+                title = prefs.getString("title", "").orEmpty(),
+                channel = prefs.getString("channel", "").orEmpty(),
+                thumbnailUrl = prefs.getString("thumbnail", null),
+                channelUrl = prefs.getString("channel_url", null)
+            ),
+            positionMs = prefs.getLong("position", 0L).coerceAtLeast(0L),
+            playWhenReady = prefs.getBoolean("session_play_when_ready", false),
+            updatedAtMs = prefs.getLong("session_updated_at", 0L)
+        )
     }
 
     fun saveQueue(items: List<MediaSummary>, index: Int) {
