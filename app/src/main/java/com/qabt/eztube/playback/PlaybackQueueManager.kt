@@ -88,6 +88,31 @@ class PlaybackQueueManager(
         if (index in saved.first.indices) ensureNext(saved.first, index)
     }
 
+    fun restoreSession() {
+        if (busy || player.mediaItemCount > 0) return
+        val session = preferences.loadSession() ?: return
+        val saved = preferences.loadQueue()
+        val items = saved?.first?.takeIf { it.isNotEmpty() } ?: listOf(session.media)
+        val target = items.indexOfFirst { it.id == session.media.id }
+            .takeIf { it >= 0 } ?: saved?.second?.takeIf { it in items.indices } ?: 0
+        // Restoring an app/service process must never unexpectedly start audio.
+        // The saved play intent is retained for diagnostics/future policy, but restore is paused.
+        resolveAndPlay(items, target, session.positionMs, false)
+    }
+
+    fun checkpointSession() {
+        val saved = preferences.loadQueue() ?: return
+        val id = player.currentMediaItem?.mediaId ?: return
+        val index = saved.first.indexOfFirst { it.id == id }
+        if (index !in saved.first.indices) return
+        preferences.saveQueue(saved.first, index)
+        preferences.saveSession(
+            media = saved.first[index],
+            positionMs = player.currentPosition.coerceAtLeast(0L),
+            playWhenReady = player.playWhenReady && player.playbackState != Player.STATE_ENDED
+        )
+    }
+
     fun reloadCurrent(positionMs: Long, playWhenReady: Boolean) {
         if (busy) return
         val saved = preferences.loadQueue() ?: return
@@ -200,7 +225,7 @@ class PlaybackQueueManager(
                 player.setPlaybackSpeed(preferences.loadSpeed())
                 if (playWhenReady) player.play() else player.pause()
                 preferences.saveQueue(items, target)
-                preferences.save(media, positionMs)
+                preferences.saveSession(media, positionMs, playWhenReady)
                 clearAlternateStream()
                 ensureNext(items, target)
                 warmAlternateStream(media)
@@ -235,7 +260,7 @@ class PlaybackQueueManager(
         player.setPlaybackSpeed(preferences.loadSpeed())
         if (playWhenReady) player.play() else player.pause()
         preferences.saveQueue(items, target)
-        preferences.save(media, positionMs)
+        preferences.saveSession(media, positionMs, playWhenReady)
         ensureNext(items, target)
     }
 
