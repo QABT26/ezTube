@@ -1,9 +1,25 @@
+import java.io.ByteArrayOutputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.kapt")
 }
+
+fun gitBuildId(): String {
+    val output = ByteArrayOutputStream()
+    return runCatching {
+        exec {
+            commandLine("git", "rev-parse", "--short=7", "HEAD")
+            standardOutput = output
+            isIgnoreExitValue = true
+        }
+        output.toString().trim().ifBlank { "unknown" }
+    }.getOrDefault("unknown")
+}
+
+val gitBuildId = gitBuildId()
 
 android {
     namespace = "com.qabt.eztube"
@@ -24,10 +40,10 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "BUILD_ID", "\"b5139c4\"")
+            buildConfigField("String", "BUILD_ID", "\"$gitBuildId\"")
         }
         release {
-            buildConfigField("String", "BUILD_ID", "\"release\"")
+            buildConfigField("String", "BUILD_ID", "\"$gitBuildId\"")
         }
     }
 
