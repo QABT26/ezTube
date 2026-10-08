@@ -26,6 +26,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          chmod +x gradlew
           ./gradlew --no-daemon --refresh-dependencies testDebugUnitTest assembleDebug --stacktrace --info 2>&1 | tee build-diagnose.log
 
       - name: Upload diagnose log
