@@ -31,6 +31,7 @@ class PlaybackService : MediaSessionService() {
         const val ARG_PLAY_WHEN_READY = "play_when_ready"
         const val ARG_ERROR_MESSAGE = "error_message"
         const val EXTRA_COMPATIBILITY_FALLBACK = "compatibility_fallback"
+        const val EXTRA_VIDEO_HEIGHT = "video_height"
     }
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
@@ -89,7 +90,7 @@ class PlaybackService : MediaSessionService() {
                 })
             }
 
-        queueManager = PlaybackQueueManager(requireNotNull(player), preferences, source, serviceScope)
+        queueManager = PlaybackQueueManager(this, requireNotNull(player), preferences, source, serviceScope)
         queueManager.restoreSession()
 
         setMediaNotificationProvider(object : MediaNotification.Provider {
