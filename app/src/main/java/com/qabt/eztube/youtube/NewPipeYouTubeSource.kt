@@ -192,7 +192,10 @@ class NewPipeYouTubeSource : YouTubeSource {
             ?: originalAudio.maxByOrNull { it.bitrate }
             ?: return null
 
-        val maxHeight = quality.targetHeight ?: 1080
+        // Keep the full adaptive ladder in one SABR source. The user's selected
+        // quality is enforced by Media3 track constraints, so changing 360/480/720/1080
+        // does not require rebuilding the source.
+        val maxHeight = 1080
         val videoCandidates = sabrInfo.formats
             .asSequence()
             .filter { it.isVideo && it.height > 0 && it.height <= maxHeight }
