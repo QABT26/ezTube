@@ -1,6 +1,11 @@
 package com.qabt.eztube.youtube
 
 import com.qabt.eztube.playback.AudioStream
+import com.qabt.eztube.playback.VideoQuality
+import com.qabt.eztube.playback.sabr.SabrSourceSpec
+import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.stream.DeliveryMethod
+import org.schabi.newpipe.extractor.services.youtube.sabr.YoutubeSabrInfo
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.kiosk.KioskInfo
@@ -16,6 +21,7 @@ class NewPipeYouTubeSource : YouTubeSource {
         const val MAX_EXTRA_PAGES = 20
         const val PLAYBACK_STREAM_CACHE_TTL_MS = 120_000L
         const val PLAYBACK_STREAM_CACHE_MAX = 4
+        private val extractionLock = Any()
     }
 
     private data class PlaybackStreams(
@@ -49,7 +55,7 @@ class NewPipeYouTubeSource : YouTubeSource {
             }
         }
 
-        val info = StreamInfo.getInfo(mediaId)
+        val info = streamInfoForClient(mediaId, "visionos")
 
         val audioOnly = info.audioStreams.mapNotNull { stream ->
             val url = stream.content.takeIf { stream.isUrl && it.isNotBlank() }
@@ -142,6 +148,95 @@ class NewPipeYouTubeSource : YouTubeSource {
                 playbackStreamCache[mediaId] = resolved
             }
         }
+    }
+
+    private fun streamInfoForClient(mediaId: String, client: String): StreamInfo =
+        synchronized(extractionLock) {
+            val previous = NewPipe.getYoutubePlayerClient()
+            try {
+                NewPipe.setYoutubePlayerClient(client)
+                StreamInfo.getInfo(mediaId)
+            } finally {
+                NewPipe.setYoutubePlayerClient(previous)
+            }
+        }
+
+    fun sabrSpec(mediaId: String, quality: VideoQuality): SabrSourceSpec? {
+        val info = streamInfoForClient(mediaId, "mweb")
+
+        val sabrInfo = (info.audioStreams.asSequence()
+                + info.videoOnlyStreams.asSequence()
+                + info.videoStreams.asSequence())
+            .firstNotNullOfOrNull { stream ->
+                if (stream.deliveryMethod == DeliveryMethod.SABR) {
+                    stream.deliveryMethodInfo as? YoutubeSabrInfo
+                } else {
+                    null
+                }
+            }
+            ?: return null
+
+        val audioCandidates = sabrInfo.formats
+            .asSequence()
+            .filter { it.isAudio && !it.isDrc }
+            .toList()
+        if (audioCandidates.isEmpty()) return null
+
+        val originalAudio = audioCandidates.filter {
+            it.isOriginalAudio || it.audioTrackId.isNullOrBlank()
+        }.ifEmpty { audioCandidates }
+
+        val audio = originalAudio
+            .filter { it.mimeType?.contains("mp4a", ignoreCase = true) == true }
+            .maxByOrNull { it.bitrate }
+            ?: originalAudio.maxByOrNull { it.bitrate }
+            ?: return null
+
+        val maxHeight = quality.targetHeight ?: 1080
+        val videoCandidates = sabrInfo.formats
+            .asSequence()
+            .filter { it.isVideo && it.height > 0 && it.height <= maxHeight }
+            .toList()
+            .ifEmpty {
+                sabrInfo.formats
+                    .filter { it.isVideo && it.height > 0 }
+                    .sortedBy { kotlin.math.abs(it.height - maxHeight) }
+                    .take(1)
+            }
+        if (videoCandidates.isEmpty()) return null
+
+        fun codecFamily(format: YoutubeSabrInfo.Format): String {
+            val mime = format.mimeType.orEmpty().lowercase()
+            return when {
+                "avc1" in mime -> "avc1"
+                "vp09" in mime || "vp9" in mime -> "vp9"
+                "av01" in mime -> "av01"
+                else -> mime.substringBefore(';')
+            }
+        }
+
+        val preferredFamily = listOf("avc1", "vp9", "av01")
+            .firstOrNull { family ->
+                videoCandidates.any { codecFamily(it) == family }
+            }
+            ?: codecFamily(videoCandidates.first())
+
+        val adaptiveVideos = videoCandidates
+            .filter { codecFamily(it) == preferredFamily }
+            .distinctBy { it.height }
+            .sortedBy { it.height }
+            .ifEmpty { listOf(videoCandidates.minBy { it.height }) }
+
+        val bootstrapVideo = adaptiveVideos.first()
+
+        return SabrSourceSpec(
+            sabrInfo.videoId,
+            sabrInfo,
+            audio,
+            listOf(audio),
+            adaptiveVideos,
+            bootstrapVideo
+        )
     }
 
     private fun StreamInfoItem.toSummary(fallbackChannelUrl: String? = null, fallbackChannel: String = "") =
