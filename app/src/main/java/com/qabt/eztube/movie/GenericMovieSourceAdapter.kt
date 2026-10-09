@@ -56,7 +56,11 @@ class GenericMovieSourceAdapter(
             ?.toHttpUrlOrNull()
             ?.let { url -> "${url.scheme}://${url.host}" }
 
-        return loadEpisodes(movieId, preferredBaseUrl)
+        return loadEpisodes(
+            movieId = movieId,
+            preferredBaseUrl = preferredBaseUrl,
+            preferredReferer = page?.url
+        )
             .preferredHlsEpisodes()
             .map { episode ->
                 episode.toMediaSummary(
@@ -68,7 +72,8 @@ class GenericMovieSourceAdapter(
 
     fun loadEpisodes(
         movieId: String,
-        preferredBaseUrl: String? = null
+        preferredBaseUrl: String? = null,
+        preferredReferer: String? = null
     ): MovieEpisodeCatalog {
         require(movieId.isNotBlank()) { "movieId must not be blank" }
 
@@ -81,7 +86,10 @@ class GenericMovieSourceAdapter(
         for (baseUrl in bases) {
             for (url in provider.episodesUrls(baseUrl, movieId)) {
                 try {
-                    val body = get(url, referer = baseUrl + "/")
+                    val body = get(
+                        url,
+                        referer = preferredReferer ?: (baseUrl + "/")
+                    )
                     return parseEpisodeCatalog(body)
                 } catch (error: Throwable) {
                     lastError = error
