@@ -20,7 +20,7 @@ class GenericMovieSourceAdapter(
 
     fun canHandle(input: String): Boolean {
         val normalized = input.trim()
-        if (normalized.matches(Regex("""(?:movie:)?\d+""", RegexOption.IGNORE_CASE))) {
+        if (normalized.matches(Regex("""movie:\d+""", RegexOption.IGNORE_CASE))) {
             return true
         }
         return provider.baseUrls.any { base ->
@@ -34,7 +34,7 @@ class GenericMovieSourceAdapter(
 
     fun loadAsMedia(input: String): List<MediaSummary> {
         val normalized = input.trim()
-        val directId = Regex("""(?:movie:)?(\d+)""", RegexOption.IGNORE_CASE)
+        val directId = Regex("""movie:(\d+)""", RegexOption.IGNORE_CASE)
             .matchEntire(normalized)
             ?.groupValues
             ?.getOrNull(1)
