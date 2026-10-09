@@ -6,16 +6,18 @@ data class MovieProviderConfig(
     val id: String,
     val displayName: String,
     val baseUrls: List<String>,
-    val episodesPath: String = "/api/episodes"
+    val episodesPaths: List<String> = listOf("/api/episodes", "/episodes")
 ) {
     init {
         require(id.isNotBlank()) { "provider id must not be blank" }
         require(baseUrls.isNotEmpty()) { "provider must have at least one base URL" }
     }
 
-    fun episodesUrl(baseUrl: String, movieId: String): String =
-        baseUrl.trimEnd('/') + episodesPath + "?movie_id=" +
-            java.net.URLEncoder.encode(movieId, "UTF-8")
+    fun episodesUrls(baseUrl: String, movieId: String): List<String> =
+        episodesPaths.map { path ->
+            baseUrl.trimEnd('/') + path + "?movie_id=" +
+                java.net.URLEncoder.encode(movieId, "UTF-8")
+        }
 }
 
 data class MovieSubtitle(
