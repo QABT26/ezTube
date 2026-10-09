@@ -63,6 +63,8 @@ import com.qabt.eztube.playback.AudioQuality
 import com.qabt.eztube.playback.VideoQuality
 import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
+import com.qabt.eztube.movie.GenericMovieSourceAdapter
+import com.qabt.eztube.movie.MovieProviders
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.ChannelSummary
 import com.qabt.eztube.youtube.PlaylistSummary
@@ -86,6 +88,7 @@ fun EzTubeApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val source = remember { NewPipeYouTubeSource() }
+    val movieSource = remember { GenericMovieSourceAdapter(MovieProviders.MOTPHIM) }
     val database = remember { EzTubeDatabase.get(context) }
     val history = remember { HistoryRepository(database.historyDao()) }
     val favoritesRepo = remember { FavoriteRepository(database.favoriteDao()) }
@@ -708,6 +711,7 @@ fun EzTubeApp() {
                     Tab.SEARCH -> SearchScreen(
                         modifier = Modifier.fillMaxSize().padding(padding),
                         source = source,
+                        movieSource = movieSource,
                         resolvingId = resolvingId,
                         playbackError = errorMessage,
                         query = searchQuery,
@@ -910,6 +914,7 @@ private fun SettingsScreen(
 private fun SearchScreen(
     modifier: Modifier,
     source: NewPipeYouTubeSource,
+    movieSource: GenericMovieSourceAdapter,
     resolvingId: String?,
     playbackError: String?,
     query: String,
@@ -946,7 +951,15 @@ private fun SearchScreen(
             loading = true
             searchError = null
             onSearchSubmitted(normalized)
-            runCatching { withContext(Dispatchers.IO) { source.search(normalized) } }
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    if (movieSource.canHandle(normalized)) {
+                        movieSource.loadAsMedia(normalized)
+                    } else {
+                        source.search(normalized)
+                    }
+                }
+            }
                 .onSuccess { onResultsChange(it) }
                 .onFailure { searchError = it.message ?: "Search failed" }
             loading = false
@@ -957,7 +970,7 @@ private fun SearchScreen(
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
             value = query, onValueChange = onQueryChange, modifier = Modifier.fillMaxWidth(),
-            singleLine = true, placeholder = { Text("Search songs, artists, podcasts…") },
+            singleLine = true, placeholder = { Text("Search YouTube or paste movie URL…") },
             leadingIcon = { Icon(Icons.Outlined.Search, null) },
             trailingIcon = {
                 if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) {
@@ -1028,7 +1041,7 @@ private fun SearchScreen(
         }
         if (results.isEmpty() && !loading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Search YouTube, play the audio.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Search YouTube or paste a supported movie URL.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(vertical = 10.dp),
