@@ -6,7 +6,8 @@ data class MovieProviderConfig(
     val id: String,
     val displayName: String,
     val baseUrls: List<String>,
-    val episodesPaths: List<String> = listOf("/api/episodes", "/episodes")
+    val episodesPaths: List<String> = listOf("/api/episodes", "/episodes"),
+    val hostHints: List<String> = emptyList()
 ) {
     init {
         require(id.isNotBlank()) { "provider id must not be blank" }
