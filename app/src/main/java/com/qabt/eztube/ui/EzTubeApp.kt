@@ -63,6 +63,8 @@ import com.qabt.eztube.playback.AudioQuality
 import com.qabt.eztube.playback.VideoQuality
 import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
+import com.qabt.eztube.playback.PlaybackSource
+import com.qabt.eztube.playback.PlaybackSourceResolver
 import com.qabt.eztube.movie.GenericMovieSourceAdapter
 import com.qabt.eztube.movie.MovieProviders
 import com.qabt.eztube.youtube.MediaSummary
@@ -313,6 +315,17 @@ fun EzTubeApp() {
 
     fun playMedia(media: MediaSummary, startPositionMs: Long = 0L) {
         if (resolvingId != null) return
+
+        when (PlaybackSourceResolver.resolve(media.id)) {
+            is PlaybackSource.Hls,
+            is PlaybackSource.Dash -> {
+                if (!videoMode) {
+                    videoMode = true
+                    playbackPrefs.saveVideoMode(true)
+                }
+            }
+            else -> Unit
+        }
         val active = controller
         if (active == null) {
             errorMessage = "Playback service is not ready yet"
