@@ -9,6 +9,6 @@ object MovieProviders {
         id = "motphim",
         displayName = "MotPhim",
         baseUrls = listOf("https://motphimc.pw"),
-        episodesPath = "/api/episodes"
+        episodesPaths = listOf("/api/episodes", "/episodes")
     )
 }
