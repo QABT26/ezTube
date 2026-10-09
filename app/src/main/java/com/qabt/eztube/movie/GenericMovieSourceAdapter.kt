@@ -2,6 +2,7 @@ package com.qabt.eztube.movie
 
 import com.grack.nanojson.JsonParser
 import com.qabt.eztube.youtube.MediaSummary
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
@@ -23,13 +24,18 @@ class GenericMovieSourceAdapter(
         if (normalized.matches(Regex("""movie:\d+""", RegexOption.IGNORE_CASE))) {
             return true
         }
-        return provider.baseUrls.any { base ->
-            runCatching {
-                val baseHost = okhttp3.HttpUrl.get(base).host
-                val inputHost = okhttp3.HttpUrl.get(normalized).host
-                baseHost.equals(inputHost, ignoreCase = true)
-            }.getOrDefault(false)
+
+        val inputUrl = normalized.toHttpUrlOrNull() ?: return false
+        val inputHost = inputUrl.host.lowercase()
+
+        val knownHost = provider.baseUrls.any { base ->
+            base.toHttpUrlOrNull()?.host?.equals(inputHost, ignoreCase = true) == true
         }
+        if (knownHost) return true
+
+        return provider.hostHints.any { hint ->
+            inputHost.contains(hint.lowercase())
+        } && inputUrl.encodedPath.contains("/phim/", ignoreCase = true)
     }
 
     fun loadAsMedia(input: String): List<MediaSummary> {
@@ -46,7 +52,11 @@ class GenericMovieSourceAdapter(
             ?.takeIf { it.isNotBlank() }
             ?: provider.displayName + " " + movieId
 
-        return loadEpisodes(movieId)
+        val preferredBaseUrl = page?.url
+            ?.toHttpUrlOrNull()
+            ?.let { url -> "${url.scheme}://${url.host}" }
+
+        return loadEpisodes(movieId, preferredBaseUrl)
             .preferredHlsEpisodes()
             .map { episode ->
                 episode.toMediaSummary(
@@ -56,11 +66,19 @@ class GenericMovieSourceAdapter(
             }
     }
 
-    fun loadEpisodes(movieId: String): MovieEpisodeCatalog {
+    fun loadEpisodes(
+        movieId: String,
+        preferredBaseUrl: String? = null
+    ): MovieEpisodeCatalog {
         require(movieId.isNotBlank()) { "movieId must not be blank" }
 
         var lastError: Throwable? = null
-        for (baseUrl in provider.baseUrls) {
+        val bases = buildList {
+            preferredBaseUrl?.takeIf { it.isNotBlank() }?.let(::add)
+            addAll(provider.baseUrls)
+        }.distinct()
+
+        for (baseUrl in bases) {
             for (url in provider.episodesUrls(baseUrl, movieId)) {
                 try {
                     val body = get(url, referer = baseUrl + "/")
