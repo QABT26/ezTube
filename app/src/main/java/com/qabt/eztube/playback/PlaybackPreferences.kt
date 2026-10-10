@@ -131,6 +131,20 @@ class PlaybackPreferences(context: Context) {
         prefs.getString("recent_searches", "").orEmpty().lineSequence().map { it.trim() }
             .filter { it.isNotEmpty() }.take(5).toList()
 
+    fun saveSearchSourceMode(mode: String) {
+        prefs.edit().putString("search_source_mode", if (mode == "MOVIE") "MOVIE" else "YOUTUBE").apply()
+    }
+
+    fun loadSearchSourceMode(): String =
+        prefs.getString("search_source_mode", "YOUTUBE") ?: "YOUTUBE"
+
+    fun saveRecommendationMode(mode: String) {
+        prefs.edit().putString("recommendation_mode", if (mode == "MOVIE") "MOVIE" else "YOUTUBE").apply()
+    }
+
+    fun loadRecommendationMode(): String =
+        prefs.getString("recommendation_mode", "YOUTUBE") ?: "YOUTUBE"
+
     fun saveTrendingTopic(topic: String) { prefs.edit().putString("trending_topic", topic).apply() }
     fun loadTrendingTopic(): String = prefs.getString("trending_topic", "Music") ?: "Music"
     fun saveTrendingLanguage(language: String) { prefs.edit().putString("trending_language", language).apply() }
