@@ -278,7 +278,24 @@ class NewPipeYouTubeSource : YouTubeSource {
         if (normalized.isEmpty()) return emptyList()
 
         val service = ServiceList.YouTube
-        val searchHandler = service.searchQHFactory.fromQuery(normalized)
+        val factory = service.searchQHFactory
+        val contentFilter = factory.availableContentFilter
+            .filterGroups
+            .asSequence()
+            .flatMap { it.filterItems.asSequence() }
+            .firstOrNull { it.name.equals("videos", ignoreCase = true) }
+            ?: factory.availableContentFilter
+                .filterGroups
+                .asSequence()
+                .flatMap { it.filterItems.asSequence() }
+                .firstOrNull { it.name.equals("all", ignoreCase = true) }
+            ?: error("YouTube search has no usable content filter")
+
+        val searchHandler = factory.fromQuery(
+            normalized,
+            listOf(contentFilter),
+            null
+        )
         return SearchInfo.getInfo(service, searchHandler)
             .relatedItems
             .asSequence()
