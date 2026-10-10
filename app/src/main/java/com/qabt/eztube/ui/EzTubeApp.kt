@@ -464,14 +464,14 @@ fun EzTubeApp() {
     LaunchedEffect(homeRefreshToken, trendingTopic, trendingLanguage) {
         trendingLoading = true
         var loaded: List<MediaSummary> = emptyList()
-        repeat(3) { attempt ->
+        for (attempt in 0 until 3) {
             loaded = runCatching {
                 withContext(Dispatchers.IO) {
                     source.trending(trendingTopic, trendingLanguage)
                 }
             }.getOrDefault(emptyList())
 
-            if (loaded.isNotEmpty()) return@repeat
+            if (loaded.isNotEmpty()) break
             if (attempt < 2) delay((attempt + 1) * 750L)
         }
         if (loaded.isNotEmpty()) trending = loaded
