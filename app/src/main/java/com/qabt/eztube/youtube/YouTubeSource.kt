@@ -10,7 +10,8 @@ data class MediaSummary(
     val channelUrl: String? = null,
     val viewCount: Long = -1,
     val uploadDateText: String? = null,
-    val durationSeconds: Long = -1
+    val durationSeconds: Long = -1,
+    val thumbnailBadge: String? = null
 )
 
 data class PlaylistSummary(
