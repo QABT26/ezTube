@@ -92,10 +92,19 @@ class GenericMovieSourceAdapter(
             }.getOrDefault(emptyList())
 
             val urls = buildList {
-                discoveredPaths.forEach { path ->
+                discoveredPaths.forEach { endpoint ->
+                    val separator = if ('?' in endpoint) '&' else '?'
+                    val target = if (
+                        endpoint.startsWith("http://") ||
+                        endpoint.startsWith("https://")
+                    ) {
+                        endpoint
+                    } else {
+                        baseUrl.trimEnd('/') + "/" + endpoint.trimStart('/')
+                    }
                     add(
-                        baseUrl.trimEnd('/') + "/" + path.trimStart('/') +
-                            "?movie_id=" + java.net.URLEncoder.encode(movieId, "UTF-8")
+                        target + separator + "movie_id=" +
+                            java.net.URLEncoder.encode(movieId, "UTF-8")
                     )
                 }
                 addAll(provider.episodesUrls(baseUrl, movieId))
@@ -147,50 +156,99 @@ class GenericMovieSourceAdapter(
         pageUrl: String,
         baseUrl: String
     ): List<String> {
-        val pageHtml = getHtml(pageUrl)
-        val scriptSources = Regex(
-            """<script[^>]+src=["']([^"']+\.js[^"']*)["']""",
-            RegexOption.IGNORE_CASE
-        ).findAll(pageHtml)
-            .map { it.groupValues[1] }
-            .mapNotNull { source ->
-                when {
-                    source.startsWith("http://") || source.startsWith("https://") -> source
-                    source.startsWith("/") -> baseUrl.trimEnd('/') + source
-                    else -> baseUrl.trimEnd('/') + "/" + source
+        val firstHtml = getHtml(pageUrl)
+        val pending = ArrayDeque<String>()
+        val visited = linkedSetOf<String>()
+        val endpoints = linkedSetOf<String>()
+
+        fun absoluteAsset(source: String): String? {
+            val clean = source.replace("\\/", "/")
+            return when {
+                clean.startsWith("http://") || clean.startsWith("https://") -> clean
+                clean.startsWith("/") -> baseUrl.trimEnd('/') + clean
+                clean.startsWith("_next/") -> baseUrl.trimEnd('/') + "/" + clean
+                else -> null
+            }
+        }
+
+        fun enqueueAssets(text: String) {
+            Regex(
+                """(?:src=)?["']([^"']*_next/[^"']+\.js[^"']*)["']""",
+                RegexOption.IGNORE_CASE
+            ).findAll(text).forEach { match ->
+                absoluteAsset(match.groupValues[1])?.let { asset ->
+                    if (asset !in visited) pending.add(asset)
                 }
             }
-            .distinct()
-            .take(32)
-            .toList()
 
-        val paths = linkedSetOf<String>()
-        val endpointRegexes = listOf(
-            Regex("""["']([^"']*episodes)\?movie_id=""", RegexOption.IGNORE_CASE),
-            Regex("""["']([^"']*episodes)["'][^\n]{0,120}movie_id""", RegexOption.IGNORE_CASE)
-        )
-
-        for (scriptUrl in scriptSources) {
-            val javascript = runCatching { getHtml(scriptUrl) }.getOrNull() ?: continue
-            endpointRegexes.forEach { regex ->
-                regex.findAll(javascript).forEach { match ->
-                    val raw = match.groupValues.getOrNull(1).orEmpty()
-                    if (raw.isNotBlank()) {
-                        val normalized = when {
-                            raw.startsWith("http://") || raw.startsWith("https://") ->
-                                raw.toHttpUrlOrNull()?.encodedPath
-                            else -> raw.substringBefore('?')
-                        }
-                        normalized
-                            ?.takeIf { it.contains("episodes", ignoreCase = true) }
-                            ?.let(paths::add)
+            Regex(
+                """["']([^"']+\.js)["']""",
+                RegexOption.IGNORE_CASE
+            ).findAll(text).forEach { match ->
+                val raw = match.groupValues[1]
+                if ("_next/" in raw) {
+                    absoluteAsset(raw)?.let { asset ->
+                        if (asset !in visited) pending.add(asset)
                     }
                 }
             }
-            if (paths.isNotEmpty()) break
         }
 
-        return paths.toList()
+        fun collectEndpoints(text: String) {
+            val regexes = listOf(
+                Regex(
+                    """["']((?:https?://[^"']+)?/[^"']*episodes[^"']*)["']""",
+                    RegexOption.IGNORE_CASE
+                ),
+                Regex(
+                    """fetch\(\s*["']([^"']*episodes[^"']*)["']""",
+                    RegexOption.IGNORE_CASE
+                )
+            )
+            regexes.forEach { regex ->
+                regex.findAll(text).forEach { match ->
+                    val raw = match.groupValues.getOrNull(1)
+                        .orEmpty()
+                        .replace("\\/", "/")
+                        .substringBefore("movie_id=")
+                        .trimEnd('?', '&')
+                    if (
+                        raw.contains("episodes", ignoreCase = true) &&
+                        !raw.endsWith(".js", ignoreCase = true)
+                    ) {
+                        endpoints.add(raw)
+                    }
+                }
+            }
+        }
+
+        collectEndpoints(firstHtml)
+        enqueueAssets(firstHtml)
+
+        val buildId = Regex(
+            """"buildId"\s*:\s*"([^"]+)""""
+        ).find(firstHtml)?.groupValues?.getOrNull(1)
+        if (!buildId.isNullOrBlank()) {
+            listOf(
+                "/_next/static/$buildId/_buildManifest.js",
+                "/_next/static/$buildId/_ssgManifest.js"
+            ).forEach { manifest ->
+                pending.add(baseUrl.trimEnd('/') + manifest)
+            }
+        }
+
+        var scanned = 0
+        while (pending.isNotEmpty() && scanned < 96 && endpoints.isEmpty()) {
+            val asset = pending.removeFirst()
+            if (!visited.add(asset)) continue
+            scanned += 1
+
+            val text = runCatching { getHtml(asset) }.getOrNull() ?: continue
+            collectEndpoints(text)
+            enqueueAssets(text)
+        }
+
+        return endpoints.toList()
     }
 
     private fun getHtml(url: String): String {
