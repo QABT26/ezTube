@@ -12,7 +12,8 @@ data class MovieCatalogItem(
     val year: Int?,
     val language: String?,
     val durationText: String?,
-    val durationSeconds: Long?
+    val durationSeconds: Long?,
+    val episodeBadge: String? = null
 ) {
     val stableId: String
         get() = "movie-title:$providerId:$slug"
@@ -26,7 +27,8 @@ data class MovieCatalogItem(
         }.joinToString(" · "),
         thumbnailUrl = thumbnailUrl,
         uploadDateText = year?.toString(),
-        durationSeconds = durationSeconds ?: -1L
+        durationSeconds = durationSeconds ?: -1L,
+        thumbnailBadge = episodeBadge
     )
 }
 
