@@ -86,4 +86,15 @@ class GenericMovieSourceAdapterTest {
         assertFalse(adapter.canHandle("84392"))
         assertFalse(adapter.canHandle("https://youtube.com/watch?v=x"))
     }
+
+    @Test
+    fun extractsStableSlugFromRotatingProviderUrl() {
+        assertEquals(
+            "trung-so-doc-dac-van-phai-di-lam",
+            adapter.extractStableMovieSlug(
+                "https://example.com/phim/trung-so-doc-dac-van-phai-di-lam-1789048828"
+            )
+        )
+    }
+
 }
