@@ -84,7 +84,34 @@ class GenericMovieSourceAdapter(
         }.distinct()
 
         for (baseUrl in bases) {
-            for (url in provider.episodesUrls(baseUrl, movieId)) {
+            val discoveredPaths = runCatching {
+                discoverEpisodePaths(
+                    pageUrl = preferredReferer ?: (baseUrl.trimEnd('/') + "/"),
+                    baseUrl = baseUrl
+                )
+            }.getOrDefault(emptyList())
+
+            val urls = buildList {
+                discoveredPaths.forEach { path ->
+                    add(
+                        baseUrl.trimEnd('/') + "/" + path.trimStart('/') +
+                            "?movie_id=" + java.net.URLEncoder.encode(movieId, "UTF-8")
+                    )
+                }
+                addAll(provider.episodesUrls(baseUrl, movieId))
+                listOf(
+                    "/api/v1/episodes",
+                    "/api/movie/episodes",
+                    "/api/movies/episodes"
+                ).forEach { path ->
+                    add(
+                        baseUrl.trimEnd('/') + path +
+                            "?movie_id=" + java.net.URLEncoder.encode(movieId, "UTF-8")
+                    )
+                }
+            }.distinct()
+
+            for (url in urls) {
                 val referers = buildList<String?> {
                     preferredReferer?.takeIf { it.isNotBlank() }?.let(::add)
                     add(baseUrl.trimEnd('/') + "/")
@@ -114,6 +141,71 @@ class GenericMovieSourceAdapter(
             },
             lastError
         )
+    }
+
+    private fun discoverEpisodePaths(
+        pageUrl: String,
+        baseUrl: String
+    ): List<String> {
+        val pageHtml = getHtml(pageUrl)
+        val scriptSources = Regex(
+            """<script[^>]+src=["']([^"']+\.js[^"']*)["']""",
+            RegexOption.IGNORE_CASE
+        ).findAll(pageHtml)
+            .map { it.groupValues[1] }
+            .mapNotNull { source ->
+                when {
+                    source.startsWith("http://") || source.startsWith("https://") -> source
+                    source.startsWith("/") -> baseUrl.trimEnd('/') + source
+                    else -> baseUrl.trimEnd('/') + "/" + source
+                }
+            }
+            .distinct()
+            .take(32)
+            .toList()
+
+        val paths = linkedSetOf<String>()
+        val endpointRegexes = listOf(
+            Regex("""["']([^"']*episodes)\?movie_id=""", RegexOption.IGNORE_CASE),
+            Regex("""["']([^"']*episodes)["'][^\n]{0,120}movie_id""", RegexOption.IGNORE_CASE)
+        )
+
+        for (scriptUrl in scriptSources) {
+            val javascript = runCatching { getHtml(scriptUrl) }.getOrNull() ?: continue
+            endpointRegexes.forEach { regex ->
+                regex.findAll(javascript).forEach { match ->
+                    val raw = match.groupValues.getOrNull(1).orEmpty()
+                    if (raw.isNotBlank()) {
+                        val normalized = when {
+                            raw.startsWith("http://") || raw.startsWith("https://") ->
+                                raw.toHttpUrlOrNull()?.encodedPath
+                            else -> raw.substringBefore('?')
+                        }
+                        normalized
+                            ?.takeIf { it.contains("episodes", ignoreCase = true) }
+                            ?.let(paths::add)
+                    }
+                }
+            }
+            if (paths.isNotEmpty()) break
+        }
+
+        return paths.toList()
+    }
+
+    private fun getHtml(url: String): String {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "text/html,application/javascript,*/*")
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("HTTP ${response.code} while discovering movie source")
+            }
+            return response.body?.string().orEmpty()
+        }
     }
 
     internal fun parseEpisodeCatalog(json: String): MovieEpisodeCatalog {
