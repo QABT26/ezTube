@@ -145,6 +145,8 @@ fun EzTubeApp() {
     var recentSearches by remember { mutableStateOf(playbackPrefs.loadRecentSearches()) }
     var homeSuggestions by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var homeLoading by remember { mutableStateOf(false) }
+    var movieSuggestions by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
+    var movieSuggestionsLoading by remember { mutableStateOf(false) }
     var trending by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var trendingLoading by remember { mutableStateOf(false) }
     var homeRefreshToken by remember { mutableIntStateOf(0) }
@@ -620,6 +622,48 @@ fun EzTubeApp() {
         homeLoading = false
     }
 
+    LaunchedEffect(recentSearches, recent.firstOrNull()?.mediaId, homeRefreshToken) {
+        val movieSeeds = (
+            recentSearches.filter { it.isNotBlank() } +
+                recent
+                    .filter { it.mediaId.startsWith("movie:") }
+                    .map { entry -> entry.title.substringBefore(" · ").trim() }
+        )
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(5)
+
+        if (movieSeeds.isEmpty()) {
+            movieSuggestions = emptyList()
+            movieSuggestionsLoading = false
+            return@LaunchedEffect
+        }
+
+        movieSuggestionsLoading = true
+        val moviePlayed = recent
+            .filter { it.mediaId.startsWith("movie:") }
+            .mapTo(mutableSetOf()) { entry ->
+                entry.mediaId.split(':').getOrNull(2).orEmpty()
+            }
+
+        val recommendedMovies = withContext(Dispatchers.IO) {
+            movieSeeds.flatMap { seed ->
+                runCatching { movieProviders.search(seed) }
+                    .getOrDefault(emptyList())
+                    .take(8)
+            }
+        }
+
+        movieSuggestions = recommendedMovies
+            .distinctBy { it.id }
+            .filterNot { media ->
+                val slug = media.id.split(':').getOrNull(2).orEmpty()
+                slug.isNotBlank() && slug in moviePlayed
+            }
+            .take(18)
+        movieSuggestionsLoading = false
+    }
+
     BackHandler(
         enabled = movieDetail != null || movieDetailLoading || movieDetailError != null ||
             playlistDetail != null || playlistLoading || playlistError != null ||
@@ -936,6 +980,8 @@ fun EzTubeApp() {
                     Tab.HOME -> HomeScreen(
                         modifier = Modifier.fillMaxSize().padding(padding),
                         suggestions = homeSuggestions,
+                        movieSuggestions = movieSuggestions,
+                        movieSuggestionsLoading = movieSuggestionsLoading,
                         trending = trending,
                         trendingLoading = trendingLoading,
                         listState = homeListState,
@@ -945,6 +991,7 @@ fun EzTubeApp() {
                         onPlay = { media, items ->
                             startQueue(media, items)
                         },
+                        onMovie = { openMovie(it) },
                         onSearch = { selected = Tab.SEARCH }
                     )
                     Tab.LIBRARY -> LibraryScreen(
@@ -1313,6 +1360,9 @@ private fun SearchScreen(
     }
 }
 
+private fun movieProvidersTitleId(mediaId: String): Boolean =
+    mediaId.startsWith("movie-title:")
+
 private fun searchAgeRank(text: String?): Long {
     val value = text?.lowercase()?.trim().orEmpty()
     if (value.isBlank()) return Long.MAX_VALUE
@@ -1636,6 +1686,8 @@ private fun MiniPlayer(
 private fun HomeScreen(
     modifier: Modifier,
     suggestions: List<MediaSummary>,
+    movieSuggestions: List<MediaSummary>,
+    movieSuggestionsLoading: Boolean,
     trending: List<MediaSummary>,
     trendingLoading: Boolean,
     listState: androidx.compose.foundation.lazy.LazyListState,
@@ -1643,11 +1695,20 @@ private fun HomeScreen(
     onRefresh: () -> Unit,
     resolvingId: String?,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
+    onMovie: (MediaSummary) -> Unit,
     onSearch: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    var recommendationMode by remember { mutableStateOf(SearchSourceMode.YOUTUBE) }
+    val displayedRecommendations = if (recommendationMode == SearchSourceMode.MOVIE) {
+        movieSuggestions
+    } else {
+        suggestions
+    }
+    val recommendationLoading =
+        loading || (recommendationMode == SearchSourceMode.MOVIE && movieSuggestionsLoading)
     PullToRefreshBox(
-        isRefreshing = loading || trendingLoading,
+        isRefreshing = loading || movieSuggestionsLoading || trendingLoading,
         onRefresh = onRefresh,
         modifier = modifier
     ) {
@@ -1677,23 +1738,69 @@ private fun HomeScreen(
                 }
             }
         }
-        if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-        if (suggestions.isNotEmpty()) {
-            item { Text("Recommended", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-            itemsIndexed(suggestions, key = { index, media -> "home-s-" + index + "-" + media.id }) { _, media ->
-                CompactMediaRow(media, resolvingId == media.id) { onPlay(media, suggestions) }
+        if (recommendationLoading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        item {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Recommended",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                CompactPresetButton(
+                    text = "YouTube",
+                    selected = recommendationMode == SearchSourceMode.YOUTUBE,
+                    onClick = { recommendationMode = SearchSourceMode.YOUTUBE },
+                    modifier = Modifier.width(82.dp)
+                )
+                Spacer(Modifier.width(5.dp))
+                CompactPresetButton(
+                    text = "Movie",
+                    selected = recommendationMode == SearchSourceMode.MOVIE,
+                    onClick = { recommendationMode = SearchSourceMode.MOVIE },
+                    modifier = Modifier.width(68.dp)
+                )
+            }
+        }
+        if (displayedRecommendations.isNotEmpty()) {
+            itemsIndexed(
+                displayedRecommendations,
+                key = { index, media ->
+                    "home-rec-" + recommendationMode.name + "-" + index + "-" + media.id
+                }
+            ) { _, media ->
+                CompactMediaRow(media, resolvingId == media.id) {
+                    if (recommendationMode == SearchSourceMode.MOVIE && movieProvidersTitleId(media.id)) {
+                        onMovie(media)
+                    } else {
+                        onPlay(media, displayedRecommendations)
+                    }
+                }
             }
             item {
                 Spacer(Modifier.height(6.dp))
-                Text("More personalized topics, channels and playlists will improve as you listen.",
+                Text(
+                    if (recommendationMode == SearchSourceMode.MOVIE)
+                        "Movie suggestions from your recent searches and viewing."
+                    else
+                        "More personalized topics, channels and playlists will improve as you listen.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-        } else if (!loading) {
+        } else if (!recommendationLoading) {
             item {
-                Text("Listen to a few tracks or add favorites to start building recommendations.",
-                    modifier = Modifier.padding(top = 24.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (recommendationMode == SearchSourceMode.MOVIE)
+                        "Search or watch a few movies to build movie recommendations."
+                    else
+                        "Listen to a few tracks or add favorites to start building recommendations.",
+                    modifier = Modifier.padding(top = 12.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         item {
