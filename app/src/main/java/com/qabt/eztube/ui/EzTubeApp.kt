@@ -404,8 +404,8 @@ fun EzTubeApp() {
                     playbackPrefs.saveVideoMode(true)
                 }
             }
-            PlaybackSourceResolver.resolve(media.id) is PlaybackSource.Hls,
-            PlaybackSourceResolver.resolve(media.id) is PlaybackSource.Dash -> {
+            PlaybackSourceResolver.resolve(media.id) is PlaybackSource.Hls ||
+                PlaybackSourceResolver.resolve(media.id) is PlaybackSource.Dash -> {
                 if (!videoMode) {
                     videoMode = true
                     playbackPrefs.saveVideoMode(true)
@@ -1310,6 +1310,129 @@ private fun searchAgeRank(text: String?): Long {
 }
 
 @Composable
+private fun MovieDetailScreen(
+    modifier: Modifier,
+    detail: MovieDetail?,
+    loading: Boolean,
+    error: String?,
+    resolvingId: String?,
+    onBack: () -> Unit,
+    onPlay: (MediaSummary, List<MediaSummary>) -> Unit
+) {
+    Column(modifier.statusBarsPadding()) {
+        Row(
+            Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
+            }
+            Text(
+                detail?.catalog?.title ?: "Movie",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        when {
+            loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
+            error != null -> Box(
+                Modifier.fillMaxSize().padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(error, color = MaterialTheme.colorScheme.error)
+            }
+            detail != null -> {
+                val items = remember(detail) {
+                    detail.episodes.map { it.toMediaSummary() }
+                }
+                LazyColumn(
+                    Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    item {
+                        Row(
+                            Modifier.fillMaxWidth().padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AsyncImage(
+                                detail.catalog.thumbnailUrl,
+                                null,
+                                Modifier.size(width = 118.dp, height = 168.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentScale = ContentScale.Crop
+                            )
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    detail.catalog.title,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                detail.catalog.originalTitle
+                                    ?.takeIf { it.isNotBlank() && it != detail.catalog.title }
+                                    ?.let {
+                                        Text(
+                                            it,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    buildList {
+                                        add(detail.catalog.providerName)
+                                        detail.catalog.year?.let { add(it.toString()) }
+                                        detail.catalog.language?.takeIf { it.isNotBlank() }?.let(::add)
+                                        detail.catalog.durationText?.takeIf { it.isNotBlank() }?.let(::add)
+                                    }.joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    "${items.size} playable items",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+
+                    val grouped = detail.episodes.groupBy { it.serverName }
+                    grouped.forEach { (server, refs) ->
+                        item(key = "server-header-$server") {
+                            Text(
+                                server,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        items(
+                            refs.map { it.toMediaSummary() },
+                            key = { it.id }
+                        ) { media ->
+                            SearchResult(
+                                media = media,
+                                resolving = resolvingId == media.id,
+                                enabled = resolvingId == null,
+                                onChannel = {},
+                                onPlay = { onPlay(media, items) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SearchResult(
     media: MediaSummary,
     progressEntry: HistoryEntry? = null,
@@ -2061,6 +2184,10 @@ private fun FullPlayer(
     controller: MediaController?,
     isPlaying: Boolean,
     quality: AudioQuality,
+    isMovie: Boolean,
+    subtitleOptions: List<SubtitleOption>,
+    selectedSubtitleLabel: String?,
+    onSubtitle: (SubtitleOption?) -> Unit,
     videoQuality: VideoQuality,
     actualVideoHeight: Int,
     videoMode: Boolean,
@@ -2722,54 +2849,100 @@ private fun FullPlayer(
             }
 
             Spacer(Modifier.height(6.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip(
-                    modifier = Modifier.height(32.dp),
-                    selected = !videoMode,
-                    onClick = { onVideoMode(false) },
-                    label = { Text("AUDIO") },
-                    leadingIcon = { Icon(Icons.Outlined.Headphones, null, Modifier.size(16.dp)) }
-                )
-                FilterChip(
-                    modifier = Modifier.height(32.dp),
-                    selected = videoMode,
-                    onClick = { onVideoMode(true) },
-                    label = {
-                        Text(
-                            if (videoMode) {
-                                when {
-                                    actualVideoHeight > 0 -> "${actualVideoHeight}p"
-                                    videoQuality == VideoQuality.AUTO -> "Auto"
-                                    else -> "${videoQuality.targetHeight ?: 0}p"
-                                }
-                            } else {
-                                "VIDEO"
-                            }
-                        )
-                    },
-                    leadingIcon = { Icon(Icons.Outlined.OndemandVideo, null, Modifier.size(16.dp)) }
-                )
-            }
-            if (!videoMode) Row(
-                Modifier.fillMaxWidth().padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                AudioQuality.entries.forEach { option ->
+            if (isMovie) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     FilterChip(
-                        modifier = Modifier.weight(1f).height(30.dp),
-                        selected = quality == option,
-                        onClick = { onQuality(option) },
+                        modifier = Modifier.height(32.dp),
+                        selected = selectedSubtitleLabel == null,
+                        onClick = { onSubtitle(null) },
+                        label = { Text("CC Off") },
+                        leadingIcon = { Icon(Icons.Outlined.ClosedCaptionOff, null, Modifier.size(16.dp)) }
+                    )
+                    if (subtitleOptions.isEmpty()) {
+                        AssistChip(
+                            modifier = Modifier.height(32.dp),
+                            onClick = {},
+                            enabled = false,
+                            label = { Text("No subtitles") },
+                            leadingIcon = { Icon(Icons.Outlined.SubtitlesOff, null, Modifier.size(16.dp)) }
+                        )
+                    } else {
+                        subtitleOptions.take(3).forEach { option ->
+                            FilterChip(
+                                modifier = Modifier.height(32.dp),
+                                selected = selectedSubtitleLabel == option.label,
+                                onClick = { onSubtitle(option) },
+                                label = { Text(option.label, maxLines = 1) },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.ClosedCaption, null, Modifier.size(16.dp))
+                                }
+                            )
+                        }
+                    }
+                }
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(
+                        modifier = Modifier.height(32.dp),
+                        selected = !videoMode,
+                        onClick = { onVideoMode(false) },
+                        label = { Text("AUDIO") },
+                        leadingIcon = { Icon(Icons.Outlined.Headphones, null, Modifier.size(16.dp)) }
+                    )
+                    FilterChip(
+                        modifier = Modifier.height(32.dp),
+                        selected = videoMode,
+                        onClick = { onVideoMode(true) },
                         label = {
-                            Text(when (option) {
-                                AudioQuality.DATA_SAVER -> "Saver 64"
-                                AudioQuality.STANDARD -> "Std 128"
-                                AudioQuality.HIGH -> "High 160+"
-                            }, maxLines = 1)
+                            Text(
+                                if (videoMode) {
+                                    when {
+                                        actualVideoHeight > 0 -> "${actualVideoHeight}p"
+                                        videoQuality == VideoQuality.AUTO -> "Auto"
+                                        else -> "${videoQuality.targetHeight ?: 0}p"
+                                    }
+                                } else {
+                                    "VIDEO"
+                                }
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Outlined.OndemandVideo, null, Modifier.size(16.dp))
                         }
                     )
                 }
             }
-            if (videoMode) {
+
+            if (!isMovie && !videoMode) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    AudioQuality.entries.forEach { option ->
+                        FilterChip(
+                            modifier = Modifier.weight(1f).height(30.dp),
+                            selected = quality == option,
+                            onClick = { onQuality(option) },
+                            label = {
+                                Text(
+                                    when (option) {
+                                        AudioQuality.DATA_SAVER -> "Saver 64"
+                                        AudioQuality.STANDARD -> "Std 128"
+                                        AudioQuality.HIGH -> "High 160+"
+                                    },
+                                    maxLines = 1
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
+            if (videoMode || isMovie) {
                 Row(
                     Modifier.fillMaxWidth().padding(top = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -2795,7 +2968,8 @@ private fun FullPlayer(
                     }
                 }
             }
-            if (!videoMode) {
+
+            if (!isMovie && !videoMode) {
                 Text(
                     if (compatibilityFallback) "Compatibility stream · may use more data"
                     else "Audio-only · quality applies to next track",
