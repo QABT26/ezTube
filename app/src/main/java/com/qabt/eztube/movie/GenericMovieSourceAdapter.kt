@@ -85,20 +85,33 @@ class GenericMovieSourceAdapter(
 
         for (baseUrl in bases) {
             for (url in provider.episodesUrls(baseUrl, movieId)) {
-                try {
-                    val body = get(
-                        url,
-                        referer = preferredReferer ?: (baseUrl + "/")
-                    )
-                    return parseEpisodeCatalog(body)
-                } catch (error: Throwable) {
-                    lastError = error
+                val referers = buildList<String?> {
+                    preferredReferer?.takeIf { it.isNotBlank() }?.let(::add)
+                    add(baseUrl.trimEnd('/') + "/")
+                    add(null)
+                }.distinct()
+
+                for (referer in referers) {
+                    try {
+                        val body = get(
+                            url = url,
+                            baseUrl = baseUrl,
+                            referer = referer
+                        )
+                        return parseEpisodeCatalog(body)
+                    } catch (error: Throwable) {
+                        lastError = error
+                    }
                 }
             }
         }
 
+        val detail = lastError?.message?.takeIf { it.isNotBlank() }
         throw IOException(
-            "Unable to load movie episodes from ${provider.displayName}",
+            buildString {
+                append("Unable to load movie episodes from ${provider.displayName}")
+                if (detail != null) append(": ").append(detail)
+            },
             lastError
         )
     }
@@ -219,20 +232,39 @@ class GenericMovieSourceAdapter(
         return title?.replace(Regex("""\s+"""), " ")?.trim()?.let(::decodeBasicEntities)
     }
 
-    private fun get(url: String, referer: String): String {
-        val request = Request.Builder()
+    private fun get(
+        url: String,
+        baseUrl: String,
+        referer: String?
+    ): String {
+        val builder = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
             .header("Accept", "application/json,text/plain,*/*")
-            .header("Referer", referer)
+            .header("Accept-Language", "vi-VN,vi;q=0.9,en;q=0.8")
+            .header("Origin", baseUrl.trimEnd('/'))
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("X-Requested-With", "XMLHttpRequest")
             .get()
-            .build()
-        http.newCall(request).execute().use { response ->
+
+        referer?.let { builder.header("Referer", it) }
+
+        http.newCall(builder.build()).execute().use { response ->
+            val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("Movie episode API HTTP ${response.code}")
+                val preview = body
+                    .replace(Regex("""\s+"""), " ")
+                    .take(140)
+                throw IOException(
+                    "episode API HTTP ${response.code}" +
+                        if (preview.isNotBlank()) ": $preview" else ""
+                )
             }
-            return response.body?.string()
-                ?: throw IOException("Movie episode API returned empty body")
+            if (body.isBlank()) {
+                throw IOException("episode API returned empty body")
+            }
+            return body
         }
     }
 
