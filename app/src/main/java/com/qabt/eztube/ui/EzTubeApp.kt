@@ -1020,6 +1020,7 @@ fun EzTubeApp() {
                         modifier = Modifier.fillMaxSize().padding(padding),
                         recent = recent,
                         favorites = favorites,
+                        movieProviders = movieProviders,
                         listState = libraryListState,
                         resolvingId = resolvingId,
                         onPlay = { entry ->
@@ -1965,26 +1966,82 @@ private fun LibrarySourceBadge(
     }
 }
 
+private fun movieLookupTitle(title: String): String =
+    title
+        .substringBefore(" · ")
+        .replace(Regex("""(?i)\s*[-–—]?\s*(?:tập|tap|episode|ep)\s*\d+\s*$"""), "")
+        .trim()
+
 @Composable
-private fun ProgressMediaRow(entry: HistoryEntry, resolving: Boolean, onClick: () -> Unit) {
+private fun LibraryThumbnail(
+    mediaId: String,
+    title: String,
+    channel: String,
+    thumbnailUrl: String?,
+    movieProviders: MovieProviderRegistry,
+    modifier: Modifier,
+    cornerRadius: Int
+) {
+    var enrichedThumbnail by remember(mediaId, thumbnailUrl) {
+        mutableStateOf<String?>(null)
+    }
+
+    LaunchedEffect(mediaId, title, channel, thumbnailUrl) {
+        if (!thumbnailUrl.isNullOrBlank() || !isMovieLibraryItem(mediaId, channel)) {
+            enrichedThumbnail = null
+            return@LaunchedEffect
+        }
+
+        val lookupTitle = movieLookupTitle(title)
+        if (lookupTitle.isBlank()) return@LaunchedEffect
+
+        enrichedThumbnail = withContext(Dispatchers.IO) {
+            runCatching {
+                movieProviders.search(lookupTitle)
+                    .firstOrNull()
+                    ?.thumbnailUrl
+            }.getOrNull()
+        }
+    }
+
+    Box(modifier) {
+        AsyncImage(
+            model = thumbnailUrl?.takeIf { it.isNotBlank() } ?: enrichedThumbnail,
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize()
+                .clip(RoundedCornerShape(cornerRadius.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentScale = ContentScale.Crop
+        )
+        LibrarySourceBadge(
+            mediaId = mediaId,
+            channel = channel,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp)
+        )
+    }
+}
+
+@Composable
+private fun ProgressMediaRow(
+    entry: HistoryEntry,
+    movieProviders: MovieProviderRegistry,
+    resolving: Boolean,
+    onClick: () -> Unit
+) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
             .clickable(enabled = !resolving, onClick = onClick).padding(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(54.dp)) {
-            AsyncImage(
-                entry.thumbnailUrl,
-                null,
-                Modifier.fillMaxSize().clip(RoundedCornerShape(9.dp)),
-                contentScale = ContentScale.Crop
-            )
-            LibrarySourceBadge(
-                mediaId = entry.mediaId,
-                channel = entry.channel,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp)
-            )
-        }
+        LibraryThumbnail(
+            mediaId = entry.mediaId,
+            title = entry.title,
+            channel = entry.channel,
+            thumbnailUrl = entry.thumbnailUrl,
+            movieProviders = movieProviders,
+            modifier = Modifier.size(54.dp),
+            cornerRadius = 9
+        )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
@@ -2004,6 +2061,7 @@ private fun LibraryScreen(
     modifier: Modifier,
     recent: List<HistoryEntry>,
     favorites: List<FavoriteEntry>,
+    movieProviders: MovieProviderRegistry,
     listState: androidx.compose.foundation.lazy.LazyListState,
     resolvingId: String?,
     onPlay: (HistoryEntry) -> Unit,
@@ -2056,19 +2114,15 @@ private fun LibraryScreen(
                         .clickable(enabled = resolvingId == null) { onPlayFavorite(entry) }.padding(7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(Modifier.size(52.dp)) {
-                        AsyncImage(
-                            entry.thumbnailUrl,
-                            null,
-                            Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
-                            contentScale = ContentScale.Crop
-                        )
-                        LibrarySourceBadge(
-                            mediaId = entry.mediaId,
-                            channel = entry.channel,
-                            modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp)
-                        )
-                    }
+                    LibraryThumbnail(
+                        mediaId = entry.mediaId,
+                        title = entry.title,
+                        channel = entry.channel,
+                        thumbnailUrl = entry.thumbnailUrl,
+                        movieProviders = movieProviders,
+                        modifier = Modifier.size(52.dp),
+                        cornerRadius = 8
+                    )
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -2098,7 +2152,11 @@ private fun LibraryScreen(
             item { Text("Nothing played yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
         } else {
             items(if (showAllRecent) recent else recent.take(3), key = { "recent-" + it.mediaId }) { entry ->
-                ProgressMediaRow(entry = entry, resolving = resolvingId == entry.mediaId) { onPlay(entry) }
+                ProgressMediaRow(
+                    entry = entry,
+                    movieProviders = movieProviders,
+                    resolving = resolvingId == entry.mediaId
+                ) { onPlay(entry) }
             }
         }
 
@@ -2126,21 +2184,15 @@ private fun LibraryScreen(
                     .clickable(enabled = resolvingId == null) { onPlay(entry) }.padding(7.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(Modifier.size(58.dp)) {
-                    AsyncImage(
-                        entry.thumbnailUrl,
-                        null,
-                        Modifier.fillMaxSize()
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        contentScale = ContentScale.Crop
-                    )
-                    LibrarySourceBadge(
-                        mediaId = entry.mediaId,
-                        channel = entry.channel,
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp)
-                    )
-                }
+                LibraryThumbnail(
+                    mediaId = entry.mediaId,
+                    title = entry.title,
+                    channel = entry.channel,
+                    thumbnailUrl = entry.thumbnailUrl,
+                    movieProviders = movieProviders,
+                    modifier = Modifier.size(58.dp),
+                    cornerRadius = 9
+                )
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(entry.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
