@@ -23,55 +23,107 @@ class PhimApiMovieProvider(
         .build()
 
     override fun search(query: String): List<MovieCatalogItem> {
-        val normalized = query.trim().replace(Regex("""\\s+"""), " ")
+        val normalized = query.trim().replace(Regex("""\s+"""), " ")
         if (normalized.isBlank()) return emptyList()
 
-        val direct = searchOnce(normalized)
-        if (direct.isNotEmpty()) return direct
-
-        // phimapi can be strict for multi-word Vietnamese titles. When the exact
-        // query misses, search a small set of meaningful words and rank locally.
-        // This keeps the fast/direct path unchanged while making partial titles useful.
         val queryKey = normalizeSearchText(normalized)
         val queryTokens = queryKey.split(' ').filter { it.length >= 2 }.distinct()
         if (queryTokens.isEmpty()) return emptyList()
 
+        val direct = runCatching { searchOnce(normalized) }.getOrDefault(emptyList())
+        val rankedDirect = rankCandidates(queryKey, queryTokens, direct)
+
+        // Do not trust phimapi ordering for partial titles. If direct search already
+        // has a strong locally-matched result, return the filtered/ranked list.
+        if (rankedDirect.isNotEmpty()) return rankedDirect
+
+        // When a title contains a typo or an extra word, searching single words is
+        // too noisy. Retry with meaningful title phrases, then rank against the
+        // complete user query. Example:
+        // "trúng số độc đắc tôi phải đi" -> prefix "trúng số độc đắc".
+        val surfaceTokens = normalized.split(' ').filter { it.isNotBlank() }
         val fallbackQueries = buildList {
             val accentless = stripVietnamese(normalized)
             if (!accentless.equals(normalized, ignoreCase = true)) add(accentless)
 
+            if (surfaceTokens.size >= 4) add(surfaceTokens.take(4).joinToString(" "))
+            if (surfaceTokens.size >= 3) add(surfaceTokens.take(3).joinToString(" "))
+            if (surfaceTokens.size >= 5) add(surfaceTokens.takeLast(4).joinToString(" "))
+            if (surfaceTokens.size >= 4) add(surfaceTokens.dropLast(1).joinToString(" "))
+
+            // A few long tokens remain useful as a last resort, but phrase retries
+            // are intentionally attempted first.
             queryTokens
-                .filter { it.length >= 3 }
+                .filter { it.length >= 4 }
                 .sortedByDescending { it.length }
-                .take(4)
+                .take(2)
                 .forEach(::add)
-        }.distinctBy { it.lowercase() }
+        }
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !it.equals(normalized, ignoreCase = true) }
+            .distinctBy { it.lowercase() }
 
-        val candidates = fallbackQueries
-            .flatMap { fallback -> runCatching { searchOnce(fallback) }.getOrDefault(emptyList()) }
-            .distinctBy { it.providerId + ":" + it.slug }
+        val candidates = buildList {
+            addAll(direct)
+            fallbackQueries.forEach { fallback ->
+                addAll(runCatching { searchOnce(fallback) }.getOrDefault(emptyList()))
+            }
+        }.distinctBy { it.providerId + ":" + it.slug }
 
+        return rankCandidates(queryKey, queryTokens, candidates)
+    }
+
+    private fun rankCandidates(
+        queryKey: String,
+        queryTokens: List<String>,
+        candidates: List<MovieCatalogItem>
+    ): List<MovieCatalogItem> {
         if (candidates.isEmpty()) return emptyList()
 
-        val minimumMatches = if (queryTokens.size >= 3) 2 else 1
+        val minimumMatches = when (queryTokens.size) {
+            1 -> 1
+            2, 3 -> 2
+            else -> maxOf(2, (queryTokens.size + 1) / 2)
+        }
+
         return candidates
             .map { item ->
-                val haystack = normalizeSearchText(
+                val itemKey = normalizeSearchText(
                     item.title + " " + item.originalTitle.orEmpty()
                 )
+                val itemTokens = itemKey.split(' ').filter { it.isNotBlank() }
                 val matched = queryTokens.count { token ->
-                    haystack.split(' ').any { word ->
-                        word == token || word.startsWith(token) || token.startsWith(word)
+                    itemTokens.any { word ->
+                        word == token ||
+                            (token.length >= 3 && word.startsWith(token)) ||
+                            (word.length >= 3 && token.startsWith(word))
                     }
                 }
                 val phraseBonus = when {
-                    haystack.contains(queryKey) -> 100
-                    queryKey.contains(normalizeSearchText(item.title)) -> 80
+                    itemKey == queryKey -> 180
+                    itemKey.startsWith(queryKey) || queryKey.startsWith(itemKey) -> 120
+                    itemKey.contains(queryKey) -> 100
                     else -> 0
                 }
-                item to (matched * 20 + phraseBonus)
+                val coverageBonus =
+                    ((matched.toFloat() / queryTokens.size.toFloat()) * 60f).toInt()
+
+                item to (matched * 30 + coverageBonus + phraseBonus)
             }
-            .filter { (_, score) -> score >= minimumMatches * 20 }
+            .filter { (item, _) ->
+                val itemKey = normalizeSearchText(
+                    item.title + " " + item.originalTitle.orEmpty()
+                )
+                val itemTokens = itemKey.split(' ').filter { it.isNotBlank() }
+                val matched = queryTokens.count { token ->
+                    itemTokens.any { word ->
+                        word == token ||
+                            (token.length >= 3 && word.startsWith(token)) ||
+                            (word.length >= 3 && token.startsWith(word))
+                    }
+                }
+                matched >= minimumMatches
+            }
             .sortedWith(
                 compareByDescending<Pair<MovieCatalogItem, Int>> { it.second }
                     .thenByDescending { it.first.year ?: 0 }
@@ -312,7 +364,7 @@ class PhimApiMovieProvider(
 
         if (raw.isBlank()) return null
 
-        Regex("""(?i)(?:tập|tap)\\s*(\\d+)""")
+        Regex("""(?i)(?:tập|tap)\s*(\d+)""")
             .find(raw)
             ?.groupValues
             ?.getOrNull(1)
@@ -320,7 +372,7 @@ class PhimApiMovieProvider(
             ?.takeIf { it > 0 }
             ?.let { return "$it tập" }
 
-        Regex("""(\\d+)\\s*/\\s*(\\d+)""")
+        Regex("""(\d+)\s*/\s*(\d+)""")
             .find(raw)
             ?.groupValues
             ?.getOrNull(1)
@@ -328,7 +380,7 @@ class PhimApiMovieProvider(
             ?.takeIf { it > 0 }
             ?.let { return "$it tập" }
 
-        Regex("""\\d+""")
+        Regex("""\d+""")
             .find(raw)
             ?.value
             ?.toIntOrNull()
@@ -343,12 +395,12 @@ class PhimApiMovieProvider(
             .lowercase()
             .replace(Regex("""[^a-z0-9]+"""), " ")
             .trim()
-            .replace(Regex("""\\s+"""), " ")
+            .replace(Regex("""\s+"""), " ")
 
     private fun stripVietnamese(value: String): String {
         val normalized = java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD)
         return normalized
-            .replace(Regex("""\\p{M}+"""), "")
+            .replace(Regex("""\p{M}+"""), "")
             .replace('đ', 'd')
             .replace('Đ', 'D')
     }
