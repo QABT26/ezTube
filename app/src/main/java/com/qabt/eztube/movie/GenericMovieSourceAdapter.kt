@@ -58,8 +58,8 @@ class GenericMovieSourceAdapter(
 
         return loadEpisodes(
             movieId = movieId,
-            preferredBaseUrl = preferredBaseUrl,
-            preferredReferer = page?.url
+            preferredBaseUrl = preferredBaseUrl ?: provider.baseUrls.firstOrNull(),
+            preferredReferer = page?.url ?: provider.baseUrls.firstOrNull()?.trimEnd('/')?.plus("/")
         )
             .preferredHlsEpisodes()
             .map { episode ->
