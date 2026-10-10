@@ -111,6 +111,9 @@ class PhimApiMovieProvider(
                     serverIndex = serverIndex,
                     episodeIndex = episodeIndex,
                     serverName = serverName,
+                    episodeSlug = episode.getString("slug").orEmpty()
+                        .ifBlank { episode.getString("name").orEmpty() }
+                        .ifBlank { "episode-${episodeIndex + 1}" },
                     episodeName = episode.getString("name").orEmpty()
                         .ifBlank { "Tập ${episodeIndex + 1}" },
                     thumbnailUrl = catalog.thumbnailUrl,
@@ -130,19 +133,36 @@ class PhimApiMovieProvider(
             throw IOException("Unsupported movie media id")
         }
         val slug = parts[2]
-        val serverIndex = parts[3].toIntOrNull()
-            ?: throw IOException("Invalid movie server index")
-        val episodeIndex = parts[4].toIntOrNull()
-            ?: throw IOException("Invalid movie episode index")
+        val serverName = decodeStablePart(parts[3])
+        val episodeKey = decodeStablePart(parts[4])
 
         val root = getJson(
             "https://phimapi.com/phim/" +
                 java.net.URLEncoder.encode(slug, "UTF-8")
         )
-        val server = root.getArray("episodes")?.getObject(serverIndex)
-            ?: throw IOException("Movie server no longer exists")
-        val item = server.getArray("server_data")?.getObject(episodeIndex)
-            ?: throw IOException("Movie episode no longer exists")
+        val episodes = root.getArray("episodes")
+            ?: throw IOException("Movie detail has no episode servers")
+
+        var resolvedItem: JsonObject? = null
+        for (serverIndex in 0 until episodes.size) {
+            val server = episodes.getObject(serverIndex) ?: continue
+            if (!server.getString("server_name").orEmpty().equals(serverName, ignoreCase = true)) {
+                continue
+            }
+            val serverData = server.getArray("server_data") ?: continue
+            for (episodeIndex in 0 until serverData.size) {
+                val candidate = serverData.getObject(episodeIndex) ?: continue
+                val candidateKey = candidate.getString("slug").orEmpty()
+                    .ifBlank { candidate.getString("name").orEmpty() }
+                if (candidateKey == episodeKey) {
+                    resolvedItem = candidate
+                    break
+                }
+            }
+            if (resolvedItem != null) break
+        }
+
+        val item = resolvedItem ?: throw IOException("Movie episode no longer exists")
         val hls = item.getString("link_m3u8").orEmpty().trim()
         if (hls.isBlank()) throw IOException("Movie episode has no HLS stream")
 
@@ -152,6 +172,14 @@ class PhimApiMovieProvider(
             subtitles = parseSubtitles(item)
         )
     }
+
+    private fun decodeStablePart(value: String): String =
+        runCatching {
+            String(
+                java.util.Base64.getUrlDecoder().decode(value),
+                Charsets.UTF_8
+            )
+        }.getOrElse { throw IOException("Invalid stable movie id") }
 
     private fun parseSubtitles(item: JsonObject): List<MovieSubtitle> {
         val raw = item.get("subtitles") ?: item.get("subtitle") ?: item.get("tracks")
