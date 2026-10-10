@@ -735,6 +735,7 @@ fun EzTubeApp() {
                     loading = movieDetailLoading,
                     error = movieDetailError,
                     resolvingId = resolvingId,
+                    nowPlayingId = nowPlaying?.id,
                     onBack = {
                         movieDetail = null
                         movieDetailError = null
@@ -1424,6 +1425,7 @@ private fun MovieDetailScreen(
     loading: Boolean,
     error: String?,
     resolvingId: String?,
+    nowPlayingId: String?,
     onBack: () -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit
 ) {
@@ -1525,13 +1527,43 @@ private fun MovieDetailScreen(
                             refs.map { it.toMediaSummary() },
                             key = { it.id }
                         ) { media ->
-                            SearchResult(
-                                media = media,
-                                resolving = resolvingId == media.id,
-                                enabled = resolvingId == null,
-                                onChannel = {},
-                                onPlay = { onPlay(media, queueItems) }
-                            )
+                            val isCurrent = media.id == nowPlayingId
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (isCurrent) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surface
+                                }
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isCurrent) {
+                                        Icon(
+                                            Icons.Outlined.GraphicEq,
+                                            "Now playing",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier
+                                                .padding(start = 8.dp)
+                                                .size(20.dp)
+                                        )
+                                    }
+                                    Box(Modifier.weight(1f)) {
+                                        SearchResult(
+                                            media = media,
+                                            resolving = resolvingId == media.id,
+                                            enabled = resolvingId == null,
+                                            onChannel = {},
+                                            onPlay = { onPlay(media, queueItems) }
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
