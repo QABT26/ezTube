@@ -464,6 +464,7 @@ fun EzTubeApp() {
     LaunchedEffect(homeRefreshToken, trendingTopic, trendingLanguage) {
         trendingLoading = true
         var loaded: List<MediaSummary> = emptyList()
+
         for (attempt in 0 until 3) {
             loaded = runCatching {
                 withContext(Dispatchers.IO) {
@@ -474,7 +475,38 @@ fun EzTubeApp() {
             if (loaded.isNotEmpty()) break
             if (attempt < 2) delay((attempt + 1) * 750L)
         }
-        if (loaded.isNotEmpty()) trending = loaded
+
+        if (loaded.isEmpty()) {
+            val languagePrefix = when (trendingLanguage) {
+                "Vietnamese" -> "Việt Nam "
+                "English" -> "English "
+                "Korean" -> "Korean "
+                "Japanese" -> "Japanese "
+                else -> ""
+            }
+            val topicQuery = when (trendingTopic) {
+                "Podcasts" -> "podcast"
+                "Gaming" -> "gaming"
+                "Movies" -> "movie trailer"
+                "Live" -> "live"
+                else -> "music"
+            }
+
+            val fallbackQueries = listOf(
+                "$languagePrefix$topicQuery".trim(),
+                topicQuery,
+                if (trendingTopic == "Music") "nhạc" else topicQuery
+            ).distinct()
+
+            for (query in fallbackQueries) {
+                loaded = runCatching {
+                    withContext(Dispatchers.IO) { source.search(query) }
+                }.getOrDefault(emptyList())
+                if (loaded.isNotEmpty()) break
+            }
+        }
+
+        trending = loaded
         trendingLoading = false
     }
 
