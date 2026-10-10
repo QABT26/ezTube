@@ -1345,7 +1345,7 @@ private fun MovieDetailScreen(
                 Text(error, color = MaterialTheme.colorScheme.error)
             }
             detail != null -> {
-                val items = remember(detail) {
+                val queueItems = remember(detail) {
                     detail.episodes.map { it.toMediaSummary() }
                 }
                 LazyColumn(
@@ -1395,7 +1395,7 @@ private fun MovieDetailScreen(
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 Text(
-                                    "${items.size} playable items",
+                                    "${queueItems.size} playable items",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
@@ -1422,7 +1422,7 @@ private fun MovieDetailScreen(
                                 resolving = resolvingId == media.id,
                                 enabled = resolvingId == null,
                                 onChannel = {},
-                                onPlay = { onPlay(media, items) }
+                                onPlay = { onPlay(media, queueItems) }
                             )
                         }
                     }
