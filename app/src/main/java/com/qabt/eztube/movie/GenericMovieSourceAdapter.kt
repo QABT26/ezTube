@@ -45,9 +45,17 @@ class GenericMovieSourceAdapter(
             ?.groupValues
             ?.getOrNull(1)
 
+        val stableSlug = if (directId == null) extractStableMovieSlug(normalized) else null
+        if (!stableSlug.isNullOrBlank()) {
+            val apiResult = runCatching { loadFromPhimApi(stableSlug) }.getOrNull()
+            if (!apiResult.isNullOrEmpty()) return apiResult
+        }
+
         val page = if (directId == null) fetchMoviePage(normalized) else null
         val movieId = directId ?: extractMovieId(page?.html.orEmpty())
-            ?: throw IOException("Could not determine movie_id from provider page")
+            ?: throw IOException(
+                "Movie was not found through phimapi and provider page has no movie_id"
+            )
         val title = page?.let { extractTitle(it.html) }
             ?.takeIf { it.isNotBlank() }
             ?: provider.displayName + " " + movieId
@@ -68,6 +76,90 @@ class GenericMovieSourceAdapter(
                     providerName = provider.displayName
                 )
             }
+    }
+
+    internal fun extractStableMovieSlug(input: String): String? {
+        val url = input.trim().toHttpUrlOrNull() ?: return null
+        val marker = "/phim/"
+        val path = url.encodedPath
+        val index = path.indexOf(marker, ignoreCase = true)
+        if (index < 0) return null
+        val raw = path.substring(index + marker.length)
+            .substringBefore('/')
+            .trim()
+        if (raw.isBlank()) return null
+
+        return raw.replace(
+            Regex("""-\d{6,}$"""),
+            ""
+        ).takeIf { it.isNotBlank() }
+    }
+
+    private fun loadFromPhimApi(slug: String): List<MediaSummary> {
+        val request = Request.Builder()
+            .url("https://phimapi.com/phim/" + java.net.URLEncoder.encode(slug, "UTF-8"))
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json")
+            .get()
+            .build()
+
+        http.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("phimapi HTTP ${response.code}")
+            }
+            if (body.isBlank()) throw IOException("phimapi returned empty body")
+
+            val root = JsonParser.`object`().from(body)
+            val status = root.get("status")
+            val statusOk = when (status) {
+                is Boolean -> status
+                is String -> status.equals("success", ignoreCase = true) ||
+                    status.equals("true", ignoreCase = true)
+                else -> true
+            }
+            if (!statusOk) throw IOException("phimapi returned unsuccessful status")
+
+            val movie = root.getObject("movie")
+            val movieTitle = movie?.getString("name")
+                ?.takeIf { it.isNotBlank() }
+                ?: slug.replace('-', ' ')
+
+            val episodes = root.getArray("episodes")
+                ?: throw IOException("phimapi response has no episodes")
+
+            val results = mutableListOf<MediaSummary>()
+            for (serverIndex in 0 until episodes.size) {
+                val server = episodes.getObject(serverIndex) ?: continue
+                val serverName = server.getString("server_name")
+                    .orEmpty()
+                    .ifBlank { "Movie" }
+                val serverData = server.getArray("server_data") ?: continue
+
+                for (episodeIndex in 0 until serverData.size) {
+                    val episode = serverData.getObject(episodeIndex) ?: continue
+                    val hls = episode.getString("link_m3u8")
+                        .orEmpty()
+                        .trim()
+                    if (hls.isBlank()) continue
+                    val episodeName = episode.getString("name")
+                        .orEmpty()
+                        .ifBlank { "Episode ${episodeIndex + 1}" }
+
+                    results += MediaSummary(
+                        id = hls,
+                        title = "$movieTitle · $episodeName",
+                        channel = "${provider.displayName} · $serverName",
+                        thumbnailUrl = null
+                    )
+                }
+            }
+
+            if (results.isEmpty()) {
+                throw IOException("phimapi returned no playable HLS episodes")
+            }
+            return results
+        }
     }
 
     fun loadEpisodes(
