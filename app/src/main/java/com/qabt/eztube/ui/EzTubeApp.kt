@@ -749,94 +749,114 @@ fun EzTubeApp() {
             }
         } else if (showPlayer && nowPlaying != null) {
             FullPlayer(
-                media = requireNotNull(nowPlaying), controller = controller, isPlaying = isPlaying, quality = quality,
-                isMovie = requireNotNull(nowPlaying).id.startsWith("movie:"),
-                subtitleOptions = subtitleOptions,
-                selectedSubtitleLabel = selectedSubtitleLabel,
-                onSubtitle = { selectMovieSubtitle(it) },
-                videoQuality = videoQuality,
-                actualVideoHeight = actualVideoHeight,
-                videoMode = videoMode,
-                onVideoMode = { enabled ->
-                    if (videoMode != enabled) {
-                        videoMode = enabled
-                        playbackPrefs.saveVideoMode(enabled)
-                        // The service owns stream replacement so a mode switch cannot race
-                        // the UI resolver or lose queue identity/position.
-                        reloadCurrentForModeChange()
-                    }
-                },
-                onQuality = { quality = it; playbackPrefs.saveQuality(it) },
-                onVideoQuality = {
-                    if (videoQuality != it) {
-                        videoQuality = it
-                        playbackPrefs.saveVideoQuality(it)
-                        if (videoMode) {
-                            applyVideoQualityWithoutGuessingEngine()
+                state = FullPlayerState(
+                    media = requireNotNull(nowPlaying),
+                    controller = controller,
+                    isPlaying = isPlaying,
+                    quality = quality,
+                    isMovie = requireNotNull(nowPlaying).id.startsWith("movie:"),
+                    subtitleOptions = subtitleOptions,
+                    selectedSubtitleLabel = selectedSubtitleLabel,
+                    videoQuality = videoQuality,
+                    actualVideoHeight = actualVideoHeight,
+                    videoMode = videoMode,
+                    playbackSpeed = playbackSpeed,
+                    compatibilityFallback = compatibilityFallback,
+                    isBuffering = isBuffering,
+                    playerError = playerError,
+                    sleepMinutes = sleepMinutes,
+                    autoplay = autoplay,
+                    nextMode = nextMode,
+                    repeatMode = repeatMode,
+                    queue = queue,
+                    queueIndex = queueIndex,
+                    hasPrevious = queueIndex > 0 || (repeatMode == RepeatMode.ALL && queue.size > 1),
+                    hasNext = (queueIndex >= 0 && queueIndex < queue.lastIndex) ||
+                        (repeatMode == RepeatMode.ALL && queue.size > 1),
+                    isFavorite = favorites.any { it.mediaId == nowPlaying?.id }
+                ),
+                actions = FullPlayerActions(
+                    onSubtitle = { selectMovieSubtitle(it) },
+                    onVideoMode = { enabled ->
+                        if (videoMode != enabled) {
+                            videoMode = enabled
+                            playbackPrefs.saveVideoMode(enabled)
+                            reloadCurrentForModeChange()
                         }
-                    }
-                },
-                playbackSpeed = playbackSpeed,
-                onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
-                compatibilityFallback = compatibilityFallback, isBuffering = isBuffering, playerError = playerError,
-                onRetry = { playerError = null; nowPlaying?.let { playMedia(it, controller?.currentPosition ?: 0L) } },
-                sleepMinutes = sleepMinutes, onSleep = { sleepMinutes = it }, autoplay = autoplay,
-                onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it); notifyQueueChanged() }, nextMode = nextMode,
-                onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) }, repeatMode = repeatMode,
-                onRepeatMode = { repeatMode = it; playbackPrefs.saveRepeatMode(it.ordinal) },
-                queue = queue, queueIndex = queueIndex,
-                hasPrevious = queueIndex > 0 || (repeatMode == RepeatMode.ALL && queue.size > 1),
-                hasNext = (queueIndex >= 0 && queueIndex < queue.lastIndex) ||
-                    (repeatMode == RepeatMode.ALL && queue.size > 1),
-                onQueueItem = { index ->
-                    if (index in queue.indices && index != queueIndex) {
-                        queueIndex = index
-                        playbackPrefs.saveQueue(queue, queueIndex)
-                        playMedia(queue[index])
-                    }
-                },
-                onQueueRemove = { index ->
-                    if (index in queue.indices && index != queueIndex) {
-                        val updated = queue.toMutableList().also { it.removeAt(index) }
-                        queueIndex = if (index < queueIndex) queueIndex - 1 else queueIndex
-                        queue = updated
-                        playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
-                        notifyQueueChanged()
-                    }
-                },
-                onQueueMove = { from, to ->
-                    if (from in queue.indices && to in queue.indices && from != to) {
-                        val updated = queue.toMutableList()
-                        val moved = updated.removeAt(from)
-                        updated.add(to, moved)
-                        queueIndex = when {
-                            queueIndex == from -> to
-                            from < queueIndex && to >= queueIndex -> queueIndex - 1
-                            from > queueIndex && to <= queueIndex -> queueIndex + 1
-                            else -> queueIndex
+                    },
+                    onQuality = { quality = it; playbackPrefs.saveQuality(it) },
+                    onVideoQuality = {
+                        if (videoQuality != it) {
+                            videoQuality = it
+                            playbackPrefs.saveVideoQuality(it)
+                            if (videoMode) {
+                                applyVideoQualityWithoutGuessingEngine()
+                            }
                         }
-                        queue = updated
-                        playbackPrefs.saveQueue(queue, queueIndex)
-                        notifyQueueChanged()
-                    }
-                },
-                onQueueClearUpcoming = {
-                    if (queueIndex in queue.indices && queueIndex < queue.lastIndex) {
-                        queue = queue.take(queueIndex + 1)
-                        playbackPrefs.saveQueue(queue, queueIndex)
-                        notifyQueueChanged()
-                    }
-                },
-                onPrevious = {
-                    controller?.seekToPrevious()
-                },
-                onNext = {
-                    controller?.seekToNext()
-                },
-                isFavorite = favorites.any { it.mediaId == nowPlaying?.id }, onChannel = { openChannel(nowPlaying?.channelUrl) },
-                onFavorite = { nowPlaying?.let { media -> scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } } },
-                onToggle = { if (controller?.currentMediaItem == null) nowPlaying?.let { playMedia(it, resumePositionMs) } else togglePlayback() },
-                onClose = { showPlayer = false }
+                    },
+                    onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
+                    onRetry = { playerError = null; nowPlaying?.let { playMedia(it, controller?.currentPosition ?: 0L) } },
+                    onSleep = { sleepMinutes = it },
+                    onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it); notifyQueueChanged() },
+                    onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) },
+                    onRepeatMode = { repeatMode = it; playbackPrefs.saveRepeatMode(it.ordinal) },
+                    onQueueItem = { index ->
+                        if (index in queue.indices && index != queueIndex) {
+                            queueIndex = index
+                            playbackPrefs.saveQueue(queue, queueIndex)
+                            playMedia(queue[index])
+                        }
+                    },
+                    onQueueRemove = { index ->
+                        if (index in queue.indices && index != queueIndex) {
+                            val updated = queue.toMutableList().also { it.removeAt(index) }
+                            queueIndex = if (index < queueIndex) queueIndex - 1 else queueIndex
+                            queue = updated
+                            playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
+                            notifyQueueChanged()
+                        }
+                    },
+                    onQueueMove = { from, to ->
+                        if (from in queue.indices && to in queue.indices && from != to) {
+                            val updated = queue.toMutableList()
+                            val moved = updated.removeAt(from)
+                            updated.add(to, moved)
+                            queueIndex = when {
+                                queueIndex == from -> to
+                                from < queueIndex && to >= queueIndex -> queueIndex - 1
+                                from > queueIndex && to <= queueIndex -> queueIndex + 1
+                                else -> queueIndex
+                            }
+                            queue = updated
+                            playbackPrefs.saveQueue(queue, queueIndex)
+                            notifyQueueChanged()
+                        }
+                    },
+                    onQueueClearUpcoming = {
+                        if (queueIndex in queue.indices && queueIndex < queue.lastIndex) {
+                            queue = queue.take(queueIndex + 1)
+                            playbackPrefs.saveQueue(queue, queueIndex)
+                            notifyQueueChanged()
+                        }
+                    },
+                    onPrevious = { controller?.seekToPrevious() },
+                    onNext = { controller?.seekToNext() },
+                    onChannel = { openChannel(nowPlaying?.channelUrl) },
+                    onFavorite = {
+                        nowPlaying?.let { media ->
+                            scope.launch(Dispatchers.IO) {
+                                if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id)
+                                else favoritesRepo.add(media)
+                            }
+                        }
+                    },
+                    onToggle = {
+                        if (controller?.currentMediaItem == null) {
+                            nowPlaying?.let { playMedia(it, resumePositionMs) }
+                        } else togglePlayback()
+                    },
+                    onClose = { showPlayer = false }
+                )
             )
         } else if (showSettings) {
             SettingsScreen(
@@ -2178,52 +2198,105 @@ private fun mediaMeta(media: MediaSummary, includeDuration: Boolean = true): Str
         if (includeDuration && media.durationSeconds >= 0) add(formatDuration(media.durationSeconds))
     }.joinToString(" · ")
 
+private data class FullPlayerState(
+    val media: MediaSummary,
+    val controller: MediaController?,
+    val isPlaying: Boolean,
+    val quality: AudioQuality,
+    val isMovie: Boolean,
+    val subtitleOptions: List<SubtitleOption>,
+    val selectedSubtitleLabel: String?,
+    val videoQuality: VideoQuality,
+    val actualVideoHeight: Int,
+    val videoMode: Boolean,
+    val playbackSpeed: Float,
+    val compatibilityFallback: Boolean,
+    val isBuffering: Boolean,
+    val playerError: String?,
+    val sleepMinutes: Int?,
+    val autoplay: Boolean,
+    val nextMode: NextMode,
+    val repeatMode: RepeatMode,
+    val queue: List<MediaSummary>,
+    val queueIndex: Int,
+    val hasPrevious: Boolean,
+    val hasNext: Boolean,
+    val isFavorite: Boolean
+)
+
+private class FullPlayerActions(
+    val onSubtitle: (SubtitleOption?) -> Unit,
+    val onVideoMode: (Boolean) -> Unit,
+    val onQuality: (AudioQuality) -> Unit,
+    val onVideoQuality: (VideoQuality) -> Unit,
+    val onSpeed: (Float) -> Unit,
+    val onRetry: () -> Unit,
+    val onSleep: (Int?) -> Unit,
+    val onAutoplay: (Boolean) -> Unit,
+    val onNextMode: (NextMode) -> Unit,
+    val onRepeatMode: (RepeatMode) -> Unit,
+    val onQueueItem: (Int) -> Unit,
+    val onQueueRemove: (Int) -> Unit,
+    val onQueueMove: (Int, Int) -> Unit,
+    val onQueueClearUpcoming: () -> Unit,
+    val onPrevious: () -> Unit,
+    val onNext: () -> Unit,
+    val onChannel: () -> Unit,
+    val onFavorite: () -> Unit,
+    val onToggle: () -> Unit,
+    val onClose: () -> Unit
+)
+
 @Composable
 private fun FullPlayer(
-    media: MediaSummary,
-    controller: MediaController?,
-    isPlaying: Boolean,
-    quality: AudioQuality,
-    isMovie: Boolean,
-    subtitleOptions: List<SubtitleOption>,
-    selectedSubtitleLabel: String?,
-    onSubtitle: (SubtitleOption?) -> Unit,
-    videoQuality: VideoQuality,
-    actualVideoHeight: Int,
-    videoMode: Boolean,
-    onVideoMode: (Boolean) -> Unit,
-    onQuality: (AudioQuality) -> Unit,
-    onVideoQuality: (VideoQuality) -> Unit,
-    playbackSpeed: Float,
-    onSpeed: (Float) -> Unit,
-    compatibilityFallback: Boolean,
-    isBuffering: Boolean,
-    playerError: String?,
-    onRetry: () -> Unit,
-    sleepMinutes: Int?,
-    onSleep: (Int?) -> Unit,
-    autoplay: Boolean,
-    onAutoplay: (Boolean) -> Unit,
-    nextMode: NextMode,
-    onNextMode: (NextMode) -> Unit,
-    repeatMode: RepeatMode,
-    onRepeatMode: (RepeatMode) -> Unit,
-    queue: List<MediaSummary>,
-    queueIndex: Int,
-    onQueueItem: (Int) -> Unit,
-    onQueueRemove: (Int) -> Unit,
-    onQueueMove: (Int, Int) -> Unit,
-    onQueueClearUpcoming: () -> Unit,
-    hasPrevious: Boolean,
-    hasNext: Boolean,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-    isFavorite: Boolean,
-    onChannel: () -> Unit,
-    onFavorite: () -> Unit,
-    onToggle: () -> Unit,
-    onClose: () -> Unit
+    state: FullPlayerState,
+    actions: FullPlayerActions
 ) {
+    val media = state.media
+    val controller = state.controller
+    val isPlaying = state.isPlaying
+    val quality = state.quality
+    val isMovie = state.isMovie
+    val subtitleOptions = state.subtitleOptions
+    val selectedSubtitleLabel = state.selectedSubtitleLabel
+    val videoQuality = state.videoQuality
+    val actualVideoHeight = state.actualVideoHeight
+    val videoMode = state.videoMode
+    val playbackSpeed = state.playbackSpeed
+    val compatibilityFallback = state.compatibilityFallback
+    val isBuffering = state.isBuffering
+    val playerError = state.playerError
+    val sleepMinutes = state.sleepMinutes
+    val autoplay = state.autoplay
+    val nextMode = state.nextMode
+    val repeatMode = state.repeatMode
+    val queue = state.queue
+    val queueIndex = state.queueIndex
+    val hasPrevious = state.hasPrevious
+    val hasNext = state.hasNext
+    val isFavorite = state.isFavorite
+
+    val onSubtitle = actions.onSubtitle
+    val onVideoMode = actions.onVideoMode
+    val onQuality = actions.onQuality
+    val onVideoQuality = actions.onVideoQuality
+    val onSpeed = actions.onSpeed
+    val onRetry = actions.onRetry
+    val onSleep = actions.onSleep
+    val onAutoplay = actions.onAutoplay
+    val onNextMode = actions.onNextMode
+    val onRepeatMode = actions.onRepeatMode
+    val onQueueItem = actions.onQueueItem
+    val onQueueRemove = actions.onQueueRemove
+    val onQueueMove = actions.onQueueMove
+    val onQueueClearUpcoming = actions.onQueueClearUpcoming
+    val onPrevious = actions.onPrevious
+    val onNext = actions.onNext
+    val onChannel = actions.onChannel
+    val onFavorite = actions.onFavorite
+    val onToggle = actions.onToggle
+    val onClose = actions.onClose
+
     val context = LocalContext.current
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
