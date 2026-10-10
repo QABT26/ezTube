@@ -1897,6 +1897,34 @@ private fun PlaybackProgress(progress: Float) {
     }
 }
 
+private fun isMovieMediaId(mediaId: String): Boolean =
+    mediaId.startsWith("movie:") || mediaId.startsWith("movie-title:")
+
+@Composable
+private fun LibrarySourceBadge(
+    mediaId: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.size(20.dp),
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.72f)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = if (isMovieMediaId(mediaId)) {
+                    Icons.Outlined.LocalMovies
+                } else {
+                    Icons.Outlined.PlayCircle
+                },
+                contentDescription = if (isMovieMediaId(mediaId)) "Movie" else "YouTube",
+                modifier = Modifier.size(12.dp),
+                tint = androidx.compose.ui.graphics.Color.White
+            )
+        }
+    }
+}
+
 @Composable
 private fun ProgressMediaRow(entry: HistoryEntry, resolving: Boolean, onClick: () -> Unit) {
     Row(
@@ -1904,8 +1932,18 @@ private fun ProgressMediaRow(entry: HistoryEntry, resolving: Boolean, onClick: (
             .clickable(enabled = !resolving, onClick = onClick).padding(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        AsyncImage(entry.thumbnailUrl, null, Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)),
-            contentScale = ContentScale.Crop)
+        Box(Modifier.size(54.dp)) {
+            AsyncImage(
+                entry.thumbnailUrl,
+                null,
+                Modifier.fillMaxSize().clip(RoundedCornerShape(9.dp)),
+                contentScale = ContentScale.Crop
+            )
+            LibrarySourceBadge(
+                mediaId = entry.mediaId,
+                modifier = Modifier.align(Alignment.TopStart).padding(3.dp)
+            )
+        }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
@@ -1977,7 +2015,18 @@ private fun LibraryScreen(
                         .clickable(enabled = resolvingId == null) { onPlayFavorite(entry) }.padding(7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AsyncImage(entry.thumbnailUrl, null, Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                    Box(Modifier.size(52.dp)) {
+                        AsyncImage(
+                            entry.thumbnailUrl,
+                            null,
+                            Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                        LibrarySourceBadge(
+                            mediaId = entry.mediaId,
+                            modifier = Modifier.align(Alignment.TopStart).padding(3.dp)
+                        )
+                    }
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -2035,9 +2084,20 @@ private fun LibraryScreen(
                     .clickable(enabled = resolvingId == null) { onPlay(entry) }.padding(7.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                AsyncImage(entry.thumbnailUrl, null,
-                    Modifier.size(58.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentScale = ContentScale.Crop)
+                Box(Modifier.size(58.dp)) {
+                    AsyncImage(
+                        entry.thumbnailUrl,
+                        null,
+                        Modifier.fillMaxSize()
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentScale = ContentScale.Crop
+                    )
+                    LibrarySourceBadge(
+                        mediaId = entry.mediaId,
+                        modifier = Modifier.align(Alignment.TopStart).padding(3.dp)
+                    )
+                }
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(entry.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
