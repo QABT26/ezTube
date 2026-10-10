@@ -335,6 +335,36 @@ class NewPipeYouTubeSource : YouTubeSource {
             }
         }
 
+        // Kiosk endpoints are not stable across YouTube client changes. Never leave
+        // Home empty just because the current extractor/client lost a kiosk route.
+        val languageQuery = when (language) {
+            "Vietnamese" -> "Việt Nam"
+            "English" -> "English"
+            "Korean" -> "Korean"
+            "Japanese" -> "Japanese"
+            else -> ""
+        }
+        val topicQuery = when (topic) {
+            "Podcasts" -> "podcast"
+            "Gaming" -> "gaming"
+            "Movies" -> "movie trailer"
+            "Live" -> "live"
+            else -> "music"
+        }
+        val fallbackQueries = buildList {
+            if (languageQuery.isNotBlank()) {
+                add("$languageQuery $topicQuery trending")
+                add("$languageQuery $topicQuery popular")
+            }
+            add("$topicQuery trending")
+            add("$topicQuery popular")
+        }.distinct()
+
+        for (query in fallbackQueries) {
+            val items = runCatching { search(query) }.getOrDefault(emptyList())
+            if (items.isNotEmpty()) return items.take(20)
+        }
+
         return emptyList()
     }
 
