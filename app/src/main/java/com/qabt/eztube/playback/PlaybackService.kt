@@ -10,6 +10,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaNotification
 import com.google.common.collect.ImmutableList
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
+import com.qabt.eztube.movie.MovieProviderRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,7 +35,9 @@ class PlaybackService : MediaSessionService() {
         const val EXTRA_COMPATIBILITY_FALLBACK = "compatibility_fallback"
         const val EXTRA_VIDEO_HEIGHT = "video_height"
         const val EXTRA_PLAYBACK_ENGINE = "playback_engine"
+        const val EXTRA_IS_MOVIE = "is_movie"
         const val ENGINE_SABR = "sabr"
+        const val ENGINE_HLS = "hls"
         const val ENGINE_DIRECT = "direct"
     }
     private var player: ExoPlayer? = null
@@ -42,6 +45,7 @@ class PlaybackService : MediaSessionService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var preferences: PlaybackPreferences
     private val source by lazy { NewPipeYouTubeSource() }
+    private val movieProviders by lazy { MovieProviderRegistry.default() }
     private lateinit var queueManager: PlaybackQueueManager
 
     override fun onCreate() {
@@ -98,7 +102,14 @@ class PlaybackService : MediaSessionService() {
                 })
             }
 
-        queueManager = PlaybackQueueManager(this, requireNotNull(player), preferences, source, serviceScope)
+        queueManager = PlaybackQueueManager(
+            this,
+            requireNotNull(player),
+            preferences,
+            source,
+            movieProviders,
+            serviceScope
+        )
         // Do not resolve YouTube on service/app startup. UI restores logical media/position
         // from PlaybackPreferences; the network source is resolved only when playback starts.
 
