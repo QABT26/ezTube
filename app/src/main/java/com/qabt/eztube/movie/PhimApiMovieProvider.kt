@@ -23,12 +23,67 @@ class PhimApiMovieProvider(
         .build()
 
     override fun search(query: String): List<MovieCatalogItem> {
-        val normalized = query.trim()
+        val normalized = query.trim().replace(Regex("""\\s+"""), " ")
         if (normalized.isBlank()) return emptyList()
 
+        val direct = searchOnce(normalized)
+        if (direct.isNotEmpty()) return direct
+
+        // phimapi can be strict for multi-word Vietnamese titles. When the exact
+        // query misses, search a small set of meaningful words and rank locally.
+        // This keeps the fast/direct path unchanged while making partial titles useful.
+        val queryKey = normalizeSearchText(normalized)
+        val queryTokens = queryKey.split(' ').filter { it.length >= 2 }.distinct()
+        if (queryTokens.isEmpty()) return emptyList()
+
+        val fallbackQueries = buildList {
+            val accentless = stripVietnamese(normalized)
+            if (!accentless.equals(normalized, ignoreCase = true)) add(accentless)
+
+            queryTokens
+                .filter { it.length >= 3 }
+                .sortedByDescending { it.length }
+                .take(4)
+                .forEach(::add)
+        }.distinctBy { it.lowercase() }
+
+        val candidates = fallbackQueries
+            .flatMap { fallback -> runCatching { searchOnce(fallback) }.getOrDefault(emptyList()) }
+            .distinctBy { it.providerId + ":" + it.slug }
+
+        if (candidates.isEmpty()) return emptyList()
+
+        val minimumMatches = if (queryTokens.size >= 3) 2 else 1
+        return candidates
+            .map { item ->
+                val haystack = normalizeSearchText(
+                    item.title + " " + item.originalTitle.orEmpty()
+                )
+                val matched = queryTokens.count { token ->
+                    haystack.split(' ').any { word ->
+                        word == token || word.startsWith(token) || token.startsWith(word)
+                    }
+                }
+                val phraseBonus = when {
+                    haystack.contains(queryKey) -> 100
+                    queryKey.contains(normalizeSearchText(item.title)) -> 80
+                    else -> 0
+                }
+                item to (matched * 20 + phraseBonus)
+            }
+            .filter { (_, score) -> score >= minimumMatches * 20 }
+            .sortedWith(
+                compareByDescending<Pair<MovieCatalogItem, Int>> { it.second }
+                    .thenByDescending { it.first.year ?: 0 }
+            )
+            .map { it.first }
+            .take(24)
+    }
+
+    private fun searchOnce(query: String): List<MovieCatalogItem> {
         val url = "https://phimapi.com/v1/api/tim-kiem".toHttpUrl()
             .newBuilder()
-            .addQueryParameter("keyword", normalized)
+            .addQueryParameter("keyword", query)
             .addQueryParameter("limit", "24")
             .build()
 
@@ -60,7 +115,8 @@ class PhimApiMovieProvider(
                         year = item.getInt("year").takeIf { it > 0 },
                         language = item.getString("lang"),
                         durationText = time,
-                        durationSeconds = parseDurationSeconds(time)
+                        durationSeconds = parseDurationSeconds(time),
+                        episodeBadge = parseEpisodeBadge(item)
                     )
                 )
             }
@@ -91,7 +147,8 @@ class PhimApiMovieProvider(
             year = movie.getInt("year").takeIf { it > 0 },
             language = movie.getString("lang"),
             durationText = time,
-            durationSeconds = parseDurationSeconds(time)
+            durationSeconds = parseDurationSeconds(time),
+            episodeBadge = parseEpisodeBadge(movie)
         )
 
         val refs = mutableListOf<MovieEpisodeRef>()
@@ -241,6 +298,59 @@ class PhimApiMovieProvider(
         val prefix = base?.trimEnd('/')
             ?: "https://phimimg.com"
         return prefix + "/" + raw.trimStart('/')
+    }
+
+    private fun parseEpisodeBadge(item: JsonObject): String? {
+        val raw = (
+            item.getString("episode_current")
+                ?: item.getString("episode_total")
+                ?: item.getString("current_episode")
+                ?: item.getString("total_episodes")
+            )
+            ?.trim()
+            .orEmpty()
+
+        if (raw.isBlank()) return null
+
+        Regex("""(?i)(?:tập|tap)\\s*(\\d+)""")
+            .find(raw)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+            ?.takeIf { it > 0 }
+            ?.let { return "$it tập" }
+
+        Regex("""(\\d+)\\s*/\\s*(\\d+)""")
+            .find(raw)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+            ?.takeIf { it > 0 }
+            ?.let { return "$it tập" }
+
+        Regex("""\\d+""")
+            .find(raw)
+            ?.value
+            ?.toIntOrNull()
+            ?.takeIf { it > 0 }
+            ?.let { return "$it tập" }
+
+        return null
+    }
+
+    private fun normalizeSearchText(value: String): String =
+        stripVietnamese(value)
+            .lowercase()
+            .replace(Regex("""[^a-z0-9]+"""), " ")
+            .trim()
+            .replace(Regex("""\\s+"""), " ")
+
+    private fun stripVietnamese(value: String): String {
+        val normalized = java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD)
+        return normalized
+            .replace(Regex("""\\p{M}+"""), "")
+            .replace('đ', 'd')
+            .replace('Đ', 'D')
     }
 
     private fun parseDurationSeconds(value: String?): Long? {
