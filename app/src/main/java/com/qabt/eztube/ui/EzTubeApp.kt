@@ -1493,9 +1493,11 @@ private fun SearchResult(
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentScale = ContentScale.Crop
             )
-            if (media.durationSeconds >= 0) {
+            val thumbnailBadge = media.thumbnailBadge
+                ?: media.durationSeconds.takeIf { it >= 0 }?.let(::formatDuration)
+            if (thumbnailBadge != null) {
                 Text(
-                    formatDuration(media.durationSeconds),
+                    thumbnailBadge,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier
