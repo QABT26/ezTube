@@ -38,13 +38,14 @@ data class MovieEpisodeRef(
     val serverIndex: Int,
     val episodeIndex: Int,
     val serverName: String,
+    val episodeSlug: String,
     val episodeName: String,
     val thumbnailUrl: String?,
     val durationSeconds: Long?,
     val language: String?
 ) {
     val stableId: String
-        get() = "movie:$providerId:$movieSlug:$serverIndex:$episodeIndex"
+        get() = "movie:$providerId:$movieSlug:${stablePart(serverName)}:${stablePart(episodeSlug)}"
 
     fun toMediaSummary(): MediaSummary = MediaSummary(
         id = stableId,
@@ -82,3 +83,9 @@ interface MovieProvider {
     fun canResolve(mediaId: String): Boolean = mediaId.startsWith("movie:$id:")
     fun resolve(mediaId: String): MoviePlayback
 }
+
+
+private fun stablePart(value: String): String =
+    java.util.Base64.getUrlEncoder()
+        .withoutPadding()
+        .encodeToString(value.toByteArray(Charsets.UTF_8))
