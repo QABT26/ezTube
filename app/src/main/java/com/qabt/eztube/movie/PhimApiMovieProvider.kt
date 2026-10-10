@@ -126,7 +126,7 @@ class PhimApiMovieProvider(
 
     override fun resolve(mediaId: String): MoviePlayback {
         val parts = mediaId.split(':')
-        if (parts.size != 6 || parts[0] != "movie" || parts[1] != id) {
+        if (parts.size != 5 || parts[0] != "movie" || parts[1] != id) {
             throw IOException("Unsupported movie media id")
         }
         val slug = parts[2]
