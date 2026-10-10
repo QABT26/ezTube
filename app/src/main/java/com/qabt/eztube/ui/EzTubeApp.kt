@@ -78,6 +78,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private enum class Tab(val label: String) { HOME("Home"), SEARCH("Search"), LIBRARY("Library") }
+private enum class SearchSourceMode { YOUTUBE, MOVIE }
 private enum class RepeatMode { OFF, ONE, ALL }
 private enum class NextMode { LIST, RECOMMENDED }
 private enum class SearchSort(val label: String) {
@@ -944,6 +945,7 @@ private fun SearchScreen(
     onAddToQueue: (MediaSummary) -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    var sourceMode by remember { mutableStateOf(SearchSourceMode.YOUTUBE) }
     var loading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searchSort by remember { mutableStateOf(SearchSort.RELEVANCE) }
@@ -966,10 +968,9 @@ private fun SearchScreen(
             onSearchSubmitted(normalized)
             runCatching {
                 withContext(Dispatchers.IO) {
-                    if (movieSource.canHandle(normalized)) {
-                        movieSource.loadAsMedia(normalized)
-                    } else {
-                        source.search(normalized)
+                    when (sourceMode) {
+                        SearchSourceMode.MOVIE -> movieSource.loadAsMedia(normalized)
+                        SearchSourceMode.YOUTUBE -> source.search(normalized)
                     }
                 }
             }
@@ -981,9 +982,43 @@ private fun SearchScreen(
 
     Column(modifier.padding(horizontal = 14.dp)) {
         Spacer(Modifier.height(12.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = sourceMode == SearchSourceMode.YOUTUBE,
+                onClick = {
+                    sourceMode = SearchSourceMode.YOUTUBE
+                    searchError = null
+                    onResultsChange(emptyList())
+                },
+                label = { Text("YouTube") },
+                modifier = Modifier.weight(1f)
+            )
+            FilterChip(
+                selected = sourceMode == SearchSourceMode.MOVIE,
+                onClick = {
+                    sourceMode = SearchSourceMode.MOVIE
+                    searchError = null
+                    onResultsChange(emptyList())
+                },
+                label = { Text("Movie") },
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(Modifier.height(6.dp))
         OutlinedTextField(
             value = query, onValueChange = onQueryChange, modifier = Modifier.fillMaxWidth(),
-            singleLine = true, placeholder = { Text("Search YouTube or paste movie URL…") },
+            singleLine = true,
+            placeholder = {
+                Text(
+                    if (sourceMode == SearchSourceMode.MOVIE)
+                        "Paste movie URL or movie:ID…"
+                    else
+                        "Search YouTube…"
+                )
+            },
             leadingIcon = { Icon(Icons.Outlined.Search, null) },
             trailingIcon = {
                 if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) {
@@ -1054,7 +1089,13 @@ private fun SearchScreen(
         }
         if (results.isEmpty() && !loading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Search YouTube or paste a supported movie URL.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (sourceMode == SearchSourceMode.MOVIE)
+                        "Paste a supported movie URL or movie:ID."
+                    else
+                        "Search YouTube.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         } else {
             LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(vertical = 10.dp),
