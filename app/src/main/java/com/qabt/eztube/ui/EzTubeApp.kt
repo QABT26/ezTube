@@ -711,7 +711,12 @@ fun EzTubeApp() {
                     media = media,
                     isPlaying = isPlaying,
                     isFavorite = favorites.any { it.mediaId == media.id },
-                    onOpen = { showPlayer = true },
+                    onOpen = {
+                        movieDetail = null
+                        movieDetailError = null
+                        movieDetailLoading = false
+                        showPlayer = true
+                    },
                     onFavorite = {
                         scope.launch(Dispatchers.IO) {
                             if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id)
