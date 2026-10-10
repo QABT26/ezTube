@@ -225,7 +225,7 @@ class PhimApiMovieProvider(
                 throw IOException("phimapi HTTP ${response.code}")
             }
             if (body.isBlank()) throw IOException("phimapi returned empty body")
-            return JsonParser.object().from(body)
+            return JsonParser.`object`().from(body)
         }
     }
 
