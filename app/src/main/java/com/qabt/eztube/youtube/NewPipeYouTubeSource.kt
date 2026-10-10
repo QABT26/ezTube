@@ -300,24 +300,20 @@ class NewPipeYouTubeSource : YouTubeSource {
     }
 
     override suspend fun trending(topic: String, language: String): List<MediaSummary> {
-        val service = ServiceList.YouTube
-
-        // YouTube removed the old general Trending page in July 2025.
-        // Prefer the still-supported Music chart for this audio-first app, then
-        // fall back through other supported kiosks instead of returning nothing.
-        val preferred = when (topic) {
-            "Podcasts" -> "trending_podcasts_episodes"
-            "Gaming" -> "trending_gaming"
-            "Movies" -> "trending_movies_and_shows"
-            "Live" -> "live"
-            else -> "trending_music"
+        val languageQuery = when (language) {
+            "Vietnamese" -> "Việt Nam"
+            "English" -> "English"
+            "Korean" -> "Korean"
+            "Japanese" -> "Japanese"
+            else -> ""
         }
-        val kioskIds = listOf(preferred, "trending_music", "trending_podcasts_episodes", "trending_gaming", "trending_movies_and_shows", "live").distinct()
 
-        for (kioskId in kioskIds) {
-            val items = runCatching {
-                val factory = service.kioskList.getListLinkHandlerFactoryByType(kioskId)
-                val url = factory.fromId(kioskId).url
+        if (topic == "Live") {
+            val lives = runCatching {
+                val service = ServiceList.YouTube
+                val factory = service.kioskList
+                    .getListLinkHandlerFactoryByType("Recommended Lives")
+                val url = factory.fromId("Recommended Lives").url
                 KioskInfo.getInfo(service, url).relatedItems
                     .asSequence()
                     .filterIsInstance<StreamInfoItem>()
@@ -326,46 +322,35 @@ class NewPipeYouTubeSource : YouTubeSource {
                     .take(20)
                     .toList()
             }.getOrDefault(emptyList())
-
-            if (items.isNotEmpty()) {
-                if (language == "All") return items
-                val languageQuery = when (language) { "Vietnamese" -> "Việt Nam"; "English" -> "English"; "Korean" -> "Korean"; "Japanese" -> "Japanese"; else -> language }
-                val localized = runCatching { search("$languageQuery $topic trending") }.getOrDefault(emptyList())
-                return (localized + items).distinctBy { it.id }.take(20)
-            }
+            if (lives.isNotEmpty()) return lives
         }
 
-        // Kiosk endpoints are not stable across YouTube client changes. Never leave
-        // Home empty just because the current extractor/client lost a kiosk route.
-        val languageQuery = when (language) {
-            "Vietnamese" -> "Việt Nam"
-            "English" -> "English"
-            "Korean" -> "Korean"
-            "Japanese" -> "Japanese"
-            else -> ""
+        val topicQueries = when (topic) {
+            "Podcasts" -> listOf("podcast trending", "popular podcast")
+            "Gaming" -> listOf("gaming trending", "popular gaming")
+            "Movies" -> listOf("movie trailer trending", "popular movie trailer")
+            "Live" -> listOf("live now", "popular live")
+            else -> listOf("music trending", "popular music", "top music")
         }
-        val topicQuery = when (topic) {
-            "Podcasts" -> "podcast"
-            "Gaming" -> "gaming"
-            "Movies" -> "movie trailer"
-            "Live" -> "live"
-            else -> "music"
-        }
-        val fallbackQueries = buildList {
-            if (languageQuery.isNotBlank()) {
-                add("$languageQuery $topicQuery trending")
-                add("$languageQuery $topicQuery popular")
+
+        val queries = buildList {
+            for (base in topicQueries) {
+                if (languageQuery.isNotBlank()) add("$languageQuery $base")
+                add(base)
             }
-            add("$topicQuery trending")
-            add("$topicQuery popular")
         }.distinct()
 
-        for (query in fallbackQueries) {
+        val collected = linkedMapOf<String, MediaSummary>()
+        for (query in queries) {
             val items = runCatching { search(query) }.getOrDefault(emptyList())
-            if (items.isNotEmpty()) return items.take(20)
+            for (item in items) {
+                collected.putIfAbsent(item.id, item)
+                if (collected.size >= 20) break
+            }
+            if (collected.size >= 20) break
         }
 
-        return emptyList()
+        return collected.values.take(20)
     }
 
     override suspend fun channel(channelUrl: String): ChannelSummary {
