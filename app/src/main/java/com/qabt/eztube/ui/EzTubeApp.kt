@@ -1056,7 +1056,7 @@ private fun SearchScreen(
             placeholder = {
                 Text(
                     if (sourceMode == SearchSourceMode.MOVIE)
-                        "Paste movie URL or movie:ID…"
+                        "Paste movie page URL…"
                     else
                         "Search YouTube…"
                 )
@@ -1133,7 +1133,7 @@ private fun SearchScreen(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     if (sourceMode == SearchSourceMode.MOVIE)
-                        "Paste a supported movie URL or movie:ID."
+                        "Paste the movie page URL from a supported provider."
                     else
                         "Search YouTube.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
