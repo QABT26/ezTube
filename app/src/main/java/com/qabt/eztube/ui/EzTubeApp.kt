@@ -65,8 +65,8 @@ import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
 import com.qabt.eztube.playback.PlaybackSource
 import com.qabt.eztube.playback.PlaybackSourceResolver
-import com.qabt.eztube.movie.GenericMovieSourceAdapter
-import com.qabt.eztube.movie.MovieProviders
+import com.qabt.eztube.movie.MovieProviderRegistry
+import com.qabt.eztube.movie.MovieDetail
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.ChannelSummary
 import com.qabt.eztube.youtube.PlaylistSummary
@@ -79,6 +79,7 @@ import kotlinx.coroutines.withContext
 
 private enum class Tab(val label: String) { HOME("Home"), SEARCH("Search"), LIBRARY("Library") }
 private enum class SearchSourceMode { YOUTUBE, MOVIE }
+private data class SubtitleOption(val label: String, val language: String?)
 private enum class RepeatMode { OFF, ONE, ALL }
 private enum class NextMode { LIST, RECOMMENDED }
 private enum class SearchSort(val label: String) {
@@ -91,7 +92,7 @@ fun EzTubeApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val source = remember { NewPipeYouTubeSource() }
-    val movieSource = remember { GenericMovieSourceAdapter(MovieProviders.MOTPHIM) }
+    val movieProviders = remember { MovieProviderRegistry.default() }
     val database = remember { EzTubeDatabase.get(context) }
     val history = remember { HistoryRepository(database.historyDao()) }
     val favoritesRepo = remember { FavoriteRepository(database.favoriteDao()) }
@@ -113,6 +114,8 @@ fun EzTubeApp() {
     var videoQuality by remember { mutableStateOf(playbackPrefs.loadVideoQuality()) }
     var actualVideoHeight by remember { mutableIntStateOf(0) }
     var playbackEngine by remember { mutableStateOf(PlaybackService.ENGINE_DIRECT) }
+    var subtitleOptions by remember { mutableStateOf<List<SubtitleOption>>(emptyList()) }
+    var selectedSubtitleLabel by remember { mutableStateOf<String?>(null) }
     var videoMode by remember { mutableStateOf(playbackPrefs.loadVideoMode()) }
     val playbackActivity = context as? Activity
     DisposableEffect(videoMode, playbackActivity) {
@@ -156,6 +159,9 @@ fun EzTubeApp() {
     var playlistDetail by remember { mutableStateOf<PlaylistDetail?>(null) }
     var playlistLoading by remember { mutableStateOf(false) }
     var playlistError by remember { mutableStateOf<String?>(null) }
+    var movieDetail by remember { mutableStateOf<MovieDetail?>(null) }
+    var movieDetailLoading by remember { mutableStateOf(false) }
+    var movieDetailError by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -214,6 +220,31 @@ fun EzTubeApp() {
                         if (selectedHeight != null) {
                             actualVideoHeight = selectedHeight
                         }
+
+                        val subtitles = mutableListOf<SubtitleOption>()
+                        var selectedText: String? = null
+                        tracks.groups.forEach { group ->
+                            for (index in 0 until group.length) {
+                                val format = group.getTrackFormat(index)
+                                val isText =
+                                    format.sampleMimeType?.startsWith("text/") == true ||
+                                    format.sampleMimeType == "application/x-subrip" ||
+                                    format.sampleMimeType == "application/ttml+xml"
+                                if (!isText) continue
+                                val label = format.label
+                                    ?: format.language?.uppercase()
+                                    ?: "CC"
+                                val option = SubtitleOption(label, format.language)
+                                if (subtitles.none { it.label == option.label && it.language == option.language }) {
+                                    subtitles += option
+                                }
+                                if (group.isTrackSelected(index)) {
+                                    selectedText = label
+                                }
+                            }
+                        }
+                        subtitleOptions = subtitles
+                        selectedSubtitleLabel = selectedText
                     }
 
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -233,6 +264,55 @@ fun EzTubeApp() {
             controller = null
             MediaController.releaseFuture(future)
         }
+    }
+
+    fun openMovie(media: MediaSummary) {
+        if (!movieProviders.isTitle(media.id) || movieDetailLoading) return
+        scope.launch {
+            movieDetailLoading = true
+            movieDetailError = null
+            runCatching {
+                withContext(Dispatchers.IO) { movieProviders.detail(media.id) }
+            }
+                .onSuccess { movieDetail = it }
+                .onFailure { movieDetailError = it.message ?: "Unable to load movie" }
+            movieDetailLoading = false
+        }
+    }
+
+    fun selectMovieSubtitle(option: SubtitleOption?) {
+        val active = controller ?: return
+        val builder = active.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_TEXT)
+
+        if (option == null) {
+            builder.setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
+            active.trackSelectionParameters = builder.build()
+            selectedSubtitleLabel = null
+            return
+        }
+
+        builder.setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, false)
+        var overrideApplied = false
+        active.currentTracks.groups.forEach { group ->
+            if (overrideApplied) return@forEach
+            for (index in 0 until group.length) {
+                val format = group.getTrackFormat(index)
+                val label = format.label ?: format.language?.uppercase() ?: "CC"
+                if (label == option.label && format.language == option.language) {
+                    builder.setOverrideForType(
+                        androidx.media3.common.TrackSelectionOverride(
+                            group.mediaTrackGroup,
+                            index
+                        )
+                    )
+                    overrideApplied = true
+                    break
+                }
+            }
+        }
+        active.trackSelectionParameters = builder.build()
+        selectedSubtitleLabel = option.label
     }
 
     fun openChannel(channelUrl: String?) {
@@ -317,9 +397,15 @@ fun EzTubeApp() {
     fun playMedia(media: MediaSummary, startPositionMs: Long = 0L) {
         if (resolvingId != null) return
 
-        when (PlaybackSourceResolver.resolve(media.id)) {
-            is PlaybackSource.Hls,
-            is PlaybackSource.Dash -> {
+        when {
+            media.id.startsWith("movie:") -> {
+                if (!videoMode) {
+                    videoMode = true
+                    playbackPrefs.saveVideoMode(true)
+                }
+            }
+            PlaybackSourceResolver.resolve(media.id) is PlaybackSource.Hls,
+            PlaybackSourceResolver.resolve(media.id) is PlaybackSource.Dash -> {
                 if (!videoMode) {
                     videoMode = true
                     playbackPrefs.saveVideoMode(true)
@@ -535,11 +621,17 @@ fun EzTubeApp() {
     }
 
     BackHandler(
-        enabled = playlistDetail != null || playlistLoading || playlistError != null ||
+        enabled = movieDetail != null || movieDetailLoading || movieDetailError != null ||
+            playlistDetail != null || playlistLoading || playlistError != null ||
             channelDetail != null || channelLoading || channelError != null ||
             showSettings || showPlayer
     ) {
         when {
+            movieDetail != null || movieDetailLoading || movieDetailError != null -> {
+                movieDetail = null
+                movieDetailError = null
+                movieDetailLoading = false
+            }
             playlistDetail != null || playlistLoading || playlistError != null -> {
                 playlistDetail = null
                 playlistError = null
@@ -557,7 +649,40 @@ fun EzTubeApp() {
 
     MaterialTheme {
         Box(Modifier.fillMaxSize()) {
-        if (playlistDetail != null || playlistLoading || playlistError != null) {
+        if (movieDetail != null || movieDetailLoading || movieDetailError != null) {
+            Scaffold(bottomBar = {
+                nowPlaying?.let { media -> MiniPlayer(
+                    media = media,
+                    isPlaying = isPlaying,
+                    isFavorite = favorites.any { it.mediaId == media.id },
+                    onOpen = { showPlayer = true },
+                    onFavorite = {
+                        scope.launch(Dispatchers.IO) {
+                            if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id)
+                            else favoritesRepo.add(media)
+                        }
+                    },
+                    onToggle = {
+                        if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs)
+                        else togglePlayback()
+                    }
+                ) }
+            }) { detailPadding ->
+                MovieDetailScreen(
+                    modifier = Modifier.fillMaxSize().padding(detailPadding),
+                    detail = movieDetail,
+                    loading = movieDetailLoading,
+                    error = movieDetailError,
+                    resolvingId = resolvingId,
+                    onBack = {
+                        movieDetail = null
+                        movieDetailError = null
+                        movieDetailLoading = false
+                    },
+                    onPlay = { media, items -> startQueue(media, items) }
+                )
+            }
+        } else if (playlistDetail != null || playlistLoading || playlistError != null) {
             Scaffold(bottomBar = {
                 nowPlaying?.let { media -> MiniPlayer(
                     media = media,
@@ -625,6 +750,10 @@ fun EzTubeApp() {
         } else if (showPlayer && nowPlaying != null) {
             FullPlayer(
                 media = requireNotNull(nowPlaying), controller = controller, isPlaying = isPlaying, quality = quality,
+                isMovie = requireNotNull(nowPlaying).id.startsWith("movie:"),
+                subtitleOptions = subtitleOptions,
+                selectedSubtitleLabel = selectedSubtitleLabel,
+                onSubtitle = { selectMovieSubtitle(it) },
                 videoQuality = videoQuality,
                 actualVideoHeight = actualVideoHeight,
                 videoMode = videoMode,
@@ -767,7 +896,7 @@ fun EzTubeApp() {
                     Tab.SEARCH -> SearchScreen(
                         modifier = Modifier.fillMaxSize().padding(padding),
                         source = source,
-                        movieSource = movieSource,
+                        movieProviders = movieProviders,
                         resolvingId = resolvingId,
                         playbackError = errorMessage,
                         query = searchQuery,
@@ -779,6 +908,7 @@ fun EzTubeApp() {
                         recentSearches = recentSearches,
                         onSearchSubmitted = { q -> playbackPrefs.saveSearch(q); recentSearches = playbackPrefs.loadRecentSearches() },
                         onChannel = { openChannel(it.channelUrl) },
+                        onMovie = { openMovie(it) },
                         onPlay = { media, resultQueue -> startQueue(media, resultQueue) },
                         onPlayNext = { playNext(it) },
                         onAddToQueue = { addToQueue(it) }
@@ -970,7 +1100,7 @@ private fun SettingsScreen(
 private fun SearchScreen(
     modifier: Modifier,
     source: NewPipeYouTubeSource,
-    movieSource: GenericMovieSourceAdapter,
+    movieProviders: MovieProviderRegistry,
     resolvingId: String?,
     playbackError: String?,
     query: String,
@@ -982,6 +1112,7 @@ private fun SearchScreen(
     recentSearches: List<String>,
     onSearchSubmitted: (String) -> Unit,
     onChannel: (MediaSummary) -> Unit,
+    onMovie: (MediaSummary) -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
     onPlayNext: (MediaSummary) -> Unit,
     onAddToQueue: (MediaSummary) -> Unit
@@ -1011,7 +1142,7 @@ private fun SearchScreen(
             runCatching {
                 withContext(Dispatchers.IO) {
                     when (sourceMode) {
-                        SearchSourceMode.MOVIE -> movieSource.loadAsMedia(normalized)
+                        SearchSourceMode.MOVIE -> movieProviders.search(normalized)
                         SearchSourceMode.YOUTUBE -> source.search(normalized)
                     }
                 }
@@ -1056,7 +1187,7 @@ private fun SearchScreen(
             placeholder = {
                 Text(
                     if (sourceMode == SearchSourceMode.MOVIE)
-                        "Paste movie page URL…"
+                        "Search movies…"
                     else
                         "Search YouTube…"
                 )
@@ -1133,7 +1264,7 @@ private fun SearchScreen(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     if (sourceMode == SearchSourceMode.MOVIE)
-                        "Paste the movie page URL from a supported provider."
+                        "Search movies by title across installed providers."
                     else
                         "Search YouTube.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1149,9 +1280,12 @@ private fun SearchScreen(
                         resolving = resolvingId == media.id,
                         enabled = resolvingId == null,
                         onChannel = { onChannel(media) },
-                        onPlay = { onPlay(media, displayResults) },
-                        onPlayNext = { onPlayNext(media) },
-                        onAddToQueue = { onAddToQueue(media) }
+                        onPlay = {
+                            if (movieProviders.isTitle(media.id)) onMovie(media)
+                            else onPlay(media, displayResults)
+                        },
+                        onPlayNext = if (movieProviders.isTitle(media.id)) null else { { onPlayNext(media) } },
+                        onAddToQueue = if (movieProviders.isTitle(media.id)) null else { { onAddToQueue(media) } }
                     )
                 }
             }
