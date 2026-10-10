@@ -326,11 +326,33 @@ class NewPipeYouTubeSource : YouTubeSource {
         }
 
         val topicQueries = when (topic) {
-            "Podcasts" -> listOf("podcast trending", "popular podcast")
-            "Gaming" -> listOf("gaming trending", "popular gaming")
-            "Movies" -> listOf("movie trailer trending", "popular movie trailer")
-            "Live" -> listOf("live now", "popular live")
-            else -> listOf("music trending", "popular music", "top music")
+            "Podcasts" -> listOf(
+                "podcast trending",
+                "popular podcast",
+                "podcast"
+            )
+            "Gaming" -> listOf(
+                "gaming trending",
+                "popular gaming",
+                "gaming"
+            )
+            "Movies" -> listOf(
+                "movie trailer trending",
+                "popular movie trailer",
+                "movie trailer"
+            )
+            "Live" -> listOf(
+                "live now",
+                "popular live",
+                "live"
+            )
+            else -> listOf(
+                "music trending",
+                "popular music",
+                "top music",
+                "music",
+                "nhạc"
+            )
         }
 
         val queries = buildList {
