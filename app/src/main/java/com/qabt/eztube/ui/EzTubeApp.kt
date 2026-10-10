@@ -143,6 +143,18 @@ fun EzTubeApp() {
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var recentSearches by remember { mutableStateOf(playbackPrefs.loadRecentSearches()) }
+    var searchSourceMode by remember {
+        mutableStateOf(
+            runCatching { SearchSourceMode.valueOf(playbackPrefs.loadSearchSourceMode()) }
+                .getOrDefault(SearchSourceMode.YOUTUBE)
+        )
+    }
+    var recommendationMode by remember {
+        mutableStateOf(
+            runCatching { SearchSourceMode.valueOf(playbackPrefs.loadRecommendationMode()) }
+                .getOrDefault(SearchSourceMode.YOUTUBE)
+        )
+    }
     var homeSuggestions by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var homeLoading by remember { mutableStateOf(false) }
     var movieSuggestions by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
@@ -970,6 +982,11 @@ fun EzTubeApp() {
                         listState = searchListState,
                         onResultsChange = { searchResults = it },
                         recentSearches = recentSearches,
+                        sourceMode = searchSourceMode,
+                        onSourceModeChange = { mode ->
+                            searchSourceMode = mode
+                            playbackPrefs.saveSearchSourceMode(mode.name)
+                        },
                         onSearchSubmitted = { q -> playbackPrefs.saveSearch(q); recentSearches = playbackPrefs.loadRecentSearches() },
                         onChannel = { openChannel(it.channelUrl) },
                         onMovie = { openMovie(it) },
@@ -982,6 +999,11 @@ fun EzTubeApp() {
                         suggestions = homeSuggestions,
                         movieSuggestions = movieSuggestions,
                         movieSuggestionsLoading = movieSuggestionsLoading,
+                        recommendationMode = recommendationMode,
+                        onRecommendationModeChange = { mode ->
+                            recommendationMode = mode
+                            playbackPrefs.saveRecommendationMode(mode.name)
+                        },
                         trending = trending,
                         trendingLoading = trendingLoading,
                         listState = homeListState,
@@ -1177,6 +1199,8 @@ private fun SearchScreen(
     listState: androidx.compose.foundation.lazy.LazyListState,
     onResultsChange: (List<MediaSummary>) -> Unit,
     recentSearches: List<String>,
+    sourceMode: SearchSourceMode,
+    onSourceModeChange: (SearchSourceMode) -> Unit,
     onSearchSubmitted: (String) -> Unit,
     onChannel: (MediaSummary) -> Unit,
     onMovie: (MediaSummary) -> Unit,
@@ -1185,7 +1209,6 @@ private fun SearchScreen(
     onAddToQueue: (MediaSummary) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var sourceMode by remember { mutableStateOf(SearchSourceMode.YOUTUBE) }
     var loading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searchSort by remember { mutableStateOf(SearchSort.RELEVANCE) }
@@ -1198,7 +1221,10 @@ private fun SearchScreen(
         }
     }
 
-    fun submit(searchText: String = query) {
+    fun submit(
+        searchText: String = query,
+        mode: SearchSourceMode = sourceMode
+    ) {
         val normalized = searchText.trim()
         if (normalized.isBlank() || loading) return
         if (normalized != query) onQueryChange(normalized)
@@ -1208,7 +1234,7 @@ private fun SearchScreen(
             onSearchSubmitted(normalized)
             runCatching {
                 withContext(Dispatchers.IO) {
-                    when (sourceMode) {
+                    when (mode) {
                         SearchSourceMode.MOVIE -> movieProviders.search(normalized)
                         SearchSourceMode.YOUTUBE -> source.search(normalized)
                     }
@@ -1229,9 +1255,12 @@ private fun SearchScreen(
             FilterChip(
                 selected = sourceMode == SearchSourceMode.YOUTUBE,
                 onClick = {
-                    sourceMode = SearchSourceMode.YOUTUBE
-                    searchError = null
-                    onResultsChange(emptyList())
+                    if (sourceMode != SearchSourceMode.YOUTUBE) {
+                        onSourceModeChange(SearchSourceMode.YOUTUBE)
+                        searchError = null
+                        onResultsChange(emptyList())
+                        if (query.isNotBlank()) submit(query, SearchSourceMode.YOUTUBE)
+                    }
                 },
                 label = { Text("YouTube") },
                 modifier = Modifier.weight(1f)
@@ -1239,9 +1268,12 @@ private fun SearchScreen(
             FilterChip(
                 selected = sourceMode == SearchSourceMode.MOVIE,
                 onClick = {
-                    sourceMode = SearchSourceMode.MOVIE
-                    searchError = null
-                    onResultsChange(emptyList())
+                    if (sourceMode != SearchSourceMode.MOVIE) {
+                        onSourceModeChange(SearchSourceMode.MOVIE)
+                        searchError = null
+                        onResultsChange(emptyList())
+                        if (query.isNotBlank()) submit(query, SearchSourceMode.MOVIE)
+                    }
                 },
                 label = { Text("Movie") },
                 modifier = Modifier.weight(1f)
@@ -1688,6 +1720,8 @@ private fun HomeScreen(
     suggestions: List<MediaSummary>,
     movieSuggestions: List<MediaSummary>,
     movieSuggestionsLoading: Boolean,
+    recommendationMode: SearchSourceMode,
+    onRecommendationModeChange: (SearchSourceMode) -> Unit,
     trending: List<MediaSummary>,
     trendingLoading: Boolean,
     listState: androidx.compose.foundation.lazy.LazyListState,
@@ -1699,7 +1733,6 @@ private fun HomeScreen(
     onSearch: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var recommendationMode by remember { mutableStateOf(SearchSourceMode.YOUTUBE) }
     val displayedRecommendations = if (recommendationMode == SearchSourceMode.MOVIE) {
         movieSuggestions
     } else {
@@ -1753,14 +1786,14 @@ private fun HomeScreen(
                 CompactPresetButton(
                     text = "YouTube",
                     selected = recommendationMode == SearchSourceMode.YOUTUBE,
-                    onClick = { recommendationMode = SearchSourceMode.YOUTUBE },
+                    onClick = { onRecommendationModeChange(SearchSourceMode.YOUTUBE) },
                     modifier = Modifier.width(82.dp)
                 )
                 Spacer(Modifier.width(5.dp))
                 CompactPresetButton(
                     text = "Movie",
                     selected = recommendationMode == SearchSourceMode.MOVIE,
-                    onClick = { recommendationMode = SearchSourceMode.MOVIE },
+                    onClick = { onRecommendationModeChange(SearchSourceMode.MOVIE) },
                     modifier = Modifier.width(68.dp)
                 )
             }
@@ -1897,28 +1930,35 @@ private fun PlaybackProgress(progress: Float) {
     }
 }
 
-private fun isMovieMediaId(mediaId: String): Boolean =
-    mediaId.startsWith("movie:") || mediaId.startsWith("movie-title:")
+private fun isMovieLibraryItem(mediaId: String, channel: String): Boolean {
+    if (mediaId.startsWith("movie:") || mediaId.startsWith("movie-title:")) return true
+    val source = channel.lowercase()
+    return "motphim" in source ||
+        "kkphim" in source ||
+        "phimapi" in source
+}
 
 @Composable
 private fun LibrarySourceBadge(
     mediaId: String,
+    channel: String,
     modifier: Modifier = Modifier
 ) {
+    val isMovie = isMovieLibraryItem(mediaId, channel)
     Surface(
-        modifier = modifier.size(20.dp),
-        shape = RoundedCornerShape(6.dp),
-        color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.72f)
+        modifier = modifier.size(16.dp),
+        shape = RoundedCornerShape(5.dp),
+        color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.68f)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
-                imageVector = if (isMovieMediaId(mediaId)) {
+                imageVector = if (isMovie) {
                     Icons.Outlined.LocalMovies
                 } else {
                     Icons.Outlined.PlayCircle
                 },
-                contentDescription = if (isMovieMediaId(mediaId)) "Movie" else "YouTube",
-                modifier = Modifier.size(12.dp),
+                contentDescription = if (isMovie) "Movie" else "YouTube",
+                modifier = Modifier.size(10.dp),
                 tint = androidx.compose.ui.graphics.Color.White
             )
         }
@@ -1941,7 +1981,8 @@ private fun ProgressMediaRow(entry: HistoryEntry, resolving: Boolean, onClick: (
             )
             LibrarySourceBadge(
                 mediaId = entry.mediaId,
-                modifier = Modifier.align(Alignment.TopStart).padding(3.dp)
+                channel = entry.channel,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp)
             )
         }
         Spacer(Modifier.width(10.dp))
@@ -2024,7 +2065,8 @@ private fun LibraryScreen(
                         )
                         LibrarySourceBadge(
                             mediaId = entry.mediaId,
-                            modifier = Modifier.align(Alignment.TopStart).padding(3.dp)
+                            channel = entry.channel,
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp)
                         )
                     }
                     Spacer(Modifier.width(10.dp))
@@ -2095,7 +2137,8 @@ private fun LibraryScreen(
                     )
                     LibrarySourceBadge(
                         mediaId = entry.mediaId,
-                        modifier = Modifier.align(Alignment.TopStart).padding(3.dp)
+                        channel = entry.channel,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp)
                     )
                 }
                 Spacer(Modifier.width(10.dp))
