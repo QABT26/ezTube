@@ -1429,6 +1429,36 @@ private fun MovieDetailScreen(
     onBack: () -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit
 ) {
+    val listState = rememberLazyListState()
+    val currentEpisodeIndex = detail?.episodes?.indexOfFirst { it.stableId == nowPlayingId } ?: -1
+    val targetListIndex = if (detail != null && currentEpisodeIndex >= 0) {
+        var index = 1 // header card
+        val grouped = detail.episodes.groupBy { it.serverName }
+        var target = -1
+        grouped.forEach { (server, refs) ->
+            index += 1 // server header
+            val localIndex = refs.indexOfFirst { it.stableId == nowPlayingId }
+            if (target < 0 && localIndex >= 0) {
+                target = index + localIndex
+            }
+            index += refs.size
+        }
+        target
+    } else -1
+
+    LaunchedEffect(detail?.catalog?.stableId, nowPlayingId, targetListIndex) {
+        if (targetListIndex >= 0) {
+            listState.animateScrollToItem(targetListIndex)
+            val visible = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetListIndex }
+            if (visible != null) {
+                val viewportCenter =
+                    (listState.layoutInfo.viewportStartOffset + listState.layoutInfo.viewportEndOffset) / 2
+                val itemCenter = visible.offset + visible.size / 2
+                listState.animateScrollBy((itemCenter - viewportCenter).toFloat())
+            }
+        }
+    }
+
     Column(modifier.statusBarsPadding()) {
         Row(
             Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 8.dp),
@@ -1460,6 +1490,7 @@ private fun MovieDetailScreen(
                 }
                 LazyColumn(
                     Modifier.fillMaxSize(),
+                    state = listState,
                     contentPadding = PaddingValues(bottom = 18.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
