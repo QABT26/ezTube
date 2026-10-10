@@ -11,6 +11,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
+import com.qabt.eztube.movie.MovieProviderRegistry
+import com.qabt.eztube.movie.MoviePlayback
 import com.qabt.eztube.playback.sabr.SabrMediaSourceFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +32,7 @@ class PlaybackQueueManager(
     private val player: ExoPlayer,
     private val preferences: PlaybackPreferences,
     private val source: NewPipeYouTubeSource,
+    private val movieProviders: MovieProviderRegistry,
     private val scope: CoroutineScope
 ) {
     private data class ResolvedPlayback(
@@ -103,6 +106,62 @@ class PlaybackQueueManager(
         )
     }
 
+    private fun resolvedMoviePlayback(
+        media: MediaSummary,
+        playback: MoviePlayback
+    ): ResolvedPlayback {
+        val metadata = MediaMetadata.Builder()
+            .setTitle(media.title)
+            .setArtist(media.channel)
+            .setExtras(android.os.Bundle().apply {
+                putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, false)
+                putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0)
+                putString(PlaybackService.EXTRA_PLAYBACK_ENGINE, PlaybackService.ENGINE_HLS)
+                putBoolean(PlaybackService.EXTRA_IS_MOVIE, true)
+            })
+            .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
+            .build()
+
+        val subtitleConfigurations = playback.subtitles.mapIndexedNotNull { index, subtitle ->
+            val uri = runCatching { Uri.parse(subtitle.url) }.getOrNull()
+                ?: return@mapIndexedNotNull null
+            MediaItem.SubtitleConfiguration.Builder(uri)
+                .setMimeType(
+                    when {
+                        subtitle.url.substringBefore('?').endsWith(".vtt", ignoreCase = true) ->
+                            "text/vtt"
+                        subtitle.url.substringBefore('?').endsWith(".srt", ignoreCase = true) ->
+                            "application/x-subrip"
+                        else -> "text/vtt"
+                    }
+                )
+                .setLanguage(subtitle.language)
+                .setLabel(
+                    subtitle.label
+                        ?: subtitle.language
+                        ?: "Subtitle ${index + 1}"
+                )
+                .setSelectionFlags(if (index == 0) C.SELECTION_FLAG_DEFAULT else 0)
+                .build()
+        }
+
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(media.id)
+            .setUri(playback.hlsUrl)
+            .setMimeType("application/x-mpegURL")
+            .setSubtitleConfigurations(subtitleConfigurations)
+            .setMediaMetadata(metadata)
+            .build()
+
+        return ResolvedPlayback(
+            mediaItem = mediaItem,
+            mediaSource = mediaSourceFactory.create(
+                mediaItem,
+                PlaybackSource.Hls(media.id, playback.hlsUrl)
+            )
+        )
+    }
+
     private fun resolvedSabrPlayback(
         media: MediaSummary,
         spec: com.qabt.eztube.playback.sabr.SabrSourceSpec
@@ -134,8 +193,11 @@ class PlaybackQueueManager(
             ?: PlaybackService.ENGINE_DIRECT
         activePlaybackEngine = engine
 
-        if (engine == PlaybackService.ENGINE_SABR) {
-            applySabrVideoQualityConstraint()
+        if (
+            engine == PlaybackService.ENGINE_SABR ||
+            engine == PlaybackService.ENGINE_HLS
+        ) {
+            applyAdaptiveVideoQualityConstraint()
         }
 
         if (playback.mediaSource != null) {
@@ -145,7 +207,7 @@ class PlaybackQueueManager(
         }
     }
 
-    private fun applySabrVideoQualityConstraint() {
+    private fun applyAdaptiveVideoQualityConstraint() {
         val targetHeight = preferences.loadVideoQuality().targetHeight
         val builder = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
@@ -437,15 +499,21 @@ class PlaybackQueueManager(
     }
 
     fun onTracksChanged() {
-        if (activePlaybackEngine != PlaybackService.ENGINE_SABR) return
+        if (
+            activePlaybackEngine != PlaybackService.ENGINE_SABR &&
+            activePlaybackEngine != PlaybackService.ENGINE_HLS
+        ) return
         if (preferences.loadVideoQuality().targetHeight == null) return
-        applySabrVideoQualityConstraint()
+        applyAdaptiveVideoQualityConstraint()
     }
 
     fun applyVideoQualityChange(positionMs: Long, playWhenReady: Boolean): String {
-        if (activePlaybackEngine == PlaybackService.ENGINE_SABR) {
-            applySabrVideoQualityConstraint()
-            return PlaybackService.ENGINE_SABR
+        if (
+            activePlaybackEngine == PlaybackService.ENGINE_SABR ||
+            activePlaybackEngine == PlaybackService.ENGINE_HLS
+        ) {
+            applyAdaptiveVideoQualityConstraint()
+            return activePlaybackEngine
         }
 
         reloadCurrent(positionMs, playWhenReady)
@@ -728,6 +796,13 @@ class PlaybackQueueManager(
         media: MediaSummary,
         fastStart: Boolean = false
     ): Result<ResolvedPlayback> = runCatching {
+        if (movieProviders.canResolve(media.id)) {
+            val moviePlayback = withContext(Dispatchers.IO) {
+                movieProviders.resolve(media.id)
+            }
+            return@runCatching resolvedMoviePlayback(media, moviePlayback)
+        }
+
         val playbackSource = PlaybackSourceResolver.resolve(media.id)
         if (playbackSource !is PlaybackSource.YouTube) {
             return@runCatching resolvedGenericPlayback(media, playbackSource)
