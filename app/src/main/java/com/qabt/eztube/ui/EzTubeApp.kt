@@ -212,7 +212,7 @@ fun EzTubeApp() {
                         val media = saved?.first?.firstOrNull { it.id == id }
                             ?: playbackPrefs.load()?.first?.takeIf { it.id == id }
                             ?: return
-                        nowPlaying = media
+                        nowPlaying = normalizeMoviePresentation(media)
                         playerError = null
                         saved?.let { (items, _) ->
                             val index = items.indexOfFirst { it.id == id }
@@ -589,13 +589,21 @@ fun EzTubeApp() {
 
     LaunchedEffect(Unit) {
         playbackPrefs.loadQueue()?.let { (savedQueue, savedIndex) ->
-            queue = savedQueue
+            val normalizedQueue = savedQueue.map(::normalizeMoviePresentation)
+            queue = normalizedQueue
             queueIndex = savedIndex
+            if (normalizedQueue != savedQueue) {
+                playbackPrefs.saveQueue(normalizedQueue, savedIndex)
+            }
         }
         playbackPrefs.load()?.let { (media, position) ->
             if (nowPlaying == null) {
-                nowPlaying = media
+                val normalized = normalizeMoviePresentation(media)
+                nowPlaying = normalized
                 resumePositionMs = position
+                if (normalized != media) {
+                    playbackPrefs.save(normalized, position)
+                }
             }
         }
     }
@@ -1474,26 +1482,42 @@ private fun SearchScreen(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 recentSearches.take(5).forEach { recent ->
-                    AssistChip(
-                        onClick = { submit(recent) },
-                        label = {
-                            Text(
-                                recent,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 240.dp)
+                    Box(
+                        modifier = Modifier.padding(top = 4.dp, end = 4.dp)
+                    ) {
+                        AssistChip(
+                            onClick = { submit(recent) },
+                            label = {
+                                Text(
+                                    recent,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 240.dp)
+                                )
+                            }
+                        )
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 4.dp, y = (-4).dp)
+                                .size(18.dp)
+                                .clickable { onRecentSearchDelete(recent) },
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.outlineVariant
                             )
-                        },
-                        trailingIcon = {
-                            Icon(
-                                imageVector = Icons.Outlined.Close,
-                                contentDescription = "Delete search",
-                                modifier = Modifier
-                                    .size(16.dp)
-                                    .clickable { onRecentSearchDelete(recent) }
-                            )
+                        ) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Close,
+                                    contentDescription = "Delete search",
+                                    modifier = Modifier.size(11.dp)
+                                )
+                            }
                         }
-                    )
+                    }
                 }
             }
         }
@@ -1567,6 +1591,33 @@ private fun SearchScreen(
 
 private fun movieProvidersTitleId(mediaId: String): Boolean =
     mediaId.startsWith("movie-title:")
+
+private fun normalizeMoviePresentation(media: MediaSummary): MediaSummary {
+    if (!media.id.startsWith("movie:biliintl:")) return media
+
+    var title = media.title
+        .replace(Regex("""\s*·\s*Video\s*$""", RegexOption.IGNORE_CASE), "")
+        .trim()
+    title = title
+        .replace(
+            Regex("""\s*(?:[-|·]\s*)?BiliBili\s*$""", RegexOption.IGNORE_CASE),
+            ""
+        )
+        .trim()
+
+    val channel = media.channel
+        .split('·')
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinctBy { it.lowercase() }
+        .joinToString(" · ")
+
+    return if (title == media.title && channel == media.channel) {
+        media
+    } else {
+        media.copy(title = title, channel = channel)
+    }
+}
 
 private fun searchAgeRank(text: String?): Long {
     val value = text?.lowercase()?.trim().orEmpty()
@@ -3523,28 +3574,17 @@ private fun FullPlayer(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     VideoQuality.entries.forEach { option ->
-                        val chipWeight = when (option) {
-                            VideoQuality.AUTO -> 0.90f
-                            VideoQuality.P1080 -> 1.18f
-                            else -> 1f
-                        }
-                        FilterChip(
-                            modifier = Modifier.weight(chipWeight).height(30.dp),
+                        CompactPresetButton(
+                            text = when (option) {
+                                VideoQuality.AUTO -> "Auto"
+                                VideoQuality.P360 -> "360p"
+                                VideoQuality.P480 -> "480p"
+                                VideoQuality.P720 -> "720p"
+                                VideoQuality.P1080 -> "1080p"
+                            },
                             selected = videoQuality == option,
                             onClick = { onVideoQuality(option) },
-                            label = {
-                                Text(
-                                    when (option) {
-                                        VideoQuality.AUTO -> "Auto"
-                                        VideoQuality.P360 -> "360p"
-                                        VideoQuality.P480 -> "480p"
-                                        VideoQuality.P720 -> "720p"
-                                        VideoQuality.P1080 -> "1080p"
-                                    },
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
