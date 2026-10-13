@@ -121,6 +121,10 @@ public final class SabrMediaSourceFactory {
                 );
             }
         }
+
+        public String diagnosticSnapshot() {
+            return bridge.diagnosticSnapshot();
+        }
     }
 
     private static DashManifest buildManifest(
