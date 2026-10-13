@@ -307,7 +307,10 @@ fun EzTubeApp() {
                         movieDetailError = null
                         val first = playableItems.firstOrNull()
                         if (first != null) {
-                            onSingleMovie(first, playableItems)
+                            // A single movie can be mirrored on multiple servers.
+                            // Keep only the selected playable item in the logical queue so
+                            // autoplay/next cannot jump to another mirror of the same movie.
+                            onSingleMovie(first, listOf(first))
                         } else {
                             movieDetailError = "Movie has no playable item"
                         }
