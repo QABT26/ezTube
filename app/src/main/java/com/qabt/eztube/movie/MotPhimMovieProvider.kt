@@ -44,6 +44,8 @@ class MotPhimMovieProvider(
     @Volatile
     private var sessionPrimed = false
 
+    private val catalogCache = linkedMapOf<String, MovieCatalogItem>()
+
     private val http = client ?: OkHttpClient.Builder()
         .cookieJar(cookieJar)
         .connectTimeout(8, TimeUnit.SECONDS)
@@ -55,12 +57,52 @@ class MotPhimMovieProvider(
     override fun search(query: String): List<MovieCatalogItem> {
         val normalized = query.trim().replace(Regex("""\s+"""), " ")
         if (normalized.isBlank()) return emptyList()
-        return searchRsc(normalized)
+        val results = searchRsc(normalized)
+        synchronized(catalogCache) {
+            results.forEach { catalogCache[it.slug] = it }
+            while (catalogCache.size > 100) {
+                val firstKey = catalogCache.keys.firstOrNull() ?: break
+                catalogCache.remove(firstKey)
+            }
+        }
+        return results
     }
 
     override fun detail(slug: String): MovieDetail {
-        throw IOException(
-            "MotPhim detail endpoint not wired yet for $slug"
+        val cached = synchronized(catalogCache) { catalogCache[slug] }
+        val catalog = cached ?: run {
+            val query = slug
+                .replace(Regex("""-\d{8,}$"""), "")
+                .replace('-', ' ')
+                .trim()
+            search(query).firstOrNull { it.slug == slug }
+                ?: throw IOException("MotPhim detail not found for $slug")
+        }
+
+        val single = catalog.isSeries == false ||
+            catalog.episodeBadge.equals("Full", ignoreCase = true)
+
+        val episode = MovieEpisodeRef(
+            providerId = id,
+            providerName = displayName,
+            movieSlug = slug,
+            movieTitle = catalog.title,
+            serverIndex = 0,
+            episodeIndex = 0,
+            serverName = catalog.language?.takeIf { it.isNotBlank() } ?: "MotPhim",
+            episodeSlug = if (single) "full" else "episode-1",
+            episodeName = if (single) "Full" else "Tập 1",
+            thumbnailUrl = catalog.thumbnailUrl ?: inferredThumbnail(slug),
+            durationSeconds = catalog.durationSeconds,
+            language = catalog.language
+        )
+
+        return MovieDetail(
+            catalog = catalog.copy(
+                thumbnailUrl = catalog.thumbnailUrl ?: inferredThumbnail(slug),
+                isSeries = catalog.isSeries ?: false
+            ),
+            episodes = listOf(episode)
         )
     }
 
@@ -168,7 +210,7 @@ class MotPhimMovieProvider(
                     slug = slug,
                     title = title,
                     originalTitle = null,
-                    thumbnailUrl = normalizeImage(image),
+                    thumbnailUrl = normalizeImage(image) ?: inferredThumbnail(slug),
                     year = null,
                     language = if (window.contains("Vietsub", ignoreCase = true)) "Vietsub" else null,
                     durationText = null,
@@ -495,6 +537,14 @@ class MotPhimMovieProvider(
             }
             return body
         }
+    }
+
+    private fun inferredThumbnail(slug: String): String? {
+        val base = slug
+            .replace(Regex("""-\d{8,}$"""), "")
+            .trim('-')
+        if (base.isBlank()) return null
+        return "$BASE_URL/storage/images/$base/$base-thumb.webp"
     }
 
     private fun normalizeImage(value: String?): String? {
