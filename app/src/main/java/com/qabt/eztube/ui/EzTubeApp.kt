@@ -1397,7 +1397,7 @@ private fun SearchScreen(
             }
         }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
-        (searchError ?: playbackError)?.let {
+        (searchError ?: playbackError?.takeIf { results.isEmpty() })?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 8.dp))
         }
