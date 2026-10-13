@@ -36,7 +36,8 @@ class PlaybackQueueManager(
 ) {
     private data class ResolvedPlayback(
         val mediaItem: MediaItem,
-        val mediaSource: MediaSource?
+        val mediaSource: MediaSource?,
+        val sabrQualityController: SabrMediaSourceFactory.QualityController? = null
     )
 
     private val mediaSourceFactory by lazy {
@@ -58,6 +59,9 @@ class PlaybackQueueManager(
     @Volatile private var recoveryAttempts = 0
     @Volatile private var recoveryHealthyGeneration = 0L
     @Volatile private var activePlaybackEngine: String = PlaybackService.ENGINE_DIRECT
+    @Volatile private var activeSabrQualityController: SabrMediaSourceFactory.QualityController? = null
+    @Volatile private var sabrQualityWarmGeneration = 0L
+    @Volatile private var sabrQualityWarmPending = false
     private val sabrFailedIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private fun mediaSourceFor(mediaItem: MediaItem, stream: AudioStream): MediaSource? {
@@ -251,13 +255,15 @@ class PlaybackQueueManager(
             .setUri("sabr://" + spec.videoId)
             .setMediaMetadata(metadata)
             .build()
+        val created = SabrMediaSourceFactory.create(
+            mediaItem,
+            spec,
+            initialPositionMs.coerceAtLeast(0L)
+        )
         return ResolvedPlayback(
             mediaItem = mediaItem,
-            mediaSource = SabrMediaSourceFactory.create(
-                mediaItem,
-                spec,
-                initialPositionMs.coerceAtLeast(0L)
-            )
+            mediaSource = created.mediaSource,
+            sabrQualityController = created.qualityController
         )
     }
 
@@ -266,6 +272,10 @@ class PlaybackQueueManager(
             ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE)
             ?: PlaybackService.ENGINE_DIRECT
         activePlaybackEngine = engine
+        sabrQualityWarmGeneration += 1
+        sabrQualityWarmPending = false
+        activeSabrQualityController =
+            if (engine == PlaybackService.ENGINE_SABR) playback.sabrQualityController else null
 
         if (playback.mediaSource != null) {
             player.setMediaSource(playback.mediaSource)
@@ -552,15 +562,50 @@ class PlaybackQueueManager(
             activePlaybackEngine != PlaybackService.ENGINE_SABR &&
             activePlaybackEngine != PlaybackService.ENGINE_HLS
         ) return
+        if (activePlaybackEngine == PlaybackService.ENGINE_SABR && sabrQualityWarmPending) {
+            return
+        }
         if (preferences.loadVideoQuality().targetHeight == null) return
         applyAdaptiveVideoQualityConstraint()
     }
 
     fun applyVideoQualityChange(positionMs: Long, playWhenReady: Boolean): String {
-        if (
-            activePlaybackEngine == PlaybackService.ENGINE_SABR ||
-            activePlaybackEngine == PlaybackService.ENGINE_HLS
-        ) {
+        if (activePlaybackEngine == PlaybackService.ENGINE_SABR) {
+            val controller = activeSabrQualityController
+            if (controller == null) {
+                applyAdaptiveVideoQualityConstraint()
+                return activePlaybackEngine
+            }
+
+            val requestGeneration = ++sabrQualityWarmGeneration
+            sabrQualityWarmPending = true
+            val targetHeight = preferences.loadVideoQuality().targetHeight
+            val warmPositionMs = maxOf(
+                positionMs.coerceAtLeast(0L),
+                player.currentPosition.coerceAtLeast(0L),
+                player.bufferedPosition.coerceAtLeast(0L)
+            )
+
+            scope.launch {
+                // Keep the current representation playing while the first target
+                // segments are fetched into the same SABR cache. Only the latest
+                // quality request is allowed to change Media3's constraint.
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        controller.warm(targetHeight, warmPositionMs)
+                    }
+                }
+                if (requestGeneration != sabrQualityWarmGeneration) return@launch
+                if (activePlaybackEngine != PlaybackService.ENGINE_SABR) return@launch
+                if (activeSabrQualityController !== controller) return@launch
+
+                sabrQualityWarmPending = false
+                applyAdaptiveVideoQualityConstraint()
+            }
+            return activePlaybackEngine
+        }
+
+        if (activePlaybackEngine == PlaybackService.ENGINE_HLS) {
             applyAdaptiveVideoQualityConstraint()
             return activePlaybackEngine
         }
