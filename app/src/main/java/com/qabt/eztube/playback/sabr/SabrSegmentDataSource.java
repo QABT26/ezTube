@@ -55,6 +55,10 @@ final class SabrSegmentDataSource implements DataSource {
             totalBytes = data.length;
             available = Math.max(0, totalBytes - position);
         } else {
+            // Media3 chooses the active Representation. Keep the SABR request
+            // coordinator in sync so paired audio requests continue requesting
+            // the newly selected video quality rather than the bootstrap format.
+            bridge.noteRequestedFormat(request.getFormat());
             SabrMediaSegment segment = awaitSegment(request);
             try {
                 dataStream = segment.openStream();
