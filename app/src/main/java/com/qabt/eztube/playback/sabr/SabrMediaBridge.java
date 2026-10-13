@@ -223,6 +223,30 @@ final class SabrMediaBridge {
         );
     }
 
+    void prefetchVideoAt(YoutubeSabrInfo.Format format, long positionMs) throws IOException, ExtractionException {
+        if (format == null || !format.isVideo()) return;
+        final YoutubeSabrFormatTimeline timeline = getTimeline(format);
+        final int end = timeline.getEndSequence();
+        if (end <= 0) return;
+
+        int sequence = 1;
+        final long target = Math.max(0L, positionMs);
+        for (int candidate = 1; candidate <= end; candidate++) {
+            sequence = candidate;
+            if (timeline.getEndMs(candidate) > target) break;
+        }
+
+        // Warm the segment at the playhead and one following segment. requestFor()
+        // stores returned media in the normal SABR cache without changing Media3's
+        // current representation.
+        for (int candidate = sequence; candidate <= Math.min(end, sequence + 1); candidate++) {
+            final SabrSegmentKey key = SabrSegmentKey.media(format, candidate);
+            if (cachedSegment(key) == null) {
+                requestFor(key);
+            }
+        }
+    }
+
     void discard(SabrSegmentKey key) {
         final SabrMediaSegment segment;
         synchronized (ahead) {
