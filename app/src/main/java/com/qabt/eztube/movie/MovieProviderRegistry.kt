@@ -123,9 +123,8 @@ class MovieProviderRegistry(
             .filterNot { it.id == primary.id }
             .sortedByDescending { provider ->
                 when (provider.id) {
-                    "ophim" -> 40
+                    "motphim" -> 40
                     "phimapi" -> 30
-                    "motphim" -> 20
                     else -> 0
                 }
             }
@@ -177,7 +176,7 @@ class MovieProviderRegistry(
             val direct = runCatching { primary.resolve(mediaId) }
             if (direct.isSuccess) {
                 val playback = direct.getOrThrow()
-                if (isPlayableHls(playback.hlsUrl)) {
+                if (isPlayableHls(playback.hlsUrl, playback.requestHeaders)) {
                     activeProviderByMediaId[mediaId] = primary.id
                     return playback
                 }
@@ -238,9 +237,8 @@ class MovieProviderRegistry(
             .filterNot { it.id in excludedProviderIds }
             .sortedByDescending { provider ->
                 when (provider.id) {
-                    "ophim" -> 40
+                    "motphim" -> 40
                     "phimapi" -> 30
-                    "motphim" -> 20
                     else -> 0
                 }
             }
@@ -272,7 +270,7 @@ class MovieProviderRegistry(
                 val playbackResult = runCatching { provider.resolve(episode.stableId) }
                 if (playbackResult.isSuccess) {
                     val playback = playbackResult.getOrThrow()
-                    if (isPlayableHls(playback.hlsUrl)) {
+                    if (isPlayableHls(playback.hlsUrl, playback.requestHeaders)) {
                         return@runCatching playback
                     }
                     lastError = IOException("${provider.displayName} returned an unusable HLS source")
@@ -341,19 +339,33 @@ class MovieProviderRegistry(
         return parts[1].takeIf { it.isNotBlank() }
     }
 
-    private fun isPlayableHls(url: String): Boolean {
+    private fun isPlayableHls(
+        url: String,
+        headers: Map<String, String> = emptyMap()
+    ): Boolean {
         val target = url.trim()
         if (target.isBlank()) return false
 
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(target)
             .header(
                 "User-Agent",
-                "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
-                    "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
+                headers["User-Agent"]
+                    ?: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
             )
-            .header("Accept", "application/vnd.apple.mpegurl,application/x-mpegURL,*/*")
+            .header(
+                "Accept",
+                headers["Accept"]
+                    ?: "application/vnd.apple.mpegurl,application/x-mpegURL,*/*"
+            )
             .header("Range", "bytes=0-4095")
+
+        headers.forEach { (name, value) ->
+            requestBuilder.header(name, value)
+        }
+
+        val request = requestBuilder
             .get()
             .build()
 
@@ -396,10 +408,10 @@ class MovieProviderRegistry(
 
     private fun providerPreference(item: MovieCatalogItem): Int =
         when (item.providerId) {
-            // Prefer providers that expose direct HLS over embed-first sources.
-            "ophim" -> 40
+            // MotPhim is the primary catalog/source for the current movie flow.
+            // Its provider already prefers direct m3u8 over embed mirrors.
+            "motphim" -> 40
             "phimapi" -> 30
-            "motphim" -> 20
             else -> 0
         }
 
@@ -450,9 +462,8 @@ class MovieProviderRegistry(
         fun default(): MovieProviderRegistry =
             MovieProviderRegistry(
                 providers = listOf(
-                    OPhimMovieProvider(),
-                    PhimApiMovieProvider(),
-                    MotPhimMovieProvider()
+                    MotPhimMovieProvider(),
+                    PhimApiMovieProvider()
                 )
             )
     }
