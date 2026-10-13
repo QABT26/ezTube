@@ -26,7 +26,7 @@ public final class SabrMediaSourceFactory {
     private SabrMediaSourceFactory() {
     }
 
-    public static MediaSource create(
+    public static CreatedSource create(
             MediaItem mediaItem,
             SabrSourceSpec spec,
             long initialPositionMs
@@ -58,12 +58,69 @@ public final class SabrMediaSourceFactory {
         final DataSource.Factory segmentFactory =
                 () -> new SabrSegmentDataSource(spec, bridge);
 
-        return new DashMediaSource.Factory(
+        final MediaSource mediaSource = new DashMediaSource.Factory(
                 new DefaultDashChunkSource.Factory(segmentFactory),
                 segmentFactory
         )
                 .setLoadErrorHandlingPolicy(new SabrLoadErrorHandlingPolicy())
                 .createMediaSource(manifest, mediaItem);
+
+        return new CreatedSource(
+                mediaSource,
+                new QualityController(spec, bridge)
+        );
+    }
+
+    public static final class CreatedSource {
+        private final MediaSource mediaSource;
+        private final QualityController qualityController;
+
+        CreatedSource(
+                MediaSource mediaSource,
+                QualityController qualityController
+        ) {
+            this.mediaSource = mediaSource;
+            this.qualityController = qualityController;
+        }
+
+        public MediaSource getMediaSource() {
+            return mediaSource;
+        }
+
+        public QualityController getQualityController() {
+            return qualityController;
+        }
+    }
+
+    public static final class QualityController {
+        private final SabrSourceSpec spec;
+        private final SabrMediaBridge bridge;
+
+        QualityController(
+                SabrSourceSpec spec,
+                SabrMediaBridge bridge
+        ) {
+            this.spec = spec;
+            this.bridge = bridge;
+        }
+
+        public int getTargetHeight(Integer targetHeight) {
+            return spec.getBestVideoFormatForHeight(targetHeight).getHeight();
+        }
+
+        public void warm(Integer targetHeight, long positionMs) throws IOException {
+            final YoutubeSabrInfo.Format format =
+                    spec.getBestVideoFormatForHeight(targetHeight);
+            try {
+                bridge.prefetchVideoAt(format, Math.max(0L, positionMs));
+            } catch (ExtractionException error) {
+                throw new IOException(
+                        "Could not prewarm SABR quality "
+                                + format.getHeight() + "p",
+                        error
+                );
+            }
+        }
     }
 
     private static DashManifest buildManifest(
