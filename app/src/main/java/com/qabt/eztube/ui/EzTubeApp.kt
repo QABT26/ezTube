@@ -116,6 +116,7 @@ fun EzTubeApp() {
     var actualVideoHeight by remember { mutableIntStateOf(0) }
     var playbackEngine by remember { mutableStateOf(PlaybackService.ENGINE_DIRECT) }
     var movieDiagnostic by remember { mutableStateOf<String?>(null) }
+    var sabrDiagnostic by remember { mutableStateOf<String?>(null) }
     var developerUnlocked by remember {
         mutableStateOf(playbackPrefs.loadDeveloperUnlocked())
     }
@@ -587,6 +588,41 @@ fun EzTubeApp() {
         }
     }
 
+    LaunchedEffect(
+        developerMode,
+        controller,
+        playbackEngine,
+        videoMode,
+        nowPlaying?.id
+    ) {
+        if (
+            !developerMode ||
+            controller == null ||
+            !videoMode ||
+            nowPlaying?.id?.startsWith("movie:") == true
+        ) {
+            sabrDiagnostic = null
+            return@LaunchedEffect
+        }
+
+        while (true) {
+            val active = controller ?: break
+            val future = active.sendCustomCommand(
+                androidx.media3.session.SessionCommand(
+                    PlaybackService.COMMAND_GET_SABR_DIAGNOSTIC,
+                    android.os.Bundle.EMPTY
+                ),
+                android.os.Bundle.EMPTY
+            )
+            val result = withContext(Dispatchers.IO) {
+                runCatching { future.get() }.getOrNull()
+            }
+            sabrDiagnostic = result?.extras
+                ?.getString(PlaybackService.EXTRA_SABR_DIAGNOSTIC)
+            delay(500L)
+        }
+    }
+
     LaunchedEffect(Unit) {
         playbackPrefs.loadQueue()?.let { (savedQueue, savedIndex) ->
             val normalizedQueue = savedQueue.map(::normalizeMoviePresentation)
@@ -898,6 +934,7 @@ fun EzTubeApp() {
                     isBuffering = isBuffering,
                     playerError = playerError ?: errorMessage,
                     movieDiagnostic = movieDiagnostic,
+                    sabrDiagnostic = sabrDiagnostic,
                     developerMode = developerMode,
                     sleepMinutes = sleepMinutes,
                     autoplay = autoplay,
@@ -2763,6 +2800,7 @@ private data class FullPlayerState(
     val isBuffering: Boolean,
     val playerError: String?,
     val movieDiagnostic: String?,
+    val sabrDiagnostic: String?,
     val developerMode: Boolean,
     val sleepMinutes: Int?,
     val autoplay: Boolean,
@@ -2818,6 +2856,7 @@ private fun FullPlayer(
     val isBuffering = state.isBuffering
     val playerError = state.playerError
     val movieDiagnostic = state.movieDiagnostic
+    val sabrDiagnostic = state.sabrDiagnostic
     val developerMode = state.developerMode
     val sleepMinutes = state.sleepMinutes
     val autoplay = state.autoplay
@@ -3611,6 +3650,25 @@ private fun FullPlayer(
                 ) {
                     Text(
                         movieDiagnostic,
+                        modifier = Modifier.padding(8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            if (
+                developerMode &&
+                !isMovie &&
+                videoMode &&
+                !sabrDiagnostic.isNullOrBlank()
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    tonalElevation = 1.dp,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        sabrDiagnostic,
                         modifier = Modifier.padding(8.dp),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
