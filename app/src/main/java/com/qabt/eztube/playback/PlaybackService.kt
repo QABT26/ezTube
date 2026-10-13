@@ -36,6 +36,7 @@ class PlaybackService : MediaSessionService() {
         const val EXTRA_VIDEO_HEIGHT = "video_height"
         const val EXTRA_PLAYBACK_ENGINE = "playback_engine"
         const val EXTRA_IS_MOVIE = "is_movie"
+        const val EXTRA_MOVIE_DIAGNOSTIC = "movie_diagnostic"
         const val ENGINE_SABR = "sabr"
         const val ENGINE_HLS = "hls"
         const val ENGINE_DIRECT = "direct"
