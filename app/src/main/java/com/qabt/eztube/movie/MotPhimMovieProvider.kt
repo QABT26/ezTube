@@ -36,7 +36,8 @@ class MotPhimMovieProvider(
         val catalog = toCatalog(movie)
             ?: throw IOException("MotPhim movie metadata is incomplete")
 
-        val episodes = movie.getArray("episodes") ?: JsonArray()
+        val episodes = movie.getArray("episodes")
+            ?: throw IOException("MotPhim movie has no episodes")
         val refs = mutableListOf<MovieEpisodeRef>()
         for (index in 0 until episodes.size) {
             val episode = episodes.getObject(index) ?: continue
@@ -167,7 +168,7 @@ class MotPhimMovieProvider(
             title = title,
             originalTitle = movie.getString("origin_name"),
             thumbnailUrl = normalizeImage(
-                movie.getString("poster_url") ?: movie.getString("thumb_url")
+                movie.getString("thumb_url") ?: movie.getString("poster_url")
             ),
             year = movie.getInt("publish_year").takeIf { it > 0 },
             language = movie.getString("language"),
