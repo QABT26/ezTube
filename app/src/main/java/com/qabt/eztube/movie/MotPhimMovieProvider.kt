@@ -3,6 +3,9 @@ package com.qabt.eztube.movie
 import com.grack.nanojson.JsonArray
 import com.grack.nanojson.JsonObject
 import com.grack.nanojson.JsonParser
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -17,7 +20,32 @@ class MotPhimMovieProvider(
     override val id = "motphim"
     override val displayName = "MotPhim"
 
+    private val cookieStore = mutableListOf<Cookie>()
+    private val cookieJar = object : CookieJar {
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+            synchronized(cookieStore) {
+                cookies.forEach { incoming ->
+                    cookieStore.removeAll {
+                        it.name == incoming.name &&
+                            it.domain == incoming.domain &&
+                            it.path == incoming.path
+                    }
+                    cookieStore += incoming
+                }
+            }
+        }
+
+        override fun loadForRequest(url: HttpUrl): List<Cookie> =
+            synchronized(cookieStore) {
+                cookieStore.filter { it.matches(url) }
+            }
+    }
+
+    @Volatile
+    private var sessionPrimed = false
+
     private val http = client ?: OkHttpClient.Builder()
+        .cookieJar(cookieJar)
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(12, TimeUnit.SECONDS)
         .followRedirects(true)
@@ -127,6 +155,7 @@ class MotPhimMovieProvider(
 
     private fun searchRaw(query: String): List<JsonObject> {
         if (query.isBlank()) return emptyList()
+        ensureSession()
         val url = BASE_URL.toHttpUrl()
             .newBuilder()
             .addPathSegment("search")
@@ -265,24 +294,57 @@ class MotPhimMovieProvider(
         return runCatching { JsonParser.`object`().from(body) }.getOrNull()
     }
 
-    private fun getText(url: String): String {
-        val request = Request.Builder()
+    private fun ensureSession() {
+        if (sessionPrimed) return
+        synchronized(this) {
+            if (sessionPrimed) return
+            runCatching {
+                executeText(
+                    url = BASE_URL,
+                    accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    xhr = false
+                )
+            }
+            sessionPrimed = true
+        }
+    }
+
+    private fun getText(url: String): String =
+        executeText(
+            url = url,
+            accept = "application/json, text/plain, */*",
+            xhr = true
+        )
+
+    private fun executeText(
+        url: String,
+        accept: String,
+        xhr: Boolean
+    ): String {
+        val builder = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
-            .header("Accept", "application/json, text/plain, */*")
+            .header("Accept", accept)
+            .header("Accept-Language", "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7")
             .header("Referer", "$BASE_URL/")
-            .header("Origin", BASE_URL)
-            .header("X-Requested-With", "XMLHttpRequest")
             .header("Sec-Fetch-Site", "same-origin")
-            .header("Sec-Fetch-Mode", "cors")
-            .header("Sec-Fetch-Dest", "empty")
+            .header("Sec-Fetch-Mode", if (xhr) "cors" else "navigate")
+            .header("Sec-Fetch-Dest", if (xhr) "empty" else "document")
             .get()
-            .build()
 
-        http.newCall(request).execute().use { response ->
+        if (xhr) {
+            builder
+                .header("Origin", BASE_URL)
+                .header("X-Requested-With", "XMLHttpRequest")
+        }
+
+        http.newCall(builder.build()).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("MotPhim HTTP ${response.code}")
+                throw IOException(
+                    "MotPhim HTTP ${response.code} " +
+                        (response.header("server") ?: "")
+                )
             }
             return body
         }
