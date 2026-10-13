@@ -582,8 +582,7 @@ class PlaybackQueueManager(
             val targetHeight = preferences.loadVideoQuality().targetHeight
             val warmPositionMs = maxOf(
                 positionMs.coerceAtLeast(0L),
-                player.currentPosition.coerceAtLeast(0L),
-                player.bufferedPosition.coerceAtLeast(0L)
+                player.currentPosition.coerceAtLeast(0L)
             )
 
             scope.launch {
