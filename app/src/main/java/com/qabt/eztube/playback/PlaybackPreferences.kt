@@ -83,6 +83,13 @@ class PlaybackPreferences(context: Context) {
 
     fun loadDeveloperMode(): Boolean = prefs.getBoolean("developer_mode", false)
 
+    fun saveDeveloperUnlocked(unlocked: Boolean) {
+        prefs.edit().putBoolean("developer_unlocked", unlocked).apply()
+    }
+
+    fun loadDeveloperUnlocked(): Boolean =
+        prefs.getBoolean("developer_unlocked", false)
+
     fun saveQuality(quality: AudioQuality) {
         prefs.edit().putString("quality", quality.name).apply()
     }
