@@ -54,13 +54,27 @@ data class MovieEpisodeRef(
         id = stableId,
         title = buildString {
             append(movieTitle)
-            if (episodeName.isNotBlank()) append(" · ").append(episodeName)
+            val genericEpisode = episodeName.equals("Video", ignoreCase = true)
+            if (episodeName.isNotBlank() && !genericEpisode) {
+                append(" · ").append(episodeName)
+            }
         },
         channel = buildList {
             add(providerName)
-            if (serverName.isNotBlank()) add(serverName)
-            language?.takeIf { it.isNotBlank() && !serverName.contains(it, ignoreCase = true) }?.let(::add)
-        }.joinToString(" · "),
+            if (
+                serverName.isNotBlank() &&
+                !serverName.equals(providerName, ignoreCase = true)
+            ) {
+                add(serverName)
+            }
+            language
+                ?.takeIf {
+                    it.isNotBlank() &&
+                        !serverName.contains(it, ignoreCase = true) &&
+                        !providerName.contains(it, ignoreCase = true)
+                }
+                ?.let(::add)
+        }.distinctBy { it.lowercase() }.joinToString(" · "),
         thumbnailUrl = thumbnailUrl,
         durationSeconds = durationSeconds ?: -1L
     )
