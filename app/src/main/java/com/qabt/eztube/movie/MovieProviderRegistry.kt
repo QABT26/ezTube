@@ -169,6 +169,7 @@ class MovieProviderRegistry(
             .filterNot { it.id in excludedProviderIds }
             .sortedByDescending { provider ->
                 when (provider.id) {
+                    "ophim" -> 40
                     "phimapi" -> 30
                     "motphim" -> 20
                     else -> 0
@@ -280,8 +281,8 @@ class MovieProviderRegistry(
 
     private fun providerPreference(item: MovieCatalogItem): Int =
         when (item.providerId) {
-            // KKPhim/PhimAPI exposes direct HLS in its episode payload, so prefer it
-            // over embed-first providers when the same movie exists in both catalogs.
+            // Prefer providers that expose direct HLS over embed-first sources.
+            "ophim" -> 40
             "phimapi" -> 30
             "motphim" -> 20
             else -> 0
@@ -334,6 +335,7 @@ class MovieProviderRegistry(
         fun default(): MovieProviderRegistry =
             MovieProviderRegistry(
                 providers = listOf(
+                    OPhimMovieProvider(),
                     PhimApiMovieProvider(),
                     MotPhimMovieProvider()
                 )
