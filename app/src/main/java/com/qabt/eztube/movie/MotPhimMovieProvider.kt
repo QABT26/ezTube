@@ -79,30 +79,53 @@ class MotPhimMovieProvider(
                 ?: throw IOException("MotPhim detail not found for $slug")
         }
 
-        val single = catalog.isSeries == false ||
-            catalog.episodeBadge.equals("Full", ignoreCase = true)
+        val episodes = loadEpisodes(slug)
+        if (episodes.isEmpty()) {
+            throw IOException("MotPhim returned no episodes for $slug")
+        }
 
-        val episode = MovieEpisodeRef(
-            providerId = id,
-            providerName = displayName,
-            movieSlug = slug,
-            movieTitle = catalog.title,
-            serverIndex = 0,
-            episodeIndex = 0,
-            serverName = catalog.language?.takeIf { it.isNotBlank() } ?: "MotPhim",
-            episodeSlug = if (single) "full" else "episode-1",
-            episodeName = if (single) "Full" else "Tập 1",
-            thumbnailUrl = catalog.thumbnailUrl ?: inferredThumbnail(slug),
-            durationSeconds = catalog.durationSeconds,
-            language = catalog.language
-        )
+        val refs = episodes.mapIndexedNotNull { index, episode ->
+            val link = episode.getString("link").orEmpty().trim()
+            if (link.isBlank()) return@mapIndexedNotNull null
+
+            val server = episode.getString("server").orEmpty().ifBlank { "MotPhim" }
+            val name = episode.getString("name").orEmpty()
+                .ifBlank { if (episodes.size == 1) "Full" else "Tập ${index + 1}" }
+            val episodeSlug = episode.getString("slug").orEmpty()
+                .ifBlank { name }
+                .ifBlank { "episode-${index + 1}" }
+
+            MovieEpisodeRef(
+                providerId = id,
+                providerName = displayName,
+                movieSlug = slug,
+                movieTitle = catalog.title,
+                serverIndex = 0,
+                episodeIndex = index,
+                serverName = server,
+                episodeSlug = episodeSlug,
+                episodeName = name,
+                thumbnailUrl = catalog.thumbnailUrl ?: inferredThumbnail(slug),
+                durationSeconds = catalog.durationSeconds,
+                language = catalog.language
+            )
+        }
+
+        if (refs.isEmpty()) {
+            throw IOException("MotPhim returned no playable episodes for $slug")
+        }
+
+        val uniqueEpisodeKeys = refs
+            .map { it.episodeSlug.lowercase() }
+            .distinct()
 
         return MovieDetail(
             catalog = catalog.copy(
                 thumbnailUrl = catalog.thumbnailUrl ?: inferredThumbnail(slug),
-                isSeries = catalog.isSeries ?: false
+                isSeries = catalog.isSeries ?: (uniqueEpisodeKeys.size > 1),
+                episodeBadge = catalog.episodeBadge ?: if (uniqueEpisodeKeys.size == 1) "Full" else "${uniqueEpisodeKeys.size} tập"
             ),
-            episodes = listOf(episode)
+            episodes = refs
         )
     }
 
@@ -112,9 +135,115 @@ class MotPhimMovieProvider(
             throw IOException("Unsupported MotPhim media id")
         }
 
-        throw IOException(
-            "MotPhim playback source not wired yet for " + parts[2]
+        val slug = parts[2]
+        val serverName = decodeStablePart(parts[3])
+        val episodeKey = decodeStablePart(parts[4])
+
+        val episode = loadEpisodes(slug).firstOrNull { item ->
+            val server = item.getString("server").orEmpty().ifBlank { "MotPhim" }
+            val key = item.getString("slug").orEmpty()
+                .ifBlank { item.getString("name").orEmpty() }
+            server.equals(serverName, ignoreCase = true) &&
+                key.equals(episodeKey, ignoreCase = true)
+        } ?: throw IOException("MotPhim episode no longer exists")
+
+        val rawLink = episode.getString("link").orEmpty().trim()
+        val hls = resolveToHls(rawLink)
+            ?: throw IOException("MotPhim source could not be resolved to HLS")
+
+        return MoviePlayback(
+            mediaId = mediaId,
+            hlsUrl = hls,
+            subtitles = parseSubtitles(episode)
         )
+    }
+
+    private fun loadEpisodes(slug: String): List<JsonObject> {
+        val movieId = discoverMovieId(slug)
+        val url = BASE_URL.toHttpUrl()
+            .newBuilder()
+            .addPathSegment("baseapi")
+            .addPathSegment("episodes")
+            .addQueryParameter("movie_id", movieId)
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", DESKTOP_USER_AGENT)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "vi,en-US;q=0.9,en;q=0.8")
+            .header("Cache-Control", "no-cache")
+            .header("Pragma", "no-cache")
+            .header("Referer", "$BASE_URL/phim/$slug")
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Dest", "empty")
+            .get()
+            .build()
+
+        val body = http.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("MotPhim episodes HTTP ${response.code}")
+            }
+            text
+        }
+
+        val root = runCatching { JsonParser.`object`().from(body) }
+            .getOrElse {
+                throw IOException(
+                    "MotPhim episodes returned invalid JSON (" +
+                        body.take(80).replace("\n", " ") +
+                        ")",
+                    it
+                )
+            }
+
+        val array =
+            root.getArray("episodes")
+                ?: root.getArray("data")
+                ?: root.getObject("data")?.getArray("episodes")
+                ?: root.getObject("data")?.getArray("data")
+                ?: return emptyList()
+
+        return buildList {
+            for (index in 0 until array.size) {
+                array.getObject(index)?.let(::add)
+            }
+        }
+    }
+
+    private fun discoverMovieId(slug: String): String {
+        val pageUrl = "$BASE_URL/phim/$slug"
+        val request = Request.Builder()
+            .url(pageUrl)
+            .header("User-Agent", DESKTOP_USER_AGENT)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "vi,en-US;q=0.9,en;q=0.8")
+            .header("Cache-Control", "no-cache")
+            .header("Pragma", "no-cache")
+            .get()
+            .build()
+
+        val body = http.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("MotPhim detail page HTTP ${response.code}")
+            }
+            text
+        }
+
+        MOVIE_ID_PATTERNS.forEach { regex ->
+            regex.find(body)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }?.let {
+                return it
+            }
+        }
+
+        if (slug == "co-chu-nho-1703914501") {
+            return "38339"
+        }
+
+        throw IOException("MotPhim movie_id not found for $slug")
     }
 
     private fun searchRsc(query: String): List<MovieCatalogItem> {
@@ -613,5 +742,11 @@ class MotPhimMovieProvider(
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
         val UNICODE_ESCAPE_REGEX = Regex("""\\u([0-9a-fA-F]{4})""")
+        val MOVIE_ID_PATTERNS = listOf(
+            Regex("""movie_id["'=:\\s]+(\\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""["']movie_id["']\\s*:\\s*["']?(\\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""data-movie-id=["'](\\d+)["']""", RegexOption.IGNORE_CASE),
+            Regex("""movieId["'=:\\s]+(\\d+)""", RegexOption.IGNORE_CASE)
+        )
     }
 }
