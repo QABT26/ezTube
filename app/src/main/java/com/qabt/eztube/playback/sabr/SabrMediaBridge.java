@@ -229,17 +229,23 @@ final class SabrMediaBridge {
         final int end = timeline.getEndSequence();
         if (end <= 0) return;
 
-        int sequence = 1;
+        int currentSequence = 1;
         final long target = Math.max(0L, positionMs);
         for (int candidate = 1; candidate <= end; candidate++) {
-            sequence = candidate;
+            currentSequence = candidate;
             if (timeline.getEndMs(candidate) > target) break;
         }
 
-        // Warm the segment at the playhead and one following segment. requestFor()
-        // stores returned media in the normal SABR cache without changing Media3's
-        // current representation.
-        for (int candidate = sequence; candidate <= Math.min(end, sequence + 1); candidate++) {
+        // Never prewarm the segment that already contains the playhead. Switching
+        // representations inside that segment can make Media3 revisit its start
+        // and either replay a short piece or rebuffer. Warm only the next boundary
+        // and one segment after it so the current representation can finish cleanly.
+        final int firstWarmSequence = Math.min(end, currentSequence + 1);
+        for (
+                int candidate = firstWarmSequence;
+                candidate <= Math.min(end, firstWarmSequence + 1);
+                candidate++
+        ) {
             final SabrSegmentKey key = SabrSegmentKey.media(format, candidate);
             if (cachedSegment(key) == null) {
                 requestFor(key);
