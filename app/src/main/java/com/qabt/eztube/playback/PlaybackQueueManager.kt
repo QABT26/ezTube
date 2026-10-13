@@ -118,6 +118,9 @@ class PlaybackQueueManager(
                 putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0)
                 putString(PlaybackService.EXTRA_PLAYBACK_ENGINE, PlaybackService.ENGINE_HLS)
                 putBoolean(PlaybackService.EXTRA_IS_MOVIE, true)
+                playback.diagnostic?.let {
+                    putString(PlaybackService.EXTRA_MOVIE_DIAGNOSTIC, it)
+                }
             })
             .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
             .build()
