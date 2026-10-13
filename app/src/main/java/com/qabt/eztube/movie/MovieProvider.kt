@@ -75,7 +75,8 @@ data class MoviePlayback(
     val mediaId: String,
     val hlsUrl: String,
     val subtitles: List<MovieSubtitle> = emptyList(),
-    val requestHeaders: Map<String, String> = emptyMap()
+    val requestHeaders: Map<String, String> = emptyMap(),
+    val diagnostic: String? = null
 )
 
 interface MovieProvider {
