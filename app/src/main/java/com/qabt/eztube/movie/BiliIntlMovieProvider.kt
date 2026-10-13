@@ -280,9 +280,11 @@ class BiliIntlMovieProvider(
                 throw IOException("Bilibili page HTTP ${response.code}")
             }
             Metadata(
-                title = extractMeta(body, "og:title")
-                    ?: extractHtmlTitle(body)
-                    ?: "Bilibili video $aid",
+                title = cleanBiliTitle(
+                    extractMeta(body, "og:title")
+                        ?: extractHtmlTitle(body)
+                        ?: "Bilibili video $aid"
+                ),
                 thumbnail = extractMeta(body, "og:image")
             )
         }
@@ -585,9 +587,24 @@ class BiliIntlMovieProvider(
     }
 
     private fun cleanSearchTitle(value: String): String =
-        htmlDecode(
-            value.replace(Regex("""<[^>]+>"""), "")
-        ).replace(Regex("""\s+"""), " ").trim()
+        cleanBiliTitle(
+            htmlDecode(
+                value.replace(Regex("""<[^>]+>"""), "")
+            )
+        )
+
+    private fun cleanBiliTitle(value: String): String =
+        value
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+            .replace(
+                Regex(
+                    """\s*(?:[-|·]\s*)?BiliBili\s*$""",
+                    RegexOption.IGNORE_CASE
+                ),
+                ""
+            )
+            .trim()
 
     private fun normalizeBiliImage(value: String?): String? {
         val raw = value?.trim().orEmpty()
