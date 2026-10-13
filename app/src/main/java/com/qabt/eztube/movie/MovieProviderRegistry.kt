@@ -20,6 +20,8 @@ class MovieProviderRegistry(
 
     private val failedProvidersByMediaId =
         java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
+    private val activeProviderByMediaId =
+        java.util.concurrent.ConcurrentHashMap<String, String>()
 
     fun search(query: String): List<MediaSummary> {
         val normalizedQuery = query.trim()
@@ -103,13 +105,16 @@ class MovieProviderRegistry(
             ?: throw IOException("No movie provider can resolve this item")
 
         val failed = failedProvidersByMediaId
-            .computeIfAbsent(mediaId) { java.util.concurrent.ConcurrentHashMap.newKeySet() }
+            .computeIfAbsent(mediaId) { java.util.concurrent.ConcurrentHashMap.newKeySet<String>() }
 
         var lastError: Throwable? = null
 
         if (primary.id !in failed) {
             val direct = runCatching { primary.resolve(mediaId) }
-            if (direct.isSuccess) return direct.getOrThrow()
+            if (direct.isSuccess) {
+                activeProviderByMediaId[mediaId] = primary.id
+                return direct.getOrThrow()
+            }
             lastError = direct.exceptionOrNull()
             failed += primary.id
         }
@@ -119,7 +124,13 @@ class MovieProviderRegistry(
             mediaTitle = mediaTitle,
             excludedProviderIds = failed + primary.id
         )
-        if (fallback.isSuccess) return fallback.getOrThrow()
+        if (fallback.isSuccess) {
+            val playback = fallback.getOrThrow()
+            parseEpisodeProviderId(playback.mediaId)?.let {
+                activeProviderByMediaId[mediaId] = it
+            }
+            return playback
+        }
         lastError = fallback.exceptionOrNull() ?: lastError
 
         throw IOException(
@@ -129,9 +140,11 @@ class MovieProviderRegistry(
     }
 
     fun reportPlaybackFailure(mediaId: String) {
-        val providerId = parseEpisodeProviderId(mediaId) ?: return
+        val providerId = activeProviderByMediaId[mediaId]
+            ?: parseEpisodeProviderId(mediaId)
+            ?: return
         failedProvidersByMediaId
-            .computeIfAbsent(mediaId) { java.util.concurrent.ConcurrentHashMap.newKeySet() }
+            .computeIfAbsent(mediaId) { java.util.concurrent.ConcurrentHashMap.newKeySet<String>() }
             .add(providerId)
     }
 
@@ -163,28 +176,34 @@ class MovieProviderRegistry(
             }
 
         for (provider in alternates) {
-            val candidates = runCatching { provider.search(movieTitle) }
-                .getOrElse {
-                    lastError = it
-                    continue
-                }
+            val searchResult = runCatching { provider.search(movieTitle) }
+            if (searchResult.isFailure) {
+                lastError = searchResult.exceptionOrNull()
+                continue
+            }
+
+            val candidates = searchResult.getOrThrow()
                 .sortedByDescending { queryScore(movieTitle, it) }
 
             for (candidate in candidates.take(4)) {
                 if (queryScore(movieTitle, candidate) < 600) continue
 
-                val detail = runCatching { provider.detail(candidate.slug) }
-                    .getOrElse {
-                        lastError = it
-                        continue
-                    }
+                val detailResult = runCatching { provider.detail(candidate.slug) }
+                if (detailResult.isFailure) {
+                    lastError = detailResult.exceptionOrNull()
+                    continue
+                }
 
-                val episode = selectEquivalentEpisode(detail.episodes, episodeHint)
-                    ?: continue
+                val episode = selectEquivalentEpisode(
+                    detailResult.getOrThrow().episodes,
+                    episodeHint
+                ) ?: continue
 
-                val playback = runCatching { provider.resolve(episode.stableId) }
-                if (playback.isSuccess) return@runCatching playback.getOrThrow()
-                lastError = playback.exceptionOrNull()
+                val playbackResult = runCatching { provider.resolve(episode.stableId) }
+                if (playbackResult.isSuccess) {
+                    return@runCatching playbackResult.getOrThrow()
+                }
+                lastError = playbackResult.exceptionOrNull()
             }
         }
 
