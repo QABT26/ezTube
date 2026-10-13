@@ -103,21 +103,28 @@ class BiliIntlMovieProvider(
         val audioUrl = play.audioUrl
             ?: throw IOException("Bilibili returned no audio stream")
 
+        val headers = mapOf(
+            "User-Agent" to USER_AGENT,
+            "Referer" to "$WEB_BASE/"
+        )
+        val probeVideo = play.videoStreams.maxByOrNull { it.height ?: 0 }
+            ?: throw IOException("Bilibili returned no video streams")
+        val videoHttp = probeMedia(probeVideo.url, headers, "video")
+        val audioHttp = probeMedia(audioUrl, headers, "audio")
+
         return MoviePlayback(
             mediaId = mediaId,
             videoStreams = play.videoStreams,
             audioUrl = audioUrl,
             audioMimeType = play.audioMimeType,
-            requestHeaders = mapOf(
-                "User-Agent" to USER_AGENT,
-                "Referer" to "$WEB_BASE/"
-            ),
+            requestHeaders = headers,
             diagnostic = buildString {
                 append("Provider: Bilibili")
                 append("\nAID: ").append(aid)
                 append("\nPlay API: OK")
                 append("\nVideo streams: ").append(play.videoStreams.size)
-                append("\nAudio: OK")
+                append("\nVideo CDN: HTTP ").append(videoHttp)
+                append("\nAudio CDN: HTTP ").append(audioHttp)
             }
         )
     }
@@ -194,7 +201,7 @@ class BiliIntlMovieProvider(
             if (body.isBlank()) {
                 throw IOException("Bilibili play API returned empty body")
             }
-            runCatching { JsonParser.\`object\`().from(body) }
+            runCatching { JsonParser.`object`().from(body) }
                 .getOrElse { throw IOException("Bilibili play API returned invalid JSON", it) }
         }
 
@@ -218,23 +225,25 @@ class BiliIntlMovieProvider(
             ?: throw IOException("Bilibili play API has no playurl")
 
         val streams = mutableListOf<MovieVideoStream>()
-        val videos = playurl.getArray("video") ?: JsonArray()
-        for (index in 0 until videos.size) {
-            val video = videos.getObject(index) ?: continue
-            val resource = video.getObject("video_resource") ?: continue
-            val urlValue = resource.getString("url").orEmpty().trim()
-            if (urlValue.isBlank()) continue
+        val videos = playurl.getArray("video")
+        if (videos != null) {
+            for (index in 0 until videos.size) {
+                val video = videos.getObject(index) ?: continue
+                val resource = video.getObject("video_resource") ?: continue
+                val urlValue = resource.getString("url").orEmpty().trim()
+                if (urlValue.isBlank()) continue
 
-            streams += MovieVideoStream(
-                url = urlValue,
-                mimeType = resource.getString("mimetype")
-                    ?.takeIf { it.isNotBlank() }
-                    ?: "video/mp4",
-                width = resource.getInt("width").takeIf { it > 0 },
-                height = resource.getInt("height").takeIf { it > 0 },
-                bitrate = resource.getInt("bandwidth").takeIf { it > 0 },
-                codecs = resource.getString("codecs")
-            )
+                streams += MovieVideoStream(
+                    url = urlValue,
+                    mimeType = resource.getString("mimetype")
+                        ?.takeIf { it.isNotBlank() }
+                        ?: "video/mp4",
+                    width = resource.getInt("width").takeIf { it > 0 },
+                    height = resource.getInt("height").takeIf { it > 0 },
+                    bitrate = resource.getInt("bandwidth").takeIf { it > 0 },
+                    codecs = resource.getString("codecs")
+                )
+            }
         }
 
         val audios = playurl.getArray("audio_resource")
@@ -261,18 +270,34 @@ class BiliIntlMovieProvider(
         )
     }
 
-    private fun extractMeta(body: String, property: String): String? {
-        META_REGEX.findAll(body).forEach { match ->
-            val firstName = htmlDecode(match.groupValues[1])
-            val firstValue = htmlDecode(match.groupValues[2])
-            val secondName = htmlDecode(match.groupValues[3])
-            val secondValue = htmlDecode(match.groupValues[4])
+    private fun probeMedia(
+        url: String,
+        headers: Map<String, String>,
+        label: String
+    ): Int {
+        val builder = Request.Builder()
+            .url(url)
+            .header("Range", "bytes=0-1023")
+            .get()
+        headers.forEach { (name, value) -> builder.header(name, value) }
 
-            if (firstName.equals(property, ignoreCase = true)) {
-                return secondValue.trim().takeIf { it.isNotBlank() }
+        return http.newCall(builder.build()).execute().use { response ->
+            if (!response.isSuccessful && response.code != 206) {
+                throw IOException("Bilibili $label CDN HTTP ${response.code}")
             }
-            if (secondName.equals(property, ignoreCase = true)) {
-                return firstValue.trim().takeIf { it.isNotBlank() }
+            response.code
+        }
+    }
+
+    private fun extractMeta(body: String, property: String): String? {
+        META_PROPERTY_FIRST.find(body)?.let { match ->
+            if (htmlDecode(match.groupValues[1]).equals(property, ignoreCase = true)) {
+                return htmlDecode(match.groupValues[2]).trim().takeIf { it.isNotBlank() }
+            }
+        }
+        META_CONTENT_FIRST.find(body)?.let { match ->
+            if (htmlDecode(match.groupValues[2]).equals(property, ignoreCase = true)) {
+                return htmlDecode(match.groupValues[1]).trim().takeIf { it.isNotBlank() }
             }
         }
         return null
@@ -314,8 +339,12 @@ class BiliIntlMovieProvider(
             RegexOption.IGNORE_CASE
         )
 
-        val META_REGEX = Regex(
-            """<meta[^>]+(?:property|name)=["']([^"']+)["'][^>]+content=["']([^"']*)["'][^>]*>|<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["']([^"']+)["'][^>]*>""",
+        val META_PROPERTY_FIRST = Regex(
+            """<meta[^>]+(?:property|name)=["']([^"']+)["'][^>]+content=["']([^"']*)["'][^>]*>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        val META_CONTENT_FIRST = Regex(
+            """<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["']([^"']+)["'][^>]*>""",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
 
