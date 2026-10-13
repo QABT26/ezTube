@@ -1694,30 +1694,58 @@ private fun MovieDetailScreen(
     val historyByMediaId = remember(historyEntries) {
         historyEntries.associateBy { it.mediaId }
     }
-    val currentEpisodeIndex = detail?.episodes?.indexOfFirst { it.stableId == nowPlayingId } ?: -1
-    val targetListIndex = if (detail != null && currentEpisodeIndex >= 0) {
-        var index = 1 // header card
-        val grouped = detail.episodes.groupBy { it.serverName }
-        var target = -1
-        grouped.forEach { (server, refs) ->
-            index += 1 // server header
-            if (refs.size > 1) index += 1 // quick episode picker
-            val localIndex = refs.indexOfFirst { it.stableId == nowPlayingId }
-            if (target < 0 && localIndex >= 0) {
-                target = index + localIndex
-            }
-            index += refs.size
-        }
-        target
-    } else -1
+    val grouped = remember(detail) {
+        detail?.episodes?.groupBy { it.serverName }.orEmpty()
+    }
+    val serverNames = remember(grouped) { grouped.keys.toList() }
+    val initialServer = remember(detail?.catalog?.stableId) {
+        detail?.episodes
+            ?.firstOrNull { it.stableId == nowPlayingId }
+            ?.serverName
+            ?: serverNames.firstOrNull()
+    }
+    var selectedServer by remember(detail?.catalog?.stableId) {
+        mutableStateOf(initialServer)
+    }
 
-    LaunchedEffect(detail?.catalog?.stableId, nowPlayingId, targetListIndex) {
+    LaunchedEffect(detail?.catalog?.stableId, nowPlayingId) {
+        val playingServer = detail?.episodes
+            ?.firstOrNull { it.stableId == nowPlayingId }
+            ?.serverName
+        if (playingServer != null && grouped.containsKey(playingServer)) {
+            selectedServer = playingServer
+        } else if (selectedServer !in grouped) {
+            selectedServer = serverNames.firstOrNull()
+        }
+    }
+
+    val selectedRefs = selectedServer?.let { grouped[it] }.orEmpty()
+    val serverQueue = remember(selectedRefs) {
+        selectedRefs.map { it.toMediaSummary() }
+    }
+    val currentLocalIndex = selectedRefs.indexOfFirst { it.stableId == nowPlayingId }
+    val episodeRowsStartIndex =
+        1 + // movie header
+            (if (serverNames.size > 1) 1 else 0) + // server selector
+            1 + // selected server heading
+            (if (selectedRefs.size > 1) 1 else 0) // quick picker
+    val targetListIndex =
+        if (currentLocalIndex >= 0) episodeRowsStartIndex + currentLocalIndex else -1
+
+    LaunchedEffect(
+        detail?.catalog?.stableId,
+        selectedServer,
+        nowPlayingId,
+        targetListIndex
+    ) {
         if (targetListIndex >= 0) {
             listState.animateScrollToItem(targetListIndex)
-            val visible = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetListIndex }
+            val visible = listState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.index == targetListIndex }
             if (visible != null) {
                 val viewportCenter =
-                    (listState.layoutInfo.viewportStartOffset + listState.layoutInfo.viewportEndOffset) / 2
+                    (listState.layoutInfo.viewportStartOffset +
+                        listState.layoutInfo.viewportEndOffset) / 2
                 val itemCenter = visible.offset + visible.size / 2
                 listState.animateScrollBy((itemCenter - viewportCenter).toFloat())
             }
@@ -1750,9 +1778,6 @@ private fun MovieDetailScreen(
                 Text(error, color = MaterialTheme.colorScheme.error)
             }
             detail != null -> {
-                val queueItems = remember(detail) {
-                    detail.episodes.map { it.toMediaSummary() }
-                }
                 LazyColumn(
                     Modifier.fillMaxSize(),
                     state = listState,
@@ -1767,7 +1792,7 @@ private fun MovieDetailScreen(
                             AsyncImage(
                                 detail.catalog.thumbnailUrl,
                                 null,
-                                Modifier.size(width = 118.dp, height = 168.dp)
+                                Modifier.size(width = 104.dp, height = 148.dp)
                                     .clip(RoundedCornerShape(14.dp))
                                     .background(MaterialTheme.colorScheme.surfaceVariant),
                                 contentScale = ContentScale.Crop
@@ -1777,7 +1802,9 @@ private fun MovieDetailScreen(
                                 Text(
                                     detail.catalog.title,
                                     style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 detail.catalog.originalTitle
                                     ?.takeIf { it.isNotBlank() && it != detail.catalog.title }
@@ -1785,7 +1812,9 @@ private fun MovieDetailScreen(
                                         Text(
                                             it,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 Spacer(Modifier.height(6.dp))
@@ -1793,15 +1822,33 @@ private fun MovieDetailScreen(
                                     buildList {
                                         add(detail.catalog.providerName)
                                         detail.catalog.year?.let { add(it.toString()) }
-                                        detail.catalog.language?.takeIf { it.isNotBlank() }?.let(::add)
-                                        detail.catalog.durationText?.takeIf { it.isNotBlank() }?.let(::add)
+                                        detail.catalog.language
+                                            ?.takeIf { it.isNotBlank() }
+                                            ?.let(::add)
+                                        detail.catalog.durationText
+                                            ?.takeIf { it.isNotBlank() }
+                                            ?.let(::add)
                                     }.joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 Text(
-                                    "${queueItems.size} playable items",
+                                    buildString {
+                                        append(detail.episodes.size)
+                                        append(
+                                            if (detail.episodes.size == 1) {
+                                                " playable item"
+                                            } else {
+                                                " episodes"
+                                            }
+                                        )
+                                        if (serverNames.size > 1) {
+                                            append(" · ")
+                                            append(serverNames.size)
+                                            append(" servers")
+                                        }
+                                    },
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
@@ -1809,142 +1856,179 @@ private fun MovieDetailScreen(
                         }
                     }
 
-                    val grouped = detail.episodes.groupBy { it.serverName }
-                    grouped.forEach { (server, refs) ->
-                        val serverQueue = refs.map { it.toMediaSummary() }
-                        item(key = "server-header-$server") {
-                            Text(
-                                server,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        if (refs.size > 1) {
-                            item(key = "server-picker-$server") {
-                                val pickerState = rememberLazyListState()
-                                val currentPickerIndex = refs.indexOfFirst {
-                                    it.stableId == nowPlayingId
-                                }
-
-                                LaunchedEffect(
-                                    detail.catalog.stableId,
-                                    server,
-                                    nowPlayingId,
-                                    currentPickerIndex
-                                ) {
-                                    if (currentPickerIndex >= 0) {
-                                        pickerState.animateScrollToItem(currentPickerIndex)
-                                    }
-                                }
-
-                                LazyRow(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    state = pickerState,
-                                    contentPadding = PaddingValues(
-                                        start = 14.dp,
-                                        end = 14.dp,
-                                        bottom = 4.dp
-                                    ),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    itemsIndexed(
-                                        refs,
-                                        key = { _, ref -> "picker-${ref.stableId}" }
-                                    ) { index, ref ->
-                                        val media = serverQueue[index]
-                                        val progressEntry = historyByMediaId[media.id]
-                                        val rawLabel = ref.episodeName
-                                            .takeIf {
-                                                it.isNotBlank() &&
-                                                    !it.equals("Video", ignoreCase = true)
-                                            }
-                                            ?: "Ep ${index + 1}"
-
-                                        FilterChip(
-                                            modifier = Modifier
-                                                .height(32.dp)
-                                                .widthIn(max = 132.dp),
-                                            selected = media.id == nowPlayingId,
-                                            enabled = resolvingId == null,
-                                            onClick = {
-                                                onPlay(
-                                                    media,
-                                                    serverQueue,
-                                                    progressEntry?.positionMs
-                                                        ?.coerceAtLeast(0L)
-                                                        ?: 0L
-                                                )
-                                            },
-                                            label = {
-                                                Text(
-                                                    rawLabel,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                            },
-                                            leadingIcon = if (media.id == nowPlayingId) {
-                                                {
-                                                    Icon(
-                                                        Icons.Outlined.GraphicEq,
-                                                        null,
-                                                        Modifier.size(15.dp)
-                                                    )
-                                                }
-                                            } else null
-                                        )
-                                    }
+                    if (serverNames.size > 1) {
+                        item(key = "movie-server-selector") {
+                            LazyRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 14.dp),
+                                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                items(serverNames, key = { "server-tab-$it" }) { server ->
+                                    val count = grouped[server]?.size ?: 0
+                                    FilterChip(
+                                        selected = selectedServer == server,
+                                        onClick = { selectedServer = server },
+                                        label = {
+                                            Text(
+                                                "$server · $count",
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    )
                                 }
                             }
                         }
-                        items(
-                            serverQueue,
-                            key = { it.id }
-                        ) { media ->
-                            val progressEntry = historyByMediaId[media.id]
-                            val isCurrent = media.id == nowPlayingId
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 8.dp, vertical = 2.dp),
-                                shape = RoundedCornerShape(14.dp),
-                                color = if (isCurrent) {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.surface
-                                }
+                    }
+
+                    item(key = "selected-server-heading-$selectedServer") {
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                selectedServer.orEmpty().ifBlank { "Episodes" },
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (selectedRefs.isNotEmpty()) {
+                                Text(
+                                    "${selectedRefs.size} items",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    if (selectedRefs.size > 1) {
+                        item(key = "server-picker-$selectedServer") {
+                            val pickerState = rememberLazyListState()
+                            val currentPickerIndex = selectedRefs.indexOfFirst {
+                                it.stableId == nowPlayingId
+                            }
+
+                            LaunchedEffect(
+                                detail.catalog.stableId,
+                                selectedServer,
+                                nowPlayingId,
+                                currentPickerIndex
                             ) {
-                                Row(
-                                    Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (isCurrent) {
-                                        Icon(
-                                            Icons.Outlined.GraphicEq,
-                                            "Now playing",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier
-                                                .padding(start = 8.dp)
-                                                .size(20.dp)
-                                        )
-                                    }
-                                    Box(Modifier.weight(1f)) {
-                                        SearchResult(
-                                            media = media,
-                                            progressEntry = progressEntry,
-                                            resolving = resolvingId == media.id,
-                                            enabled = resolvingId == null,
-                                            onChannel = {},
-                                            onPlay = {
-                                                onPlay(
-                                                    media,
-                                                    serverQueue,
-                                                    progressEntry?.positionMs?.coerceAtLeast(0L)
-                                                        ?: 0L
+                                if (currentPickerIndex >= 0) {
+                                    pickerState.animateScrollToItem(currentPickerIndex)
+                                }
+                            }
+
+                            LazyRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                state = pickerState,
+                                contentPadding = PaddingValues(
+                                    start = 14.dp,
+                                    end = 14.dp,
+                                    bottom = 4.dp
+                                ),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                itemsIndexed(
+                                    selectedRefs,
+                                    key = { _, ref -> "picker-${ref.stableId}" }
+                                ) { index, ref ->
+                                    val media = serverQueue[index]
+                                    val progressEntry = historyByMediaId[media.id]
+                                    val rawLabel = ref.episodeName
+                                        .takeIf {
+                                            it.isNotBlank() &&
+                                                !it.equals("Video", ignoreCase = true)
+                                        }
+                                        ?: "Ep ${index + 1}"
+
+                                    FilterChip(
+                                        modifier = Modifier
+                                            .height(32.dp)
+                                            .widthIn(max = 132.dp),
+                                        selected = media.id == nowPlayingId,
+                                        enabled = resolvingId == null,
+                                        onClick = {
+                                            onPlay(
+                                                media,
+                                                serverQueue,
+                                                progressEntry?.positionMs
+                                                    ?.coerceAtLeast(0L)
+                                                    ?: 0L
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                rawLabel,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        },
+                                        leadingIcon = if (media.id == nowPlayingId) {
+                                            {
+                                                Icon(
+                                                    Icons.Outlined.GraphicEq,
+                                                    null,
+                                                    Modifier.size(15.dp)
                                                 )
                                             }
-                                        )
-                                    }
+                                        } else null
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    items(
+                        serverQueue,
+                        key = { it.id }
+                    ) { media ->
+                        val progressEntry = historyByMediaId[media.id]
+                        val isCurrent = media.id == nowPlayingId
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isCurrent) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            }
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isCurrent) {
+                                    Icon(
+                                        Icons.Outlined.GraphicEq,
+                                        "Now playing",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .padding(start = 8.dp)
+                                            .size(20.dp)
+                                    )
+                                }
+                                Box(Modifier.weight(1f)) {
+                                    SearchResult(
+                                        media = media,
+                                        progressEntry = progressEntry,
+                                        resolving = resolvingId == media.id,
+                                        enabled = resolvingId == null,
+                                        onChannel = {},
+                                        onPlay = {
+                                            onPlay(
+                                                media,
+                                                serverQueue,
+                                                progressEntry?.positionMs
+                                                    ?.coerceAtLeast(0L)
+                                                    ?: 0L
+                                            )
+                                        }
+                                    )
                                 }
                             }
                         }
