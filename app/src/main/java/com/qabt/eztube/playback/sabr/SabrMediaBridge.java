@@ -247,9 +247,36 @@ final class SabrMediaBridge {
                 candidate++
         ) {
             final SabrSegmentKey key = SabrSegmentKey.media(format, candidate);
-            if (cachedSegment(key) == null) {
+            ensureCachedForWarm(key);
+        }
+    }
+
+    private void ensureCachedForWarm(SabrSegmentKey key)
+            throws IOException, ExtractionException {
+        if (cachedSegment(key) != null) return;
+
+        // SABR Track.bufferedThrough is derived from nextSequences. A warm request
+        // must advertise the same sequence Media3 will need next; otherwise the
+        // server can treat the new representation as if it were buffered only
+        // through sequence 0 and the requested warm segment is not guaranteed.
+        nextSequences.put(key.getFormat(), key.getSequenceNumber());
+
+        transactionLock.lock();
+        try {
+            int attempts = 0;
+            while (cachedSegment(key) == null && attempts++ < 3) {
                 requestFor(key);
             }
+        } finally {
+            transactionLock.unlock();
+        }
+
+        if (cachedSegment(key) == null) {
+            throw new IOException(
+                    "SABR warm did not cache target segment: itag="
+                            + key.getFormat().getItag()
+                            + ", seq=" + key.getSequenceNumber()
+            );
         }
     }
 
