@@ -13,7 +13,8 @@ data class MovieCatalogItem(
     val language: String?,
     val durationText: String?,
     val durationSeconds: Long?,
-    val episodeBadge: String? = null
+    val episodeBadge: String? = null,
+    val isSeries: Boolean? = null
 ) {
     val stableId: String
         get() = "movie-title:$providerId:$slug"
