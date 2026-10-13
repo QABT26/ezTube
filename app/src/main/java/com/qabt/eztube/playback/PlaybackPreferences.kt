@@ -77,6 +77,12 @@ class PlaybackPreferences(context: Context) {
 
     fun loadVideoMode(): Boolean = prefs.getBoolean("video_mode", false)
 
+    fun saveDeveloperMode(enabled: Boolean) {
+        prefs.edit().putBoolean("developer_mode", enabled).apply()
+    }
+
+    fun loadDeveloperMode(): Boolean = prefs.getBoolean("developer_mode", false)
+
     fun saveQuality(quality: AudioQuality) {
         prefs.edit().putString("quality", quality.name).apply()
     }
