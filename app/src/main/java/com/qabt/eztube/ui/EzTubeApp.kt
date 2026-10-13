@@ -267,6 +267,10 @@ fun EzTubeApp() {
                     override fun onPlaybackStateChanged(state: Int) {
                         isBuffering = state == Player.STATE_BUFFERING
                         isPlaying = mediaController.isPlaying
+                        if (state == Player.STATE_READY) {
+                            playerError = null
+                            errorMessage = null
+                        }
                     }
                     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                         isPlaying = mediaController.isPlaying
