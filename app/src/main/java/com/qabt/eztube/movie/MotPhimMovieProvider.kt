@@ -291,17 +291,88 @@ class MotPhimMovieProvider(
             text
         }
 
-        MOVIE_ID_PATTERNS.forEach { regex ->
-            regex.find(body)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }?.let {
-                return it
-            }
-        }
+        extractMovieId(body)?.let { return it }
 
-        if (slug == "co-chu-nho-1703914501") {
-            return "38339"
+        val rscBodies = listOf(
+            fetchMovieRsc(slug, episodeSlug = null),
+            fetchMovieRsc(slug, episodeSlug = "tap-full")
+        )
+
+        rscBodies.forEach { rsc ->
+            extractMovieId(rsc)?.let { return it }
         }
 
         throw IOException("MotPhim movie_id not found for $slug")
+    }
+
+    private fun extractMovieId(body: String): String? {
+        if (body.isBlank()) return null
+
+        val variants = listOf(
+            body,
+            decodeRscText(body),
+            htmlDecode(body),
+            htmlDecode(decodeRscText(body))
+        )
+
+        variants.forEach { text ->
+            MOVIE_ID_PATTERNS.forEach { regex ->
+                regex.find(text)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun fetchMovieRsc(
+        slug: String,
+        episodeSlug: String?
+    ): String {
+        val urlBuilder = BASE_URL.toHttpUrl()
+            .newBuilder()
+            .addPathSegment("phim")
+            .addPathSegment(slug)
+
+        if (!episodeSlug.isNullOrBlank()) {
+            urlBuilder.addPathSegment(episodeSlug)
+        }
+
+        val url = urlBuilder
+            .addQueryParameter("_rsc", "ez" + System.nanoTime().toString(36))
+            .build()
+
+        val referer = buildString {
+            append(BASE_URL).append("/phim/").append(slug)
+            if (!episodeSlug.isNullOrBlank()) {
+                append("/").append(episodeSlug)
+            }
+        }
+
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", DESKTOP_USER_AGENT)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "vi,en-US;q=0.9,en;q=0.8")
+            .header("Cache-Control", "no-cache")
+            .header("Pragma", "no-cache")
+            .header("Referer", referer)
+            .header("RSC", "1")
+            .header("Next-Url", "/phim/$slug" + if (episodeSlug.isNullOrBlank()) "" else "/$episodeSlug")
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Dest", "empty")
+            .get()
+            .build()
+
+        return runCatching {
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use ""
+                response.body?.string().orEmpty()
+            }
+        }.getOrDefault("")
     }
 
     private fun searchRsc(query: String): List<MovieCatalogItem> {
@@ -993,10 +1064,12 @@ class MotPhimMovieProvider(
         )
         val UNICODE_ESCAPE_REGEX = Regex("""\\u([0-9a-fA-F]{4})""")
         val MOVIE_ID_PATTERNS = listOf(
+            Regex("""episodes\\?movie_id=(\\d+)""", RegexOption.IGNORE_CASE),
             Regex("""movie_id["'=:\\s]+(\\d+)""", RegexOption.IGNORE_CASE),
             Regex("""["']movie_id["']\\s*:\\s*["']?(\\d+)""", RegexOption.IGNORE_CASE),
             Regex("""data-movie-id=["'](\\d+)["']""", RegexOption.IGNORE_CASE),
-            Regex("""movieId["'=:\\s]+(\\d+)""", RegexOption.IGNORE_CASE)
+            Regex("""movieId["'=:\\s]+(\\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""["']movieId["']\\s*:\\s*["']?(\\d+)""", RegexOption.IGNORE_CASE)
         )
     }
 }
