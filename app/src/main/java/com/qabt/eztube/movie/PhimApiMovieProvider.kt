@@ -168,7 +168,8 @@ class PhimApiMovieProvider(
                         language = item.getString("lang"),
                         durationText = time,
                         durationSeconds = parseDurationSeconds(time),
-                        episodeBadge = parseEpisodeBadge(item)
+                        episodeBadge = parseEpisodeBadge(item),
+                        isSeries = parseIsSeries(item)
                     )
                 )
             }
@@ -200,7 +201,8 @@ class PhimApiMovieProvider(
             language = movie.getString("lang"),
             durationText = time,
             durationSeconds = parseDurationSeconds(time),
-            episodeBadge = parseEpisodeBadge(movie)
+            episodeBadge = parseEpisodeBadge(movie),
+            isSeries = parseIsSeries(movie)
         )
 
         val refs = mutableListOf<MovieEpisodeRef>()
@@ -350,6 +352,19 @@ class PhimApiMovieProvider(
         val prefix = base?.trimEnd('/')
             ?: "https://phimimg.com"
         return prefix + "/" + raw.trimStart('/')
+    }
+
+    private fun parseIsSeries(item: JsonObject): Boolean? {
+        val type = item.getString("type")
+            ?.trim()
+            ?.lowercase()
+            .orEmpty()
+
+        return when (type) {
+            "series", "tvshows", "tvshow", "episode", "hoathinh" -> true
+            "single", "movie" -> false
+            else -> null
+        }
     }
 
     private fun parseEpisodeBadge(item: JsonObject): String? {
