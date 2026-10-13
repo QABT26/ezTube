@@ -110,15 +110,51 @@ class PlaybackQueueManager(
         media: MediaSummary,
         playback: MoviePlayback
     ): ResolvedPlayback {
+        val splitVideo = playback.videoStreams
+            .let { streams ->
+                val target = preferences.loadVideoQuality().targetHeight
+                when {
+                    streams.isEmpty() -> null
+                    target == null -> streams.maxWithOrNull(
+                        compareBy<com.qabt.eztube.movie.MovieVideoStream> { it.height ?: 0 }
+                            .thenBy { it.bitrate ?: 0 }
+                    )
+                    else -> streams
+                        .filter { (it.height ?: Int.MAX_VALUE) <= target }
+                        .maxWithOrNull(
+                            compareBy<com.qabt.eztube.movie.MovieVideoStream> { it.height ?: 0 }
+                                .thenBy { it.bitrate ?: 0 }
+                        )
+                        ?: streams.minWithOrNull(
+                            compareBy<com.qabt.eztube.movie.MovieVideoStream> { it.height ?: Int.MAX_VALUE }
+                                .thenBy { it.bitrate ?: Int.MAX_VALUE }
+                        )
+                }
+            }
+
+        val isSplit = splitVideo != null && !playback.audioUrl.isNullOrBlank()
+        val engine = if (isSplit) PlaybackService.ENGINE_DIRECT else PlaybackService.ENGINE_HLS
+        val selectedHeight = splitVideo?.height ?: 0
+
+        val diagnostic = buildString {
+            playback.diagnostic?.takeIf { it.isNotBlank() }?.let { append(it) }
+            if (isSplit) {
+                if (isNotEmpty()) append("\n")
+                append("Selected video: ")
+                append(selectedHeight.takeIf { it > 0 }?.let { "${it}p" } ?: "unknown")
+                append("\nMedia3: merging video + audio")
+            }
+        }.takeIf { it.isNotBlank() }
+
         val metadata = MediaMetadata.Builder()
             .setTitle(media.title)
             .setArtist(media.channel)
             .setExtras(android.os.Bundle().apply {
                 putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, false)
-                putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0)
-                putString(PlaybackService.EXTRA_PLAYBACK_ENGINE, PlaybackService.ENGINE_HLS)
+                putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, selectedHeight)
+                putString(PlaybackService.EXTRA_PLAYBACK_ENGINE, engine)
                 putBoolean(PlaybackService.EXTRA_IS_MOVIE, true)
-                playback.diagnostic?.let {
+                diagnostic?.let {
                     putString(PlaybackService.EXTRA_MOVIE_DIAGNOSTIC, it)
                 }
             })
@@ -148,9 +184,35 @@ class PlaybackQueueManager(
                 .build()
         }
 
+        if (isSplit) {
+            val video = requireNotNull(splitVideo)
+            val audioUrl = requireNotNull(playback.audioUrl)
+            val mediaItem = MediaItem.Builder()
+                .setMediaId(media.id)
+                .setUri(video.url)
+                .apply { video.mimeType?.let { setMimeType(it) } }
+                .setSubtitleConfigurations(subtitleConfigurations)
+                .setMediaMetadata(metadata)
+                .build()
+
+            return ResolvedPlayback(
+                mediaItem = mediaItem,
+                mediaSource = mediaSourceFactory.createMerged(
+                    mediaItem = mediaItem,
+                    videoUrl = video.url,
+                    videoMimeType = video.mimeType,
+                    audioUrl = audioUrl,
+                    audioMimeType = playback.audioMimeType,
+                    headers = playback.requestHeaders
+                )
+            )
+        }
+
+        val hlsUrl = playback.hlsUrl
+            ?: throw IllegalStateException("Movie playback has no playable source")
         val mediaItem = MediaItem.Builder()
             .setMediaId(media.id)
-            .setUri(playback.hlsUrl)
+            .setUri(hlsUrl)
             .setMimeType("application/x-mpegURL")
             .setSubtitleConfigurations(subtitleConfigurations)
             .setMediaMetadata(metadata)
@@ -160,7 +222,7 @@ class PlaybackQueueManager(
             mediaItem = mediaItem,
             mediaSource = mediaSourceFactory.createMovieHls(
                 mediaItem = mediaItem,
-                manifestUrl = playback.hlsUrl,
+                manifestUrl = hlsUrl,
                 headers = playback.requestHeaders
             )
         )
