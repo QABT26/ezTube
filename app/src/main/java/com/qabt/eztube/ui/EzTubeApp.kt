@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -1700,6 +1701,7 @@ private fun MovieDetailScreen(
         var target = -1
         grouped.forEach { (server, refs) ->
             index += 1 // server header
+            if (refs.size > 1) index += 1 // quick episode picker
             val localIndex = refs.indexOfFirst { it.stableId == nowPlayingId }
             if (target < 0 && localIndex >= 0) {
                 target = index + localIndex
@@ -1817,6 +1819,83 @@ private fun MovieDetailScreen(
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
+                        }
+                        if (refs.size > 1) {
+                            item(key = "server-picker-$server") {
+                                val pickerState = rememberLazyListState()
+                                val currentPickerIndex = refs.indexOfFirst {
+                                    it.stableId == nowPlayingId
+                                }
+
+                                LaunchedEffect(
+                                    detail.catalog.stableId,
+                                    server,
+                                    nowPlayingId,
+                                    currentPickerIndex
+                                ) {
+                                    if (currentPickerIndex >= 0) {
+                                        pickerState.animateScrollToItem(currentPickerIndex)
+                                    }
+                                }
+
+                                LazyRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    state = pickerState,
+                                    contentPadding = PaddingValues(
+                                        start = 14.dp,
+                                        end = 14.dp,
+                                        bottom = 4.dp
+                                    ),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    itemsIndexed(
+                                        refs,
+                                        key = { _, ref -> "picker-${ref.stableId}" }
+                                    ) { index, ref ->
+                                        val media = serverQueue[index]
+                                        val progressEntry = historyByMediaId[media.id]
+                                        val rawLabel = ref.episodeName
+                                            .takeIf {
+                                                it.isNotBlank() &&
+                                                    !it.equals("Video", ignoreCase = true)
+                                            }
+                                            ?: "Ep ${index + 1}"
+
+                                        FilterChip(
+                                            modifier = Modifier
+                                                .height(32.dp)
+                                                .widthIn(max = 132.dp),
+                                            selected = media.id == nowPlayingId,
+                                            enabled = resolvingId == null,
+                                            onClick = {
+                                                onPlay(
+                                                    media,
+                                                    serverQueue,
+                                                    progressEntry?.positionMs
+                                                        ?.coerceAtLeast(0L)
+                                                        ?: 0L
+                                                )
+                                            },
+                                            label = {
+                                                Text(
+                                                    rawLabel,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            },
+                                            leadingIcon = if (media.id == nowPlayingId) {
+                                                {
+                                                    Icon(
+                                                        Icons.Outlined.GraphicEq,
+                                                        null,
+                                                        Modifier.size(15.dp)
+                                                    )
+                                                }
+                                            } else null
+                                        )
+                                    }
+                                }
+                            }
                         }
                         items(
                             serverQueue,
