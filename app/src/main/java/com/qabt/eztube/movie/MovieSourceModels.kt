@@ -24,7 +24,8 @@ data class MovieProviderConfig(
 data class MovieSubtitle(
     val language: String?,
     val label: String?,
-    val url: String
+    val url: String,
+    val mimeType: String? = null
 )
 
 data class MovieEpisode(
