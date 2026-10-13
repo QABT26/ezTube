@@ -30,7 +30,7 @@ android {
         minSdk = 23
         targetSdk = 35
         versionCode = 4
-        versionName = "0.2.0-beta.3"
+        versionName = "0.3.0-alpha.1"
     }
 
     buildFeatures {
@@ -41,6 +41,7 @@ android {
     buildTypes {
         debug {
             buildConfigField("String", "BUILD_ID", "\"$gitBuildId\"")
+            buildConfigField("String", "MOVIE_MILESTONE", "\"V0.3A\"")
         }
         release {
             buildConfigField("String", "BUILD_ID", "\"$gitBuildId\"")
