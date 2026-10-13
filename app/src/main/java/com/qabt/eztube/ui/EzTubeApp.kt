@@ -293,7 +293,9 @@ fun EzTubeApp() {
             movieDetailLoading = true
             movieDetailError = null
             runCatching {
-                withContext(Dispatchers.IO) { movieProviders.detail(media.id) }
+                withContext(Dispatchers.IO) {
+                    movieProviders.detail(media.id, media.title)
+                }
             }
                 .onSuccess { detail ->
                     val playableItems = detail.episodes.map { it.toMediaSummary() }
