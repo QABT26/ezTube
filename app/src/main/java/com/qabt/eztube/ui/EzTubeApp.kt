@@ -115,6 +115,7 @@ fun EzTubeApp() {
     var actualVideoHeight by remember { mutableIntStateOf(0) }
     var playbackEngine by remember { mutableStateOf(PlaybackService.ENGINE_DIRECT) }
     var movieDiagnostic by remember { mutableStateOf<String?>(null) }
+    var developerMode by remember { mutableStateOf(playbackPrefs.loadDeveloperMode()) }
     var subtitleOptions by remember { mutableStateOf<List<SubtitleOption>>(emptyList()) }
     var selectedSubtitleLabel by remember { mutableStateOf<String?>(null) }
     var videoMode by remember { mutableStateOf(playbackPrefs.loadVideoMode()) }
@@ -880,6 +881,7 @@ fun EzTubeApp() {
                     isBuffering = isBuffering,
                     playerError = playerError ?: errorMessage,
                     movieDiagnostic = movieDiagnostic,
+                    developerMode = developerMode,
                     sleepMinutes = sleepMinutes,
                     autoplay = autoplay,
                     nextMode = nextMode,
@@ -990,6 +992,11 @@ fun EzTubeApp() {
                 onTrendingTopic = { trendingTopic = it; playbackPrefs.saveTrendingTopic(it) },
                 trendingLanguage = trendingLanguage,
                 onTrendingLanguage = { trendingLanguage = it; playbackPrefs.saveTrendingLanguage(it) },
+                developerMode = developerMode,
+                onDeveloperMode = {
+                    developerMode = it
+                    playbackPrefs.saveDeveloperMode(it)
+                },
                 onClose = { showSettings = false }
             )
         } else {
@@ -1160,6 +1167,8 @@ private fun SettingsScreen(
     onTrendingTopic: (String) -> Unit,
     trendingLanguage: String,
     onTrendingLanguage: (String) -> Unit,
+    developerMode: Boolean,
+    onDeveloperMode: (Boolean) -> Unit,
     onClose: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
@@ -1234,6 +1243,25 @@ private fun SettingsScreen(
                     val label = when(option) { "Vietnamese" -> "VI"; "English" -> "EN"; "Korean" -> "KO"; "Japanese" -> "JA"; else -> "All" }
                     CompactPresetButton(label, trendingLanguage == option, { onTrendingLanguage(option) }, Modifier.weight(1f))
                 }
+            }
+
+            HorizontalDivider()
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Develop...", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Show playback source and network diagnostics.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = developerMode,
+                    onCheckedChange = onDeveloperMode
+                )
             }
 
             HorizontalDivider()
@@ -2612,6 +2640,7 @@ private data class FullPlayerState(
     val isBuffering: Boolean,
     val playerError: String?,
     val movieDiagnostic: String?,
+    val developerMode: Boolean,
     val sleepMinutes: Int?,
     val autoplay: Boolean,
     val nextMode: NextMode,
@@ -2666,6 +2695,7 @@ private fun FullPlayer(
     val isBuffering = state.isBuffering
     val playerError = state.playerError
     val movieDiagnostic = state.movieDiagnostic
+    val developerMode = state.developerMode
     val sleepMinutes = state.sleepMinutes
     val autoplay = state.autoplay
     val nextMode = state.nextMode
@@ -3451,7 +3481,7 @@ private fun FullPlayer(
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (isMovie && !movieDiagnostic.isNullOrBlank()) {
+            if (developerMode && isMovie && !movieDiagnostic.isNullOrBlank()) {
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     tonalElevation = 1.dp,
