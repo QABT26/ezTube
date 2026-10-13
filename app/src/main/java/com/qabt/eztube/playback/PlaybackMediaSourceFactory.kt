@@ -81,15 +81,27 @@ class PlaybackMediaSourceFactory(private val context: Context) {
         videoUrl: String,
         videoMimeType: String?,
         audioUrl: String,
-        audioMimeType: String?
+        audioMimeType: String?,
+        headers: Map<String, String> = emptyMap()
     ): MediaSource {
-        val video = progressiveFactory.createMediaSource(
+        val factory = if (headers.isEmpty()) {
+            progressiveFactory
+        } else {
+            val httpFactory = DefaultHttpDataSource.Factory()
+                .setAllowCrossProtocolRedirects(true)
+                .setDefaultRequestProperties(headers)
+            ProgressiveMediaSource.Factory(
+                DefaultDataSource.Factory(context, httpFactory)
+            )
+        }
+
+        val video = factory.createMediaSource(
             mediaItem.buildUpon()
                 .setUri(videoUrl)
                 .apply { videoMimeType?.let { setMimeType(it) } }
                 .build()
         )
-        val audio = progressiveFactory.createMediaSource(
+        val audio = factory.createMediaSource(
             MediaItem.Builder()
                 .setMediaId(mediaItem.mediaId + "#audio")
                 .setUri(audioUrl)
