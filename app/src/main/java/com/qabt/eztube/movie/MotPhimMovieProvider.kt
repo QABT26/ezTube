@@ -199,16 +199,41 @@ class MotPhimMovieProvider(
                 )
             }
 
-        val array =
-            root.getArray("episodes")
-                ?: root.getArray("data")
-                ?: root.getObject("data")?.getArray("episodes")
-                ?: root.getObject("data")?.getArray("data")
-                ?: return emptyList()
+        val episodes = mutableListOf<JsonObject>()
+        collectEpisodeObjects(root, episodes)
 
-        return buildList {
-            for (index in 0 until array.size) {
-                array.getObject(index)?.let(::add)
+        return episodes
+            .distinctBy { episode ->
+                listOf(
+                    episode.getString("id").orEmpty(),
+                    episode.getString("server").orEmpty(),
+                    episode.getString("slug").orEmpty(),
+                    episode.getString("name").orEmpty(),
+                    episode.getString("link").orEmpty()
+                ).joinToString("|")
+            }
+    }
+
+    private fun collectEpisodeObjects(
+        value: Any?,
+        output: MutableList<JsonObject>
+    ) {
+        when (value) {
+            is JsonObject -> {
+                val link = value.getString("link").orEmpty().trim()
+                if (link.isNotBlank()) {
+                    output += value
+                }
+
+                value.values.forEach { child ->
+                    collectEpisodeObjects(child, output)
+                }
+            }
+
+            is JsonArray -> {
+                for (index in 0 until value.size) {
+                    collectEpisodeObjects(value[index], output)
+                }
             }
         }
     }
