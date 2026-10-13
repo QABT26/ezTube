@@ -22,25 +22,125 @@ class BiliIntlMovieProvider(
         .build()
 
     override fun search(query: String): List<MovieCatalogItem> {
-        val parsed = parseVideoUrl(query.trim()) ?: return emptyList()
-        val meta = fetchMetadata(parsed.aid, parsed.pageUrl)
-        return listOf(
-            MovieCatalogItem(
-                providerId = id,
-                providerName = displayName,
-                slug = parsed.aid,
-                title = meta.title.ifBlank { "Bilibili video ${parsed.aid}" },
-                originalTitle = null,
-                thumbnailUrl = meta.thumbnail,
-                year = null,
-                language = null,
-                durationText = null,
-                durationSeconds = null,
-                episodeBadge = "Video",
-                isSeries = false
+        val normalized = query.trim()
+        if (normalized.isBlank()) return emptyList()
+
+        parseVideoUrl(normalized)?.let { parsed ->
+            val meta = fetchMetadata(parsed.aid, parsed.pageUrl)
+            return listOf(
+                MovieCatalogItem(
+                    providerId = id,
+                    providerName = displayName,
+                    slug = parsed.aid,
+                    title = meta.title.ifBlank { "Bilibili video ${parsed.aid}" },
+                    originalTitle = null,
+                    thumbnailUrl = meta.thumbnail,
+                    year = null,
+                    language = null,
+                    durationText = null,
+                    durationSeconds = null,
+                    episodeBadge = "Video",
+                    isSeries = false
+                )
             )
-        )
+        }
+
+        return searchByTitle(normalized)
     }
+
+    private fun searchByTitle(query: String): List<MovieCatalogItem> {
+        val url = "$API_BASE/web/v2/search_v2".toHttpUrl()
+            .newBuilder()
+            .addQueryParameter("keyword", query)
+            .addQueryParameter("platform", "web")
+            .addQueryParameter("s_locale", "vi_VN")
+            .addQueryParameter("highlight", "1")
+            .addQueryParameter("pn", "1")
+            .addQueryParameter("ps", "20")
+            .addQueryParameter("qid", "")
+            .addQueryParameter("sort", "0")
+            .addQueryParameter("duration_type", "0")
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json, text/plain, */*")
+            .header("Referer", "$WEB_BASE/")
+            .get()
+            .build()
+
+        val root = http.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("Bilibili search HTTP ${response.code}")
+            }
+            if (body.isBlank()) {
+                throw IOException("Bilibili search returned empty body")
+            }
+            runCatching { JsonParser.`object`().from(body) }
+                .getOrElse { throw IOException("Bilibili search returned invalid JSON", it) }
+        }
+
+        val code = root.getInt("code")
+        if (code != 0) {
+            val message = root.getString("message").orEmpty()
+            throw IOException(
+                "Bilibili search API error $code" +
+                    message.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
+            )
+        }
+
+        val data = root.getObject("data") ?: return emptyList()
+        val modules = data.getArray("modules") ?: return emptyList()
+        val results = mutableListOf<MovieCatalogItem>()
+
+        for (moduleIndex in 0 until modules.size) {
+            val module = modules.getObject(moduleIndex) ?: continue
+            if (!module.getString("type").orEmpty().equals("ugc", ignoreCase = true)) {
+                continue
+            }
+
+            val items = module.getArray("items") ?: continue
+            for (itemIndex in 0 until items.size) {
+                val item = items.getObject(itemIndex) ?: continue
+                val aid = item.get("aid")?.toString()?.trim().orEmpty()
+                if (!aid.matches(Regex("""\d{1,20}"""))) continue
+
+                val title = cleanSearchTitle(item.getString("title").orEmpty())
+                if (title.isBlank()) continue
+
+                val author = item.getObject("author")
+                    ?.getString("nickname")
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+
+                val durationText = item.getString("duration")
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+
+                results += MovieCatalogItem(
+                    providerId = id,
+                    providerName = displayName,
+                    slug = aid,
+                    title = title,
+                    originalTitle = author,
+                    thumbnailUrl = normalizeBiliImage(item.getString("cover")),
+                    year = null,
+                    language = null,
+                    durationText = durationText,
+                    durationSeconds = parseClockDuration(durationText),
+                    episodeBadge = "Bilibili",
+                    isSeries = false
+                )
+            }
+        }
+
+        return results
+            .distinctBy { it.slug }
+            .take(20)
+    }
+
 
     override fun detail(slug: String): MovieDetail {
         requireAid(slug)
@@ -286,6 +386,30 @@ class BiliIntlMovieProvider(
             }
             response.code
         }
+    }
+
+    private fun cleanSearchTitle(value: String): String =
+        htmlDecode(
+            value.replace(Regex("""<[^>]+>"""), "")
+        ).replace(Regex("""\s+"""), " ").trim()
+
+    private fun normalizeBiliImage(value: String?): String? {
+        val raw = value?.trim().orEmpty()
+        if (raw.isBlank()) return null
+        return when {
+            raw.startsWith("//") -> "https:$raw"
+            raw.startsWith("http://") || raw.startsWith("https://") -> raw
+            else -> raw
+        }
+    }
+
+    private fun parseClockDuration(value: String?): Long? {
+        val text = value?.trim().orEmpty()
+        if (text.isBlank()) return null
+        val parts = text.split(':').mapNotNull { it.toLongOrNull() }
+        if (parts.size !in 2..3) return null
+        if (parts.drop(1).any { it !in 0..59 }) return null
+        return parts.fold(0L) { total, part -> total * 60L + part }
     }
 
     private fun extractMeta(body: String, property: String): String? {
