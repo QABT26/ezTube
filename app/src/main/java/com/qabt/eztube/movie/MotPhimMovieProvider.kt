@@ -166,19 +166,20 @@ class MotPhimMovieProvider(
             "Origin" to BASE_URL,
             "Accept" to "*/*"
         )
-        val diagnostic = diagnoseHls(
-            movieId = discoverMovieId(slug),
+        val movieId = discoverMovieId(slug)
+        val checkedSource = selectTlsCompatibleHls(
+            originalUrl = hls,
+            movieId = movieId,
             episodeSlug = episodeKey,
-            manifestUrl = hls,
             headers = headers
         )
 
         return MoviePlayback(
             mediaId = mediaId,
-            hlsUrl = hls,
+            hlsUrl = checkedSource.first,
             subtitles = parseSubtitles(episode),
             requestHeaders = headers,
-            diagnostic = diagnostic
+            diagnostic = checkedSource.second
         )
     }
 
@@ -561,6 +562,53 @@ class MotPhimMovieProvider(
         )
     }
 
+    private fun selectTlsCompatibleHls(
+        originalUrl: String,
+        movieId: String,
+        episodeSlug: String,
+        headers: Map<String, String>
+    ): Pair<String, String> {
+        val parsed = runCatching { originalUrl.toHttpUrl() }.getOrNull()
+            ?: throw IOException("MotPhim diagnostic: invalid HLS URL")
+
+        val candidates = if (parsed.host.equals("vip.opstream15.com", ignoreCase = true)) {
+            listOf("fhapi9.com", "www.fhapi9.com").map { host ->
+                parsed.newBuilder().host(host).build().toString()
+            }
+        } else {
+            listOf(originalUrl)
+        }
+
+        var lastError: Throwable? = null
+        for (candidate in candidates) {
+            val result = runCatching {
+                val diagnostic = diagnoseHls(
+                    movieId = movieId,
+                    episodeSlug = episodeSlug,
+                    manifestUrl = candidate,
+                    headers = headers
+                )
+                candidate to diagnostic
+            }
+            if (result.isSuccess) return result.getOrThrow()
+            lastError = result.exceptionOrNull()
+        }
+
+        throw IOException(
+            buildString {
+                append("MotPhim TLS source failed")
+                if (parsed.host.equals("vip.opstream15.com", ignoreCase = true)) {
+                    append(": vip.opstream15.com certificate belongs to fhapi9.com; ")
+                    append("canonical hosts were tried")
+                }
+                lastError?.message?.takeIf { it.isNotBlank() }?.let {
+                    append(" · ").append(it)
+                }
+            },
+            lastError
+        )
+    }
+
     private fun diagnoseHls(
         movieId: String,
         episodeSlug: String,
@@ -611,7 +659,9 @@ class MotPhimMovieProvider(
         val segmentCode = probeSegment(segmentUrl, headers)
 
         return buildString {
+            val host = runCatching { manifestUrl.toHttpUrl().host }.getOrDefault("unknown")
             append("Provider: MotPhim")
+            append("\nHLS host: ").append(host)
             append("\nMovie ID: ").append(movieId)
             append("\nEpisode: ").append(episodeSlug)
             append("\nManifest: HTTP ").append(manifest.code).append(" · VALID #EXTM3U")
