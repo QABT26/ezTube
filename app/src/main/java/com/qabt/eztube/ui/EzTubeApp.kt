@@ -3523,8 +3523,13 @@ private fun FullPlayer(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     VideoQuality.entries.forEach { option ->
+                        val chipWeight = when (option) {
+                            VideoQuality.AUTO -> 0.90f
+                            VideoQuality.P1080 -> 1.18f
+                            else -> 1f
+                        }
                         FilterChip(
-                            modifier = Modifier.weight(1f).height(30.dp),
+                            modifier = Modifier.weight(chipWeight).height(30.dp),
                             selected = videoQuality == option,
                             onClick = { onVideoQuality(option) },
                             label = {
@@ -3536,7 +3541,8 @@ private fun FullPlayer(
                                         VideoQuality.P720 -> "720p"
                                         VideoQuality.P1080 -> "1080p"
                                     },
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         )
