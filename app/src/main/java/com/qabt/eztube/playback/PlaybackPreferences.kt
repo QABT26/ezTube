@@ -144,6 +144,16 @@ class PlaybackPreferences(context: Context) {
         prefs.getString("recent_searches", "").orEmpty().lineSequence().map { it.trim() }
             .filter { it.isNotEmpty() }.take(5).toList()
 
+    fun removeRecentSearch(query: String) {
+        val normalized = query.trim()
+        if (normalized.isBlank()) return
+        val updated = loadRecentSearches()
+            .filterNot { it.equals(normalized, ignoreCase = true) }
+        prefs.edit()
+            .putString("recent_searches", updated.joinToString("\n"))
+            .apply()
+    }
+
     fun saveSearchSourceMode(mode: String) {
         prefs.edit().putString("search_source_mode", if (mode == "MOVIE") "MOVIE" else "YOUTUBE").apply()
     }
