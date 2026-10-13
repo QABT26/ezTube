@@ -117,15 +117,35 @@ final class SabrMediaBridge {
         formats.addAll(spec.getAudioFormats());
         formats.addAll(spec.getVideoFormats());
 
-        final YoutubeSabrRequest request = YoutubeSabrRequest.preparation(
-                Math.max(0, initialPositionMs),
-                formats
-        );
-        requestOnce(
-                request,
-                spec.getBootstrapAudioFormat(),
-                () -> hasAllTimelines() || stopped
-        );
+        final long positionMs = Math.max(0, initialPositionMs);
+
+        // YoutubeSabrRequest allows at most one audio and one video track per
+        // transaction. Preparing the whole adaptive ladder in one request is
+        // therefore invalid. Prime each representation independently, then
+        // build the synthetic DASH manifest only after every timeline exists.
+        for (YoutubeSabrInfo.Format format : formats) {
+            if (timelines.containsKey(format)) continue;
+
+            final YoutubeSabrRequest request = YoutubeSabrRequest.preparation(
+                    positionMs,
+                    java.util.Collections.singletonList(format)
+            );
+            final YoutubeSabrInfo.Format requestedAudio =
+                    format.isAudio() ? format : spec.getBootstrapAudioFormat();
+
+            requestOnce(
+                    request,
+                    requestedAudio,
+                    () -> timelines.containsKey(format) || stopped
+            );
+
+            if (!timelines.containsKey(format)) {
+                throw new IOException(
+                        "SABR did not return initialization timeline: itag="
+                                + format.getItag()
+                );
+            }
+        }
 
         if (!hasAllTimelines()) {
             throw new IOException("SABR did not return initialization timelines for all formats");
