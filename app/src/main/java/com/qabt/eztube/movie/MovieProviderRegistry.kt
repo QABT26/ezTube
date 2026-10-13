@@ -133,10 +133,10 @@ class MovieProviderRegistry(
 
     private fun providerPreference(item: MovieCatalogItem): Int =
         when (item.providerId) {
-            // MotPhim is the primary catalog/source for the current movie flow.
-            // Its provider already prefers direct m3u8 over embed mirrors.
-            "motphim" -> 40
-            "phimapi" -> 30
+            // Direct Bilibili URLs are explicit user input and should win for that item.
+            "biliintl" -> 50
+            "phimapi" -> 40
+            "motphim" -> 20
             else -> 0
         }
 
@@ -187,7 +187,8 @@ class MovieProviderRegistry(
         fun default(): MovieProviderRegistry =
             MovieProviderRegistry(
                 providers = listOf(
-                    PhimApiMovieProvider()
+                    PhimApiMovieProvider(),
+                    BiliIntlMovieProvider()
                 )
             )
     }
