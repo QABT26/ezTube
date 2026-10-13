@@ -277,11 +277,145 @@ class PhimApiMovieProvider(
         val hls = item.getString("link_m3u8").orEmpty().trim()
         if (hls.isBlank()) throw IOException("Movie episode has no HLS stream")
 
+        val headers = mapOf(
+            "User-Agent" to USER_AGENT,
+            "Accept" to "*/*"
+        )
+        val diagnostic = diagnoseHls(
+            manifestUrl = hls,
+            headers = headers
+        )
+
         return MoviePlayback(
             mediaId = mediaId,
             hlsUrl = hls,
-            subtitles = parseSubtitles(item)
+            subtitles = parseSubtitles(item),
+            requestHeaders = headers,
+            diagnostic = diagnostic
         )
+    }
+
+    private fun diagnoseHls(
+        manifestUrl: String,
+        headers: Map<String, String>
+    ): String {
+        val manifest = fetchDiagnosticText(manifestUrl, headers, "manifest")
+        if (!manifest.body.trimStart().startsWith("#EXTM3U", ignoreCase = true)) {
+            throw IOException(
+                "KKPhim diagnostic: manifest HTTP ${manifest.code} but body is not #EXTM3U"
+            )
+        }
+
+        var mediaPlaylistUrl = manifestUrl
+        var mediaPlaylistBody = manifest.body
+        var childCode: Int? = null
+
+        val childCandidate = firstPlaylistUri(manifest.body)
+        if (childCandidate != null) {
+            val resolvedChild = resolveHlsUri(manifestUrl, childCandidate)
+                ?: throw IOException("KKPhim diagnostic: child playlist URL invalid")
+            val child = fetchDiagnosticText(resolvedChild, headers, "child playlist")
+            if (!child.body.trimStart().startsWith("#EXTM3U", ignoreCase = true)) {
+                throw IOException(
+                    "KKPhim diagnostic: child HTTP ${child.code} but body is not #EXTM3U"
+                )
+            }
+            mediaPlaylistUrl = resolvedChild
+            mediaPlaylistBody = child.body
+            childCode = child.code
+        }
+
+        val segmentCandidate = firstMediaSegmentUri(mediaPlaylistBody)
+            ?: throw IOException("KKPhim diagnostic: no media segment found")
+        val segmentUrl = resolveHlsUri(mediaPlaylistUrl, segmentCandidate)
+            ?: throw IOException("KKPhim diagnostic: media segment URL invalid")
+        val segmentCode = probeSegment(segmentUrl, headers)
+
+        return buildString {
+            val host = runCatching { manifestUrl.toHttpUrl().host }.getOrDefault("unknown")
+            append("Provider: KKPhim")
+            append("\nHLS host: ").append(host)
+            append("\nManifest: HTTP ").append(manifest.code).append(" · VALID #EXTM3U")
+            if (childCode != null) {
+                append("\nMedia playlist: HTTP ").append(childCode).append(" · VALID #EXTM3U")
+            }
+            append("\nSegment #1: HTTP ").append(segmentCode)
+            append("\nMedia3: starting direct HLS")
+        }
+    }
+
+    private data class DiagnosticResponse(
+        val code: Int,
+        val body: String
+    )
+
+    private fun fetchDiagnosticText(
+        url: String,
+        headers: Map<String, String>,
+        label: String
+    ): DiagnosticResponse {
+        val builder = Request.Builder().url(url).get()
+        headers.forEach { (name, value) -> builder.header(name, value) }
+
+        http.newCall(builder.build()).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("KKPhim diagnostic: $label HTTP ${response.code}")
+            }
+            return DiagnosticResponse(response.code, body)
+        }
+    }
+
+    private fun probeSegment(
+        url: String,
+        headers: Map<String, String>
+    ): Int {
+        val builder = Request.Builder()
+            .url(url)
+            .header("Range", "bytes=0-1023")
+            .get()
+        headers.forEach { (name, value) -> builder.header(name, value) }
+
+        http.newCall(builder.build()).execute().use { response ->
+            if (!response.isSuccessful && response.code != 206) {
+                throw IOException("KKPhim diagnostic: segment #1 HTTP ${response.code}")
+            }
+            return response.code
+        }
+    }
+
+    private fun firstPlaylistUri(body: String): String? {
+        val lines = body.lineSequence().map { it.trim() }.toList()
+        for (index in lines.indices) {
+            if (lines[index].startsWith("#EXT-X-STREAM-INF", ignoreCase = true)) {
+                val next = lines.drop(index + 1)
+                    .firstOrNull { it.isNotBlank() && !it.startsWith("#") }
+                if (!next.isNullOrBlank()) return next
+            }
+        }
+        return lines.firstOrNull {
+            it.isNotBlank() &&
+                !it.startsWith("#") &&
+                it.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+        }
+    }
+
+    private fun firstMediaSegmentUri(body: String): String? =
+        body.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { line ->
+                line.isNotBlank() &&
+                    !line.startsWith("#") &&
+                    !line.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+            }
+
+    private fun resolveHlsUri(baseUrl: String, value: String): String? {
+        val raw = value.trim()
+        if (raw.isBlank()) return null
+        if (raw.startsWith("http://") || raw.startsWith("https://")) return raw
+        return runCatching {
+            baseUrl.toHttpUrl().resolve(raw)?.toString()
+        }.getOrNull()
     }
 
     private fun decodeStablePart(value: String): String =
