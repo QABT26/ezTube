@@ -27,6 +27,12 @@ class MovieProviderRegistry(
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) return emptyList()
 
+        if (BILI_URL_REGEX.containsMatchIn(normalizedQuery)) {
+            val bili = providers.firstOrNull { it.id == "biliintl" }
+                ?: throw IOException("Bilibili provider is not installed")
+            return bili.search(normalizedQuery).map { it.toMediaSummary() }
+        }
+
         data class ProviderSearchResult(
             val providerName: String,
             val items: List<MovieCatalogItem> = emptyList(),
@@ -184,6 +190,11 @@ class MovieProviderRegistry(
     }
 
     companion object {
+        private val BILI_URL_REGEX = Regex(
+            """https?://(?:www\.)?(?:bilibili\.tv|biliintl\.com)/(?:[a-zA-Z]{2}/)?video/\d+""",
+            RegexOption.IGNORE_CASE
+        )
+
         fun default(): MovieProviderRegistry =
             MovieProviderRegistry(
                 providers = listOf(
