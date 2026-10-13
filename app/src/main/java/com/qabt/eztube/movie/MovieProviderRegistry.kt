@@ -2,8 +2,6 @@ package com.qabt.eztube.movie
 
 import com.qabt.eztube.youtube.MediaSummary
 import java.io.IOException
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.text.Normalizer
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
@@ -24,13 +22,6 @@ class MovieProviderRegistry(
         java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
     private val activeProviderByMediaId =
         java.util.concurrent.ConcurrentHashMap<String, String>()
-
-    private val playbackProbeHttp = OkHttpClient.Builder()
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .build()
 
     fun search(query: String): List<MediaSummary> {
         val normalizedQuery = query.trim()
@@ -175,15 +166,10 @@ class MovieProviderRegistry(
         if (primary.id !in failed) {
             val direct = runCatching { primary.resolve(mediaId) }
             if (direct.isSuccess) {
-                val playback = direct.getOrThrow()
-                if (isPlayableHls(playback.hlsUrl, playback.requestHeaders)) {
-                    activeProviderByMediaId[mediaId] = primary.id
-                    return playback
-                }
-                lastError = IOException("${primary.displayName} returned an unusable HLS source")
-            } else {
-                lastError = direct.exceptionOrNull()
+                activeProviderByMediaId[mediaId] = primary.id
+                return direct.getOrThrow()
             }
+            lastError = direct.exceptionOrNull()
             failed += primary.id
         }
 
@@ -269,12 +255,7 @@ class MovieProviderRegistry(
 
                 val playbackResult = runCatching { provider.resolve(episode.stableId) }
                 if (playbackResult.isSuccess) {
-                    val playback = playbackResult.getOrThrow()
-                    if (isPlayableHls(playback.hlsUrl, playback.requestHeaders)) {
-                        return@runCatching playback
-                    }
-                    lastError = IOException("${provider.displayName} returned an unusable HLS source")
-                    continue
+                    return@runCatching playbackResult.getOrThrow()
                 }
                 lastError = playbackResult.exceptionOrNull()
             }
@@ -337,61 +318,6 @@ class MovieProviderRegistry(
         val parts = mediaId.split(':', limit = 3)
         if (parts.size < 3 || parts[0] != "movie") return null
         return parts[1].takeIf { it.isNotBlank() }
-    }
-
-    private fun isPlayableHls(
-        url: String,
-        headers: Map<String, String> = emptyMap()
-    ): Boolean {
-        val target = url.trim()
-        if (target.isBlank()) return false
-
-        val requestBuilder = Request.Builder()
-            .url(target)
-            .header(
-                "User-Agent",
-                headers["User-Agent"]
-                    ?: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
-            )
-            .header(
-                "Accept",
-                headers["Accept"]
-                    ?: "application/vnd.apple.mpegurl,application/x-mpegURL,*/*"
-            )
-            .header("Range", "bytes=0-4095")
-
-        headers.forEach { (name, value) ->
-            requestBuilder.header(name, value)
-        }
-
-        val request = requestBuilder
-            .get()
-            .build()
-
-        return runCatching {
-            playbackProbeHttp.newCall(request).execute().use { response ->
-                if (!response.isSuccessful && response.code != 206) {
-                    return@use false
-                }
-
-                val contentType = response.header("Content-Type").orEmpty().lowercase()
-                if (
-                    "mpegurl" in contentType ||
-                    "application/vnd.apple.mpegurl" in contentType
-                ) {
-                    return@use true
-                }
-
-                val prefix = response.body
-                    ?.string()
-                    .orEmpty()
-                    .take(4096)
-                    .trimStart()
-
-                prefix.startsWith("#EXTM3U", ignoreCase = true)
-            }
-        }.getOrDefault(false)
     }
 
     fun isTitle(mediaId: String): Boolean = mediaId.startsWith("movie-title:")
