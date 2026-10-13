@@ -139,22 +139,37 @@ class MotPhimMovieProvider(
         val serverName = decodeStablePart(parts[3])
         val episodeKey = decodeStablePart(parts[4])
 
-        val episode = loadEpisodes(slug).firstOrNull { item ->
+        val matching = loadEpisodes(slug).filter { item ->
             val server = item.getString("server").orEmpty().ifBlank { "MotPhim" }
             val key = item.getString("slug").orEmpty()
                 .ifBlank { item.getString("name").orEmpty() }
             server.equals(serverName, ignoreCase = true) &&
                 key.equals(episodeKey, ignoreCase = true)
+        }
+        val episode = matching.maxByOrNull { item ->
+            when (item.getString("type")?.trim()?.lowercase()) {
+                "m3u8" -> 30
+                "embed" -> 10
+                else -> 0
+            }
         } ?: throw IOException("MotPhim episode no longer exists")
 
         val rawLink = episode.getString("link").orEmpty().trim()
-        val hls = resolveToHls(rawLink)
-            ?: throw IOException("MotPhim source could not be resolved to HLS")
+        val hls = when (episode.getString("type")?.trim()?.lowercase()) {
+            "m3u8" -> rawLink.takeIf { it.contains(".m3u8", ignoreCase = true) }
+            else -> resolveToHls(rawLink)
+        } ?: throw IOException("MotPhim source could not be resolved to HLS")
 
         return MoviePlayback(
             mediaId = mediaId,
             hlsUrl = hls,
-            subtitles = parseSubtitles(episode)
+            subtitles = parseSubtitles(episode),
+            requestHeaders = mapOf(
+                "User-Agent" to DESKTOP_USER_AGENT,
+                "Referer" to "$BASE_URL/phim/$slug",
+                "Origin" to BASE_URL,
+                "Accept" to "*/*"
+            )
         )
     }
 
@@ -203,13 +218,21 @@ class MotPhimMovieProvider(
         collectEpisodeObjects(root, episodes)
 
         return episodes
+            .sortedWith(
+                compareByDescending<JsonObject> { episode ->
+                    when (episode.getString("type")?.trim()?.lowercase()) {
+                        "m3u8" -> 30
+                        "embed" -> 10
+                        else -> 0
+                    }
+                }.thenBy { it.getString("id").orEmpty() }
+            )
             .distinctBy { episode ->
                 listOf(
-                    episode.getString("id").orEmpty(),
-                    episode.getString("server").orEmpty(),
-                    episode.getString("slug").orEmpty(),
-                    episode.getString("name").orEmpty(),
-                    episode.getString("link").orEmpty()
+                    episode.getString("server").orEmpty().lowercase(),
+                    episode.getString("slug").orEmpty()
+                        .ifBlank { episode.getString("name").orEmpty() }
+                        .lowercase()
                 ).joinToString("|")
             }
     }
