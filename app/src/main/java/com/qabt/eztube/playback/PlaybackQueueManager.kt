@@ -6,7 +6,6 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
-import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
 import com.qabt.eztube.youtube.MediaSummary
@@ -296,55 +295,12 @@ class PlaybackQueueManager(
             builder
                 .setMinVideoSize(0, 0)
                 .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
-            player.trackSelectionParameters = builder.build()
-            return
-        }
-
-        val videoGroups = if (useCurrentTracks) {
-            player.currentTracks.groups.filter { group ->
-                (0 until group.length).any { index ->
-                    group.getTrackFormat(index).sampleMimeType?.startsWith("video/") == true
-                }
-            }
         } else {
-            emptyList()
-        }
-
-        var bestGroup: androidx.media3.common.Tracks.Group? = null
-        var bestIndex = -1
-        var bestHeight = -1
-        var bestBitrate = -1
-
-        videoGroups.forEach { group ->
-            for (index in 0 until group.length) {
-                if (!group.isTrackSupported(index)) continue
-                val format = group.getTrackFormat(index)
-                val height = format.height
-                if (height <= 0 || height > targetHeight) continue
-                val bitrate = format.bitrate.coerceAtLeast(0)
-                if (height > bestHeight || (height == bestHeight && bitrate > bestBitrate)) {
-                    bestGroup = group
-                    bestIndex = index
-                    bestHeight = height
-                    bestBitrate = bitrate
-                }
-            }
-        }
-
-        val chosenGroup = bestGroup
-        if (chosenGroup != null && bestIndex >= 0) {
-            builder
-                .setMinVideoSize(0, 0)
-                .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
-                .setOverrideForType(
-                    TrackSelectionOverride(
-                        chosenGroup.mediaTrackGroup,
-                        bestIndex
-                    )
-                )
-        } else {
-            // During initial prepare currentTracks can still be empty. Keep the requested cap;
-            // once tracks are available, the next quality command applies the exact override.
+            // Keep SABR/HLS inside one adaptive selection. A TrackSelectionOverride
+            // hard-switches representation immediately and can discard the already
+            // buffered old representation, causing a visible pause while the first
+            // segment of the new quality arrives. A height constraint lets Media3
+            // change at a safe segment boundary and keep playback moving.
             builder
                 .setMinVideoSize(0, 0)
                 .setMaxVideoSize(Int.MAX_VALUE, targetHeight)
