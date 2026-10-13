@@ -2898,6 +2898,7 @@ private fun FullPlayer(
     var draggedQueueStartIndex by remember { mutableIntStateOf(-1) }
     var dragQueueY by remember { mutableFloatStateOf(0f) }
     var holdSeekPreviewMs by remember { mutableLongStateOf(-1L) }
+    var showDeveloperDiagnostics by remember { mutableStateOf(false) }
     var fullscreenRequested by remember { mutableStateOf(false) }
     var fullscreenRendered by remember { mutableStateOf(false) }
     var fullscreenControlsVisible by remember { mutableStateOf(true) }
@@ -2910,6 +2911,9 @@ private fun FullPlayer(
     val playerScrollState = rememberScrollState()
     val queueScrollState = rememberScrollState()
     val dragScope = rememberCoroutineScope()
+    LaunchedEffect(developerMode) {
+        if (!developerMode) showDeveloperDiagnostics = false
+    }
     LaunchedEffect(controller, media.id) {
         while (true) {
             position = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
@@ -3021,6 +3025,7 @@ private fun FullPlayer(
 
             if (
                 developerMode &&
+                showDeveloperDiagnostics &&
                 !isMovie &&
                 !sabrDiagnostic.isNullOrBlank()
             ) {
@@ -3691,37 +3696,42 @@ private fun FullPlayer(
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (developerMode && isMovie && !movieDiagnostic.isNullOrBlank()) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                    tonalElevation = 1.dp,
-                    shape = RoundedCornerShape(8.dp)
+            val developerDiagnostic = when {
+                !developerMode -> null
+                isMovie -> movieDiagnostic
+                videoMode -> sabrDiagnostic
+                else -> null
+            }
+            if (!developerDiagnostic.isNullOrBlank()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        movieDiagnostic,
-                        modifier = Modifier.padding(8.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    AssistChip(
+                        onClick = {
+                            showDeveloperDiagnostics = !showDeveloperDiagnostics
+                        },
+                        label = {
+                            Text(
+                                if (showDeveloperDiagnostics) "Hide diagnostics"
+                                else "Diagnostics"
+                            )
+                        }
                     )
                 }
-            }
-            if (
-                developerMode &&
-                !isMovie &&
-                videoMode &&
-                !sabrDiagnostic.isNullOrBlank()
-            ) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                    tonalElevation = 1.dp,
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        sabrDiagnostic,
-                        modifier = Modifier.padding(8.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                if (showDeveloperDiagnostics) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                        tonalElevation = 1.dp,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            developerDiagnostic,
+                            modifier = Modifier.padding(8.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
             playerError?.let {
