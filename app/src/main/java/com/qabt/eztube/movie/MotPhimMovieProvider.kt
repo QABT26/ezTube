@@ -55,7 +55,7 @@ class MotPhimMovieProvider(
     override fun search(query: String): List<MovieCatalogItem> {
         val normalized = query.trim().replace(Regex("""\s+"""), " ")
         if (normalized.isBlank()) return emptyList()
-        return searchRaw(normalized).mapNotNull(::toCatalog)
+        return searchRsc(normalized)
     }
 
     override fun detail(slug: String): MovieDetail {
@@ -133,6 +133,115 @@ class MotPhimMovieProvider(
             subtitles = parseSubtitles(episode)
         )
     }
+
+    private fun searchRsc(query: String): List<MovieCatalogItem> {
+        ensureSession()
+
+        val url = BASE_URL.toHttpUrl()
+            .newBuilder()
+            .addPathSegment("search")
+            .addQueryParameter("q", query)
+            .addQueryParameter("_rsc", "ez" + System.nanoTime().toString(36))
+            .build()
+
+        val referer = BASE_URL.toHttpUrl()
+            .newBuilder()
+            .addPathSegment("search")
+            .addQueryParameter("q", query)
+            .build()
+            .toString()
+
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", DESKTOP_USER_AGENT)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "vi,en-US;q=0.9,en;q=0.8")
+            .header("Cache-Control", "no-cache")
+            .header("Pragma", "no-cache")
+            .header("Referer", referer)
+            .header("RSC", "1")
+            .header("Next-Url", "/search")
+            .header("Next-Router-State-Tree", SEARCH_ROUTER_STATE)
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Dest", "empty")
+            .get()
+            .build()
+
+        val body = http.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("MotPhim RSC HTTP ${response.code}")
+            }
+            text
+        }
+
+        if (body.isBlank()) throw IOException("MotPhim RSC returned empty body")
+        return parseSearchRsc(body)
+    }
+
+    private fun parseSearchRsc(body: String): List<MovieCatalogItem> {
+        val matches = SEARCH_CARD_REGEX.findAll(body).toList()
+        if (matches.isEmpty()) {
+            if (body.contains("/phim/")) {
+                throw IOException("MotPhim RSC format changed")
+            }
+            return emptyList()
+        }
+
+        return matches.mapNotNull { match ->
+            val title = decodeRscText(match.groupValues[1]).trim()
+            val slug = decodeRscText(match.groupValues[2]).trim()
+            if (title.isBlank() || slug.isBlank()) return@mapNotNull null
+
+            val start = match.range.first.coerceAtLeast(0)
+            val end = (match.range.last + 1400).coerceAtMost(body.length)
+            val window = body.substring(start, end)
+            val image = SEARCH_IMAGE_REGEX.find(window)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.let(::decodeRscText)
+            val language = when {
+                window.contains("Vietsub", ignoreCase = true) -> "Vietsub"
+                window.contains("Thuyết Minh", ignoreCase = true) -> "Thuyết Minh"
+                else -> null
+            }
+
+            MovieCatalogItem(
+                providerId = id,
+                providerName = displayName,
+                slug = slug,
+                title = title,
+                originalTitle = null,
+                thumbnailUrl = normalizeImage(image),
+                year = null,
+                language = language,
+                durationText = null,
+                durationSeconds = null,
+                episodeBadge = null,
+                isSeries = null
+            )
+        }
+            .distinctBy { it.slug }
+            .take(24)
+    }
+
+    private fun decodeRscText(value: String): String =
+        value
+            .replace("\\\"", "\"")
+            .replace("\\\/", "/")
+            .replace("\\n", " ")
+            .replace("\\r", " ")
+            .replace("\\t", " ")
+            .let { text ->
+                UNICODE_ESCAPE_REGEX.replace(text) { match ->
+                    match.groupValues[1]
+                        .toIntOrNull(16)
+                        ?.toChar()
+                        ?.toString()
+                        ?: match.value
+                }
+            }
 
     private fun findMovieBySlug(slug: String): JsonObject? {
         val query = slug
@@ -414,5 +523,21 @@ class MotPhimMovieProvider(
         const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
+        const val DESKTOP_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/152.0.0.0 Safari/537.36"
+        const val SEARCH_ROUTER_STATE =
+            "%5B%22%22%2C%7B%22children%22%3A%5B%22search%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%2Ctrue%5D"
+
+        val SEARCH_CARD_REGEX = Regex(
+            """title\\?":\\?"([^"]+)"[^{}]{0,260}href\\?":\\?"/phim/([^"\\]+)""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        val SEARCH_IMAGE_REGEX = Regex(
+            """src\\?":\\?"([^"]+(?:thumb|poster)\\.webp)""",
+            RegexOption.IGNORE_CASE
+        )
+        val UNICODE_ESCAPE_REGEX = Regex("""\\u([0-9a-fA-F]{4})""")
     }
 }
