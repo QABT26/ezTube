@@ -69,6 +69,44 @@ public final class SabrSourceSpec {
     public List<YoutubeSabrInfo.Format> getVideoFormats() { return videoFormats; }
     public YoutubeSabrInfo.Format getBootstrapVideoFormat() { return bootstrapVideoFormat; }
 
+    public YoutubeSabrInfo.Format getBestVideoFormatForHeight(Integer targetHeight) {
+        YoutubeSabrInfo.Format best = null;
+        if (targetHeight == null) {
+            for (YoutubeSabrInfo.Format format : videoFormats) {
+                if (best == null
+                        || format.getHeight() > best.getHeight()
+                        || (format.getHeight() == best.getHeight()
+                            && format.getBitrate() > best.getBitrate())) {
+                    best = format;
+                }
+            }
+            return best == null ? bootstrapVideoFormat : best;
+        }
+
+        for (YoutubeSabrInfo.Format format : videoFormats) {
+            if (format.getHeight() <= 0 || format.getHeight() > targetHeight) continue;
+            if (best == null
+                    || format.getHeight() > best.getHeight()
+                    || (format.getHeight() == best.getHeight()
+                        && format.getBitrate() > best.getBitrate())) {
+                best = format;
+            }
+        }
+        if (best != null) return best;
+
+        for (YoutubeSabrInfo.Format format : videoFormats) {
+            if (best == null
+                    || Math.abs(format.getHeight() - targetHeight)
+                        < Math.abs(best.getHeight() - targetHeight)
+                    || (Math.abs(format.getHeight() - targetHeight)
+                        == Math.abs(best.getHeight() - targetHeight)
+                        && format.getBitrate() > best.getBitrate())) {
+                best = format;
+            }
+        }
+        return best == null ? bootstrapVideoFormat : best;
+    }
+
     YoutubeSabrInfo.Format getFormat(String key) { return formatsByKey.get(key); }
 
     String getFormatKey(YoutubeSabrInfo.Format format) {
