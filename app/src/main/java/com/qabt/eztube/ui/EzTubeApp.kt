@@ -1209,12 +1209,12 @@ private fun SettingsScreen(
             Column {
                 Text("About", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    "ezTube ${BuildConfig.VERSION_NAME} · build ${BuildConfig.BUILD_ID}",
+                    "ezTube ${BuildConfig.VERSION_NAME} · ${BuildConfig.MOVIE_MILESTONE}",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    "Package: ${BuildConfig.APPLICATION_ID} · versionCode ${BuildConfig.VERSION_CODE}",
+                    "${BuildConfig.BUILD_ID} · Android build ${BuildConfig.VERSION_CODE}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
