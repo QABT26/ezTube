@@ -218,12 +218,14 @@ class BiliIntlMovieProvider(
             ?: throw IOException("Bilibili returned no video streams")
         val videoHttp = probeMedia(probeVideo.url, headers, "video")
         val audioHttp = probeMedia(audioUrl, headers, "audio")
+        val subtitles = runCatching { fetchSubtitles(aid) }.getOrDefault(emptyList())
 
         return MoviePlayback(
             mediaId = mediaId,
             videoStreams = play.videoStreams,
             audioUrl = audioUrl,
             audioMimeType = play.audioMimeType,
+            subtitles = subtitles,
             requestHeaders = headers,
             diagnostic = buildString {
                 append("Provider: Bilibili")
@@ -232,6 +234,7 @@ class BiliIntlMovieProvider(
                 append("\nVideo streams: ").append(play.videoStreams.size)
                 append("\nVideo CDN: HTTP ").append(videoHttp)
                 append("\nAudio CDN: HTTP ").append(audioHttp)
+                append("\nSubtitles: ").append(subtitles.size)
             }
         )
     }
@@ -375,6 +378,191 @@ class BiliIntlMovieProvider(
                 ?.takeIf { it.isNotBlank() }
                 ?: "audio/mp4"
         )
+    }
+
+    private fun fetchSubtitles(aid: String): List<MovieSubtitle> {
+        val url = "$API_BASE/web/v2/subtitle".toHttpUrl()
+            .newBuilder()
+            .addQueryParameter("platform", "web")
+            .addQueryParameter("s_locale", "vi_VN")
+            .addQueryParameter("aid", aid)
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json, text/plain, */*")
+            .header("Referer", "$WEB_BASE/")
+            .get()
+            .build()
+
+        val root = http.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("Bilibili subtitle API HTTP ${response.code}")
+            }
+            if (body.isBlank()) return emptyList()
+            runCatching { JsonParser.`object`().from(body) }.getOrNull()
+                ?: return emptyList()
+        }
+
+        if (root.getInt("code") != 0) return emptyList()
+        val data = root.getObject("data") ?: return emptyList()
+        val arrays = listOfNotNull(
+            data.getArray("subtitles"),
+            data.getArray("video_subtitle")
+        )
+
+        val results = mutableListOf<MovieSubtitle>()
+        arrays.forEach { array ->
+            for (index in 0 until array.size) {
+                val sub = array.getObject(index) ?: continue
+                val language = (
+                    sub.getString("lang_key")
+                        ?: sub.getString("language")
+                        ?: sub.getString("lang")
+                    )
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                val label = (
+                    sub.getString("lang")
+                        ?: sub.getString("label")
+                        ?: sub.getString("name")
+                        ?: language
+                    )
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+
+                val direct = buildList {
+                    sub.getObject("srt")?.getString("url")?.let(::add)
+                    sub.getObject("ass")?.getString("url")?.let(::add)
+                    sub.getString("url")?.let(::add)
+                }
+                    .mapNotNull(::normalizeSubtitleUrl)
+                    .distinct()
+
+                var added = false
+                direct.forEach { subtitleUrl ->
+                    val lower = subtitleUrl.substringBefore('?').lowercase()
+                    when {
+                        lower.endsWith(".srt") -> {
+                            results += MovieSubtitle(
+                                language = language,
+                                label = label,
+                                url = subtitleUrl,
+                                mimeType = "application/x-subrip"
+                            )
+                            added = true
+                        }
+                        lower.endsWith(".ass") || lower.endsWith(".ssa") -> {
+                            results += MovieSubtitle(
+                                language = language,
+                                label = label,
+                                url = subtitleUrl,
+                                mimeType = "text/x-ssa"
+                            )
+                            added = true
+                        }
+                        lower.endsWith(".vtt") -> {
+                            results += MovieSubtitle(
+                                language = language,
+                                label = label,
+                                url = subtitleUrl,
+                                mimeType = "text/vtt"
+                            )
+                            added = true
+                        }
+                    }
+                }
+
+                if (!added) {
+                    direct.firstOrNull()?.let { jsonUrl ->
+                        subtitleJsonToDataUri(jsonUrl)?.let { dataUri ->
+                            results += MovieSubtitle(
+                                language = language,
+                                label = label,
+                                url = dataUri,
+                                mimeType = "application/x-subrip"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        return results
+            .distinctBy { "${it.language.orEmpty()}|${it.label.orEmpty()}|${it.url}" }
+            .sortedWith(
+                compareBy<MovieSubtitle> {
+                    when {
+                        it.language.orEmpty().startsWith("vi", ignoreCase = true) ||
+                            it.label.orEmpty().contains("việt", ignoreCase = true) -> 0
+                        it.language.orEmpty().startsWith("en", ignoreCase = true) ||
+                            it.label.orEmpty().contains("english", ignoreCase = true) -> 1
+                        else -> 2
+                    }
+                }.thenBy { it.label.orEmpty() }
+            )
+    }
+
+    private fun normalizeSubtitleUrl(value: String): String? {
+        val raw = value.trim()
+        if (raw.isBlank()) return null
+        return when {
+            raw.startsWith("//") -> "https:$raw"
+            raw.startsWith("http://") || raw.startsWith("https://") -> raw
+            else -> null
+        }
+    }
+
+    private fun subtitleJsonToDataUri(url: String): String? {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json, text/plain, */*")
+            .header("Referer", "$WEB_BASE/")
+            .get()
+            .build()
+
+        val root = http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val body = response.body?.string().orEmpty()
+            if (body.isBlank()) return null
+            runCatching { JsonParser.`object`().from(body) }.getOrNull()
+        } ?: return null
+
+        val body = root.getArray("body") ?: return null
+        val srt = buildString {
+            var sequence = 1
+            for (index in 0 until body.size) {
+                val line = body.getObject(index) ?: continue
+                val text = line.getString("content").orEmpty().trim()
+                val from = line.getDouble("from")
+                val to = line.getDouble("to")
+                if (text.isBlank() || to <= from || from < 0.0) continue
+
+                append(sequence++).append('\n')
+                append(formatSrtTime(from))
+                    .append(" --> ")
+                    .append(formatSrtTime(to))
+                    .append('\n')
+                append(text.replace("\\N", "\n")).append("\n\n")
+            }
+        }
+        if (srt.isBlank()) return null
+
+        val encoded = java.util.Base64.getEncoder()
+            .encodeToString(srt.toByteArray(Charsets.UTF_8))
+        return "data:application/x-subrip;base64,$encoded"
+    }
+
+    private fun formatSrtTime(seconds: Double): String {
+        val millis = (seconds * 1000.0).toLong().coerceAtLeast(0L)
+        val hours = millis / 3_600_000L
+        val minutes = (millis % 3_600_000L) / 60_000L
+        val secs = (millis % 60_000L) / 1_000L
+        val ms = millis % 1_000L
+        return "%02d:%02d:%02d,%03d".format(hours, minutes, secs, ms)
     }
 
     private fun probeMedia(
