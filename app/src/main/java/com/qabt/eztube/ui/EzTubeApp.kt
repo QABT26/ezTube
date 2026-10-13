@@ -417,6 +417,9 @@ fun EzTubeApp() {
     }
 
     fun queueForStart(media: MediaSummary, sourceItems: List<MediaSummary>): List<MediaSummary> {
+        // Movie episode queues represent an ordered series/server. Never mix or
+        // shuffle them with recommendations; Next/Previous must stay episodic.
+        if (media.id.startsWith("movie:")) return sourceItems.distinctBy { it.id }
         if (nextMode == NextMode.LIST) return sourceItems
         val pool = (sourceItems + homeSuggestions + trending + searchResults)
             .distinctBy { it.id }
@@ -838,17 +841,18 @@ fun EzTubeApp() {
                     error = movieDetailError,
                     resolvingId = resolvingId,
                     nowPlayingId = nowPlaying?.id,
+                    historyEntries = recent,
                     onBack = {
                         movieDetail = null
                         movieDetailError = null
                         movieDetailLoading = false
                     },
-                    onPlay = { media, items ->
+                    onPlay = { media, items, startPositionMs ->
                         nowPlaying = media
                         playerError = null
                         errorMessage = null
                         showPlayer = true
-                        startQueue(media, items)
+                        startQueue(media, items, startPositionMs)
                     }
                 )
             }
@@ -1681,10 +1685,14 @@ private fun MovieDetailScreen(
     error: String?,
     resolvingId: String?,
     nowPlayingId: String?,
+    historyEntries: List<HistoryEntry>,
     onBack: () -> Unit,
-    onPlay: (MediaSummary, List<MediaSummary>) -> Unit
+    onPlay: (MediaSummary, List<MediaSummary>, Long) -> Unit
 ) {
     val listState = rememberLazyListState()
+    val historyByMediaId = remember(historyEntries) {
+        historyEntries.associateBy { it.mediaId }
+    }
     val currentEpisodeIndex = detail?.episodes?.indexOfFirst { it.stableId == nowPlayingId } ?: -1
     val targetListIndex = if (detail != null && currentEpisodeIndex >= 0) {
         var index = 1 // header card
@@ -1801,6 +1809,7 @@ private fun MovieDetailScreen(
 
                     val grouped = detail.episodes.groupBy { it.serverName }
                     grouped.forEach { (server, refs) ->
+                        val serverQueue = refs.map { it.toMediaSummary() }
                         item(key = "server-header-$server") {
                             Text(
                                 server,
@@ -1810,9 +1819,10 @@ private fun MovieDetailScreen(
                             )
                         }
                         items(
-                            refs.map { it.toMediaSummary() },
+                            serverQueue,
                             key = { it.id }
                         ) { media ->
+                            val progressEntry = historyByMediaId[media.id]
                             val isCurrent = media.id == nowPlayingId
                             Surface(
                                 modifier = Modifier
@@ -1842,10 +1852,18 @@ private fun MovieDetailScreen(
                                     Box(Modifier.weight(1f)) {
                                         SearchResult(
                                             media = media,
+                                            progressEntry = progressEntry,
                                             resolving = resolvingId == media.id,
                                             enabled = resolvingId == null,
                                             onChannel = {},
-                                            onPlay = { onPlay(media, queueItems) }
+                                            onPlay = {
+                                                onPlay(
+                                                    media,
+                                                    serverQueue,
+                                                    progressEntry?.positionMs?.coerceAtLeast(0L)
+                                                        ?: 0L
+                                                )
+                                            }
                                         )
                                     }
                                 }
