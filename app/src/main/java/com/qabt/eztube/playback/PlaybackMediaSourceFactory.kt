@@ -6,6 +6,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
@@ -53,27 +54,23 @@ class PlaybackMediaSourceFactory(private val context: Context) {
         manifestUrl: String,
         headers: Map<String, String>
     ): MediaSource {
-        if (headers.isEmpty()) {
-            return hlsFactory.createMediaSource(
+        val dataFactory = if (headers.isEmpty()) {
+            dataSourceFactory
+        } else {
+            val httpFactory = DefaultHttpDataSource.Factory()
+                .setAllowCrossProtocolRedirects(true)
+                .setDefaultRequestProperties(headers)
+            DefaultDataSource.Factory(context, httpFactory)
+        }
+
+        return DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(dataFactory)
+            .createMediaSource(
                 mediaItem.buildUpon()
                     .setUri(manifestUrl)
                     .setMimeType("application/x-mpegURL")
                     .build()
             )
-        }
-
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setDefaultRequestProperties(headers)
-        val factory = HlsMediaSource.Factory(
-            DefaultDataSource.Factory(context, httpFactory)
-        )
-        return factory.createMediaSource(
-            mediaItem.buildUpon()
-                .setUri(manifestUrl)
-                .setMimeType("application/x-mpegURL")
-                .build()
-        )
     }
 
     fun createMerged(
@@ -84,24 +81,27 @@ class PlaybackMediaSourceFactory(private val context: Context) {
         audioMimeType: String?,
         headers: Map<String, String> = emptyMap()
     ): MediaSource {
-        val factory = if (headers.isEmpty()) {
-            progressiveFactory
+        val dataFactory = if (headers.isEmpty()) {
+            dataSourceFactory
         } else {
             val httpFactory = DefaultHttpDataSource.Factory()
                 .setAllowCrossProtocolRedirects(true)
                 .setDefaultRequestProperties(headers)
-            ProgressiveMediaSource.Factory(
-                DefaultDataSource.Factory(context, httpFactory)
-            )
+            DefaultDataSource.Factory(context, httpFactory)
         }
 
-        val video = factory.createMediaSource(
+        val movieFactory = DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(dataFactory)
+
+        // The video MediaItem carries subtitleConfigurations. DefaultMediaSourceFactory
+        // merges those side-loaded subtitle sources before we merge the separate audio.
+        val video = movieFactory.createMediaSource(
             mediaItem.buildUpon()
                 .setUri(videoUrl)
                 .apply { videoMimeType?.let { setMimeType(it) } }
                 .build()
         )
-        val audio = factory.createMediaSource(
+        val audio = ProgressiveMediaSource.Factory(dataFactory).createMediaSource(
             MediaItem.Builder()
                 .setMediaId(mediaItem.mediaId + "#audio")
                 .setUri(audioUrl)
@@ -110,4 +110,5 @@ class PlaybackMediaSourceFactory(private val context: Context) {
         )
         return MergingMediaSource(video, audio)
     }
+
 }
