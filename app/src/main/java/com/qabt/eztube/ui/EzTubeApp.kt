@@ -2258,7 +2258,9 @@ private fun isMovieLibraryItem(mediaId: String, channel: String): Boolean {
     val source = channel.lowercase()
     return "motphim" in source ||
         "kkphim" in source ||
-        "phimapi" in source
+        "phimapi" in source ||
+        "bilibili" in source ||
+        "biliintl" in source
 }
 
 @Composable
@@ -2907,6 +2909,7 @@ private fun FullPlayer(
     var fullscreenSeekPreviewMs by remember { mutableLongStateOf(-1L) }
     var fullscreenSpeedMenu by remember { mutableStateOf(false) }
     var fullscreenQualityMenu by remember { mutableStateOf(false) }
+    var fullscreenSubtitleMenu by remember { mutableStateOf(false) }
     var fullscreenSleepMenu by remember { mutableStateOf(false) }
     val playerScrollState = rememberScrollState()
     val queueScrollState = rememberScrollState()
@@ -2943,6 +2946,7 @@ private fun FullPlayer(
                 fullscreenRendered = false
                 fullscreenSpeedMenu = false
                 fullscreenQualityMenu = false
+                fullscreenSubtitleMenu = false
                 fullscreenSleepMenu = false
             }
         }
@@ -2979,6 +2983,7 @@ private fun FullPlayer(
         fullscreenControlsEpoch,
         fullscreenSpeedMenu,
         fullscreenQualityMenu,
+        fullscreenSubtitleMenu,
         fullscreenSleepMenu
     ) {
         if (
@@ -2986,6 +2991,7 @@ private fun FullPlayer(
             fullscreenControlsVisible &&
             !fullscreenSpeedMenu &&
             !fullscreenQualityMenu &&
+            !fullscreenSubtitleMenu &&
             !fullscreenSleepMenu
         ) {
             delay(2_500L)
@@ -3161,6 +3167,7 @@ private fun FullPlayer(
                             modifier = Modifier.height(28.dp).clickable {
                                 fullscreenSpeedMenu = !fullscreenSpeedMenu
                                 fullscreenQualityMenu = false
+                                fullscreenSubtitleMenu = false
                                 fullscreenSleepMenu = false
                                 fullscreenControlsEpoch += 1
                             },
@@ -3223,6 +3230,7 @@ private fun FullPlayer(
                             modifier = Modifier.height(28.dp).clickable {
                                 fullscreenQualityMenu = !fullscreenQualityMenu
                                 fullscreenSpeedMenu = false
+                                fullscreenSubtitleMenu = false
                                 fullscreenSleepMenu = false
                                 fullscreenControlsEpoch += 1
                             },
@@ -3259,12 +3267,81 @@ private fun FullPlayer(
                         }
                     }
 
+                    if (isMovie) {
+                        Box {
+                            Surface(
+                                modifier = Modifier.height(28.dp).clickable {
+                                    fullscreenSubtitleMenu = !fullscreenSubtitleMenu
+                                    fullscreenSpeedMenu = false
+                                    fullscreenQualityMenu = false
+                                    fullscreenSleepMenu = false
+                                    fullscreenControlsEpoch += 1
+                                },
+                                shape = RoundedCornerShape(50),
+                                color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.22f)
+                            ) {
+                                Box(
+                                    Modifier.padding(horizontal = 9.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        selectedSubtitleLabel?.let { "CC $it" } ?: "CC Off",
+                                        color = androidx.compose.ui.graphics.Color.White,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = fullscreenSubtitleMenu,
+                                onDismissRequest = { fullscreenSubtitleMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            (if (selectedSubtitleLabel == null) "✓ " else "") +
+                                                "CC Off"
+                                        )
+                                    },
+                                    onClick = {
+                                        fullscreenSubtitleMenu = false
+                                        onSubtitle(null)
+                                        fullscreenControlsEpoch += 1
+                                    }
+                                )
+                                subtitleOptions.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                (if (selectedSubtitleLabel == option.label) "✓ " else "") +
+                                                    option.label
+                                            )
+                                        },
+                                        onClick = {
+                                            fullscreenSubtitleMenu = false
+                                            onSubtitle(option)
+                                            fullscreenControlsEpoch += 1
+                                        }
+                                    )
+                                }
+                                if (subtitleOptions.isEmpty()) {
+                                    DropdownMenuItem(
+                                        text = { Text("No subtitles") },
+                                        onClick = {},
+                                        enabled = false
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Box {
                         Surface(
                             modifier = Modifier.height(28.dp).clickable {
                                 fullscreenSleepMenu = !fullscreenSleepMenu
                                 fullscreenSpeedMenu = false
                                 fullscreenQualityMenu = false
+                                fullscreenSubtitleMenu = false
                                 fullscreenControlsEpoch += 1
                             },
                             shape = RoundedCornerShape(50),
@@ -3573,8 +3650,9 @@ private fun FullPlayer(
 
             Spacer(Modifier.height(6.dp))
             if (isMovie) {
+                val subtitleScrollState = rememberScrollState()
                 Row(
-                    Modifier.fillMaxWidth(),
+                    Modifier.fillMaxWidth().horizontalScroll(subtitleScrollState),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -3583,7 +3661,9 @@ private fun FullPlayer(
                         selected = selectedSubtitleLabel == null,
                         onClick = { onSubtitle(null) },
                         label = { Text("CC Off") },
-                        leadingIcon = { Icon(Icons.Outlined.ClosedCaptionOff, null, Modifier.size(16.dp)) }
+                        leadingIcon = {
+                            Icon(Icons.Outlined.ClosedCaptionOff, null, Modifier.size(16.dp))
+                        }
                     )
                     if (subtitleOptions.isEmpty()) {
                         AssistChip(
@@ -3591,10 +3671,12 @@ private fun FullPlayer(
                             onClick = {},
                             enabled = false,
                             label = { Text("No subtitles") },
-                            leadingIcon = { Icon(Icons.Outlined.SubtitlesOff, null, Modifier.size(16.dp)) }
+                            leadingIcon = {
+                                Icon(Icons.Outlined.SubtitlesOff, null, Modifier.size(16.dp))
+                            }
                         )
                     } else {
-                        subtitleOptions.take(3).forEach { option ->
+                        subtitleOptions.forEach { option ->
                             FilterChip(
                                 modifier = Modifier.height(32.dp),
                                 selected = selectedSubtitleLabel == option.label,
