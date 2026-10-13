@@ -430,7 +430,10 @@ class PlaybackQueueManager(
         val positionMs = player.currentPosition.coerceAtLeast(0L)
         val shouldPlay = player.playWhenReady
 
-        if (currentId.startsWith("movie:")) {
+        // Give a movie source one real Media3 retry before blacklisting its provider.
+        // This avoids treating a transient manifest/segment error as proof that the
+        // provider is unusable and immediately falling into an unrelated source.
+        if (currentId.startsWith("movie:") && recoveryAttempts >= 1) {
             movieProviders.reportPlaybackFailure(currentId)
         }
         val currentEngine = player.currentMediaItem?.mediaMetadata?.extras
