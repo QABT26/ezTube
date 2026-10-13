@@ -2949,9 +2949,16 @@ private fun FullPlayer(
                     }
                 },
                 update = { view ->
-                    view.player = fullscreenController
+                    if (view.player !== fullscreenController) {
+                        view.player = fullscreenController
+                    }
                     view.useController = false
                     view.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                },
+                onRelease = { view ->
+                    if (view.player === fullscreenController) {
+                        view.player = null
+                    }
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -3434,8 +3441,15 @@ private fun FullPlayer(
                             }
                         },
                         update = { view ->
-                            view.player = controller
+                            if (view.player !== controller) {
+                                view.player = controller
+                            }
                             view.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        },
+                        onRelease = { view ->
+                            if (view.player === controller) {
+                                view.player = null
+                            }
                         },
                         modifier = Modifier.fillMaxSize()
                     )
