@@ -1278,9 +1278,9 @@ private fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Develop...", fontWeight = FontWeight.SemiBold)
+                        Text("Developer options", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Show playback source and network diagnostics.",
+                            "Show playback source, network, and diagnostic information.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
