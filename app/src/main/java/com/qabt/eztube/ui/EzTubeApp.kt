@@ -2898,7 +2898,8 @@ private fun FullPlayer(
     var draggedQueueStartIndex by remember { mutableIntStateOf(-1) }
     var dragQueueY by remember { mutableFloatStateOf(0f) }
     var holdSeekPreviewMs by remember { mutableLongStateOf(-1L) }
-    var fullscreenVideo by remember { mutableStateOf(false) }
+    var fullscreenRequested by remember { mutableStateOf(false) }
+    var fullscreenRendered by remember { mutableStateOf(false) }
     var fullscreenControlsVisible by remember { mutableStateOf(true) }
     var fullscreenControlsEpoch by remember { mutableIntStateOf(0) }
     var fullscreenSeeking by remember { mutableStateOf(false) }
@@ -2919,9 +2920,32 @@ private fun FullPlayer(
 
     val activity = context as? Activity
     val originalOrientation = remember(activity) { activity?.requestedOrientation }
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape =
+        configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
-    DisposableEffect(fullscreenVideo, activity) {
-        if (fullscreenVideo && activity != null) {
+    // Keep the normal player visible while Android is rotating into landscape.
+    // Likewise, keep the fullscreen surface alive while rotating back to portrait.
+    // This prevents Compose from rendering the wrong layout for a transient
+    // orientation and avoids the diagonal/half-rotated frames seen during transition.
+    LaunchedEffect(fullscreenRequested, isLandscape) {
+        when {
+            fullscreenRequested && isLandscape -> {
+                fullscreenRendered = true
+                fullscreenControlsVisible = true
+                fullscreenControlsEpoch += 1
+            }
+            !fullscreenRequested && !isLandscape -> {
+                fullscreenRendered = false
+                fullscreenSpeedMenu = false
+                fullscreenQualityMenu = false
+                fullscreenSleepMenu = false
+            }
+        }
+    }
+
+    DisposableEffect(fullscreenRequested, activity) {
+        if (fullscreenRequested && activity != null) {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             WindowCompat.setDecorFitsSystemWindows(activity.window, false)
             WindowInsetsControllerCompat(activity.window, activity.window.decorView).apply {
@@ -2941,12 +2965,12 @@ private fun FullPlayer(
         }
     }
 
-    BackHandler(enabled = fullscreenVideo) {
-        fullscreenVideo = false
+    BackHandler(enabled = fullscreenRequested || fullscreenRendered) {
+        fullscreenRequested = false
     }
 
     LaunchedEffect(
-        fullscreenVideo,
+        fullscreenRendered,
         fullscreenControlsVisible,
         fullscreenControlsEpoch,
         fullscreenSpeedMenu,
@@ -2954,7 +2978,7 @@ private fun FullPlayer(
         fullscreenSleepMenu
     ) {
         if (
-            fullscreenVideo &&
+            fullscreenRendered &&
             fullscreenControlsVisible &&
             !fullscreenSpeedMenu &&
             !fullscreenQualityMenu &&
@@ -2965,7 +2989,7 @@ private fun FullPlayer(
         }
     }
 
-    if (fullscreenVideo && videoMode && controller != null) {
+    if (fullscreenRendered && videoMode && controller != null) {
         val fullscreenController = controller
         val fullscreenDisplayedPosition =
             fullscreenSeekPreviewMs.takeIf { it >= 0L } ?: position
@@ -3401,7 +3425,7 @@ private fun FullPlayer(
                 }
 
                 FilledTonalIconButton(
-                    onClick = { fullscreenVideo = false },
+                    onClick = { fullscreenRequested = false },
                     modifier = Modifier.align(Alignment.TopEnd).padding(12.dp).size(42.dp)
                 ) {
                     Icon(Icons.Outlined.FullscreenExit, "Exit fullscreen", Modifier.size(24.dp))
@@ -3504,7 +3528,7 @@ private fun FullPlayer(
                         modifier = Modifier.fillMaxSize()
                     )
                     FilledTonalIconButton(
-                        onClick = { fullscreenVideo = true },
+                        onClick = { fullscreenRequested = true },
                         modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(38.dp)
                     ) {
                         Icon(Icons.Outlined.Fullscreen, "Fullscreen", Modifier.size(22.dp))
