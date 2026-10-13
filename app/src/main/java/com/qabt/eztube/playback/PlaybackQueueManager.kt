@@ -428,6 +428,10 @@ class PlaybackQueueManager(
 
         val positionMs = player.currentPosition.coerceAtLeast(0L)
         val shouldPlay = player.playWhenReady
+
+        if (currentId.startsWith("movie:")) {
+            movieProviders.reportPlaybackFailure(currentId)
+        }
         val currentEngine = player.currentMediaItem?.mediaMetadata?.extras
             ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE)
         val isSabr = currentEngine == PlaybackService.ENGINE_SABR
@@ -482,6 +486,9 @@ class PlaybackQueueManager(
         if (player.playbackState != Player.STATE_READY) return
 
         val healthyId = player.currentMediaItem?.mediaId ?: return
+        if (healthyId.startsWith("movie:")) {
+            movieProviders.reportPlaybackHealthy(healthyId)
+        }
         recoveryMediaId = healthyId
         val healthyGeneration = ++recoveryHealthyGeneration
 
@@ -798,7 +805,7 @@ class PlaybackQueueManager(
     ): Result<ResolvedPlayback> = runCatching {
         if (movieProviders.canResolve(media.id)) {
             val moviePlayback = withContext(Dispatchers.IO) {
-                movieProviders.resolve(media.id)
+                movieProviders.resolve(media.id, media.title)
             }
             return@runCatching resolvedMoviePlayback(media, moviePlayback)
         }
