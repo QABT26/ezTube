@@ -1445,7 +1445,7 @@ private fun SearchScreen(
             placeholder = {
                 Text(
                     if (sourceMode == SearchSourceMode.MOVIE)
-                        "Search movies or paste Bilibili URL…"
+                        "Search movies…"
                     else
                         "Search YouTube…"
                 )
