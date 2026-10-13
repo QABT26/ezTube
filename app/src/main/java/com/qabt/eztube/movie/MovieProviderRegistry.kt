@@ -94,12 +94,67 @@ class MovieProviderRegistry(
             .map { it.toMediaSummary() }
     }
 
-    fun detail(mediaId: String): MovieDetail {
+    fun detail(
+        mediaId: String,
+        mediaTitle: String? = null
+    ): MovieDetail {
         val parsed = parseTitleId(mediaId)
             ?: throw IOException("Invalid movie title id")
-        val provider = providers.firstOrNull { it.id == parsed.first }
+        val primary = providers.firstOrNull { it.id == parsed.first }
             ?: throw IOException("Movie provider not installed: ${parsed.first}")
-        return provider.detail(parsed.second)
+
+        var lastError: Throwable? = null
+
+        val primaryResult = runCatching { primary.detail(parsed.second) }
+        if (primaryResult.isSuccess) {
+            return primaryResult.getOrThrow()
+        }
+        lastError = primaryResult.exceptionOrNull()
+
+        val title = mediaTitle.orEmpty().trim()
+        if (title.isBlank()) {
+            throw IOException(
+                lastError?.message ?: "Unable to load movie detail",
+                lastError
+            )
+        }
+
+        val alternates = providers
+            .filterNot { it.id == primary.id }
+            .sortedByDescending { provider ->
+                when (provider.id) {
+                    "ophim" -> 40
+                    "phimapi" -> 30
+                    "motphim" -> 20
+                    else -> 0
+                }
+            }
+
+        for (provider in alternates) {
+            val searchResult = runCatching { provider.search(title) }
+            if (searchResult.isFailure) {
+                lastError = searchResult.exceptionOrNull()
+                continue
+            }
+
+            val candidates = searchResult.getOrThrow()
+                .sortedByDescending { queryScore(title, it) }
+
+            for (candidate in candidates.take(4)) {
+                if (queryScore(title, candidate) < 650) continue
+
+                val detailResult = runCatching { provider.detail(candidate.slug) }
+                if (detailResult.isSuccess) {
+                    return detailResult.getOrThrow()
+                }
+                lastError = detailResult.exceptionOrNull()
+            }
+        }
+
+        throw IOException(
+            lastError?.message ?: "No provider could load movie detail",
+            lastError
+        )
     }
 
     fun canResolve(mediaId: String): Boolean =
