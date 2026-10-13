@@ -1073,6 +1073,10 @@ fun EzTubeApp() {
                         listState = searchListState,
                         onResultsChange = { searchResults = it },
                         recentSearches = recentSearches,
+                        onRecentSearchDelete = { recent ->
+                            playbackPrefs.removeRecentSearch(recent)
+                            recentSearches = playbackPrefs.loadRecentSearches()
+                        },
                         sourceMode = searchSourceMode,
                         onSourceModeChange = { mode ->
                             searchSourceMode = mode
@@ -1358,6 +1362,7 @@ private fun SearchScreen(
     listState: androidx.compose.foundation.lazy.LazyListState,
     onResultsChange: (List<MediaSummary>) -> Unit,
     recentSearches: List<String>,
+    onRecentSearchDelete: (String) -> Unit,
     sourceMode: SearchSourceMode,
     onSourceModeChange: (SearchSourceMode) -> Unit,
     onSearchSubmitted: (String) -> Unit,
@@ -1476,7 +1481,16 @@ private fun SearchScreen(
                                 recent,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 280.dp)
+                                modifier = Modifier.widthIn(max = 240.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            Icon(
+                                imageVector = Icons.Outlined.Close,
+                                contentDescription = "Delete search",
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .clickable { onRecentSearchDelete(recent) }
                             )
                         }
                     )
