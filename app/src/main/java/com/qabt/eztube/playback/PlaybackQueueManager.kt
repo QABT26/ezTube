@@ -166,11 +166,14 @@ class PlaybackQueueManager(
                 ?: return@mapIndexedNotNull null
             MediaItem.SubtitleConfiguration.Builder(uri)
                 .setMimeType(
-                    when {
+                    subtitle.mimeType ?: when {
                         subtitle.url.substringBefore('?').endsWith(".vtt", ignoreCase = true) ->
                             "text/vtt"
                         subtitle.url.substringBefore('?').endsWith(".srt", ignoreCase = true) ->
                             "application/x-subrip"
+                        subtitle.url.substringBefore('?').endsWith(".ass", ignoreCase = true) ||
+                            subtitle.url.substringBefore('?').endsWith(".ssa", ignoreCase = true) ->
+                            "text/x-ssa"
                         else -> "text/vtt"
                     }
                 )
