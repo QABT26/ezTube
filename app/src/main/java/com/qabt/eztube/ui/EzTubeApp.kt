@@ -2943,6 +2943,8 @@ private fun FullPlayer(
                     androidx.media3.ui.PlayerView(viewContext).apply {
                         useController = false
                         resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        setKeepContentOnPlayerReset(true)
+                        setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
                         player = fullscreenController
                     }
                 },
@@ -3426,6 +3428,8 @@ private fun FullPlayer(
                             androidx.media3.ui.PlayerView(context).apply {
                                 useController = false
                                 resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                setKeepContentOnPlayerReset(true)
+                                setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
                                 player = controller
                             }
                         },
