@@ -162,11 +162,8 @@ class NewPipeYouTubeSource : YouTubeSource {
         }
 
     fun sabrSpec(mediaId: String, quality: VideoQuality): SabrSourceSpec? {
-        // Current YouTube SABR may require attestation / a PO token. PipePipeClient
-        // installs a Local DOM PO-token resolver before enabling SABR. ezTube must
-        // not enter SABR until an equivalent resolver is installed; otherwise the
-        // first media request can fail immediately with SabrAttestationException
-        // and surface as a player source error.
+        // SABR needs a PO-token resolver. EzTubeApplication installs the local
+        // DOM resolver before playback is allowed to enter this path.
         if (NewPipe.getYoutubePoTokenResolver() == null) {
             return null
         }
@@ -201,21 +198,22 @@ class NewPipeYouTubeSource : YouTubeSource {
             ?: originalAudio.maxByOrNull { it.bitrate }
             ?: return null
 
-        // Keep the full adaptive ladder in one SABR source. The user's selected
-        // quality is enforced by Media3 track constraints, so changing 360/480/720/1080
-        // does not require rebuilding the source.
         val maxHeight = 1080
-        val videoCandidates = sabrInfo.formats
+        val allVideos = sabrInfo.formats
             .asSequence()
-            .filter { it.isVideo && it.height > 0 && it.height <= maxHeight }
+            .filter { it.isVideo && it.height > 0 }
             .toList()
+        if (allVideos.isEmpty()) return null
+
+        val cappedVideos = allVideos
+            .filter { it.height <= maxHeight }
             .ifEmpty {
-                sabrInfo.formats
-                    .filter { it.isVideo && it.height > 0 }
-                    .sortedBy { kotlin.math.abs(it.height - maxHeight) }
-                    .take(1)
+                listOf(
+                    allVideos.minBy {
+                        kotlin.math.abs(it.height - maxHeight)
+                    }
+                )
             }
-        if (videoCandidates.isEmpty()) return null
 
         fun codecFamily(format: YoutubeSabrInfo.Format): String {
             val mime = format.mimeType.orEmpty().lowercase()
@@ -227,29 +225,67 @@ class NewPipeYouTubeSource : YouTubeSource {
             }
         }
 
-        val preferredFamily = listOf("avc1", "vp9", "av01")
-            .firstOrNull { family ->
-                videoCandidates.any { codecFamily(it) == family }
+        // Do not pick AVC merely because one AVC representation exists. Pick the
+        // codec family that exposes the strongest 360/480/720/1080 ladder, then
+        // prefer AVC only on an otherwise equal ladder for broad decoder support.
+        val standardHeights = listOf(360, 480, 720, 1080)
+        val families = cappedVideos.groupBy(::codecFamily)
+        val preferredFamily = families.entries
+            .maxWithOrNull(
+                compareBy<Map.Entry<String, List<YoutubeSabrInfo.Format>>> { entry ->
+                    standardHeights.count { target ->
+                        entry.value.any { it.height == target }
+                    }
+                }
+                    .thenBy { entry -> entry.value.maxOfOrNull { it.height } ?: 0 }
+                    .thenBy { entry -> entry.value.map { it.height }.distinct().size }
+                    .thenBy { entry -> if (entry.key == "avc1") 1 else 0 }
+            )
+            ?.key
+            ?: codecFamily(cappedVideos.first())
+
+        val familyVideos = cappedVideos.filter { codecFamily(it) == preferredFamily }
+
+        // Multiple SABR representations can report the same resolution. Keep the
+        // strongest representation at each height instead of whichever one happens
+        // to arrive first from the extractor.
+        val adaptiveVideos = familyVideos
+            .groupBy { it.height }
+            .values
+            .mapNotNull { sameHeight ->
+                sameHeight.maxWithOrNull(
+                    compareBy<YoutubeSabrInfo.Format> { it.bitrate }
+                        .thenBy { it.width }
+                )
             }
-            ?: codecFamily(videoCandidates.first())
-
-        val adaptiveVideos = videoCandidates
-            .filter { codecFamily(it) == preferredFamily }
-            .distinctBy { it.height }
             .sortedBy { it.height }
-            .ifEmpty { listOf(videoCandidates.minBy { it.height }) }
 
-        val bootstrapVideo = quality.targetHeight?.let { target ->
+        if (adaptiveVideos.isEmpty()) return null
+
+        fun bestForTarget(target: Int): YoutubeSabrInfo.Format =
             adaptiveVideos
                 .filter { it.height <= target }
                 .maxWithOrNull(
                     compareBy<YoutubeSabrInfo.Format> { it.height }
                         .thenBy { it.bitrate }
                 )
-                ?: adaptiveVideos.minByOrNull {
-                    kotlin.math.abs(it.height - target)
-                }
-        } ?: adaptiveVideos.first()
+                ?: adaptiveVideos.minWithOrNull(
+                    compareBy<YoutubeSabrInfo.Format> {
+                        kotlin.math.abs(it.height - target)
+                    }.thenByDescending { it.bitrate }
+                )
+                ?: adaptiveVideos.first()
+
+        // Explicit quality starts directly at that rung. AUTO starts at the best
+        // available <=1080 rather than the old lowest-rung bootstrap that caused
+        // the first seconds to look blurry.
+        val bootstrapVideo = quality.targetHeight
+            ?.let(::bestForTarget)
+            ?: adaptiveVideos.maxWithOrNull(
+                compareBy<YoutubeSabrInfo.Format> { it.height }
+                    .thenBy { it.bitrate }
+            )
+            ?: adaptiveVideos.first()
 
         return SabrSourceSpec(
             sabrInfo.videoId,
