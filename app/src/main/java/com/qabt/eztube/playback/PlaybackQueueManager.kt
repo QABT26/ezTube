@@ -615,6 +615,31 @@ class PlaybackQueueManager(
 
     fun currentPlaybackEngine(): String = activePlaybackEngine
 
+    fun sabrDiagnosticSnapshot(): String {
+        val state = when (player.playbackState) {
+            Player.STATE_IDLE -> "IDLE"
+            Player.STATE_BUFFERING -> "BUFFERING"
+            Player.STATE_READY -> "READY"
+            Player.STATE_ENDED -> "ENDED"
+            else -> player.playbackState.toString()
+        }
+        val target = preferences.loadVideoQuality().targetHeight
+            ?.let { height -> height.toString() + "p" }
+            ?: "Auto"
+        val header = buildString {
+            append("engine=").append(activePlaybackEngine)
+            append(" state=").append(state)
+            append(" playWhenReady=").append(player.playWhenReady)
+            append(" isPlaying=").append(player.isPlaying)
+            append("\npos=").append(player.currentPosition.coerceAtLeast(0L))
+            append("ms buffered=").append(player.bufferedPosition.coerceAtLeast(0L))
+            append("ms target=").append(target)
+            append(" warmPending=").append(sabrQualityWarmPending)
+        }
+        val bridge = activeSabrQualityController?.diagnosticSnapshot()
+        return if (bridge.isNullOrBlank()) header else header + "\n" + bridge
+    }
+
     fun reloadCurrent(positionMs: Long, playWhenReady: Boolean) {
         if (busy) return
         val saved = preferences.loadQueue() ?: return
