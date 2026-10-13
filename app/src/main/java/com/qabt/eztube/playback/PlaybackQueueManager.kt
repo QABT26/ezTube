@@ -46,6 +46,7 @@ class PlaybackQueueManager(
     companion object {
         private const val MAX_SOURCE_RECOVERY_ATTEMPTS = 3
         private const val MAX_RESOLVE_ATTEMPTS = 3
+        private const val SABR_FAILURE_COOLDOWN_MS = 15_000L
     }
 
     @Volatile private var busy = false
@@ -62,7 +63,8 @@ class PlaybackQueueManager(
     @Volatile private var activeSabrQualityController: SabrMediaSourceFactory.QualityController? = null
     @Volatile private var sabrQualityWarmGeneration = 0L
     @Volatile private var sabrQualityWarmPending = false
-    private val sabrFailedIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val sabrFailureUntilMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    @Volatile private var lastSabrFallbackReason: String? = null
 
     private fun mediaSourceFor(mediaItem: MediaItem, stream: AudioStream): MediaSource? {
         val audioUrl = stream.companionAudioUrl ?: return null
@@ -492,7 +494,9 @@ class PlaybackQueueManager(
         // retried the failing segment in-place. Do not recreate SABR and visibly reload it again;
         // blacklist SABR for this item and perform one direct-stream fallback recovery.
         if (isSabr) {
-            sabrFailedIds.add(currentId)
+            sabrFailureUntilMs[currentId] =
+                android.os.SystemClock.elapsedRealtime() + SABR_FAILURE_COOLDOWN_MS
+            lastSabrFallbackReason = "player error; temporary SABR cooldown"
         }
         recoveryJobActive = true
         invalidatePending()
@@ -609,6 +613,14 @@ class PlaybackQueueManager(
             return activePlaybackEngine
         }
 
+        val currentId = player.currentMediaItem?.mediaId
+        if (
+            currentId != null &&
+            PlaybackSourceResolver.resolve(currentId) is PlaybackSource.YouTube
+        ) {
+            sabrFailureUntilMs.remove(currentId)
+            lastSabrFallbackReason = "manual quality change retries SABR"
+        }
         reloadCurrent(positionMs, playWhenReady)
         return PlaybackService.ENGINE_DIRECT
     }
@@ -635,6 +647,13 @@ class PlaybackQueueManager(
             append("ms buffered=").append(player.bufferedPosition.coerceAtLeast(0L))
             append("ms target=").append(target)
             append(" warmPending=").append(sabrQualityWarmPending)
+            val mediaId = player.currentMediaItem?.mediaId
+            val blockedUntil = mediaId?.let { sabrFailureUntilMs[it] } ?: 0L
+            val remaining = (blockedUntil - android.os.SystemClock.elapsedRealtime())
+                .coerceAtLeast(0L)
+            append("\nsabrBlocked=").append(remaining > 0L)
+            if (remaining > 0L) append(" cooldown=").append(remaining).append("ms")
+            lastSabrFallbackReason?.let { append("\nfallback=").append(it) }
         }
         val bridge = activeSabrQualityController?.diagnosticSnapshot()
         return if (bridge.isNullOrBlank()) header else header + "\n" + bridge
@@ -934,18 +953,29 @@ class PlaybackQueueManager(
 
         val videoMode = preferences.loadVideoMode()
 
-        if (videoMode && !sabrFailedIds.contains(media.id)) {
-            val sabr = runCatching {
-                withContext(Dispatchers.IO) {
-                    val spec = source.sabrSpec(
-                        media.id,
-                        preferences.loadVideoQuality()
-                    ) ?: return@withContext null
-                    resolvedSabrPlayback(media, spec, initialPositionMs)
+        if (videoMode) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            val blockedUntil = sabrFailureUntilMs[media.id] ?: 0L
+            if (blockedUntil <= now) {
+                sabrFailureUntilMs.remove(media.id)
+                val sabrAttempt = runCatching {
+                    withContext(Dispatchers.IO) {
+                        val spec = source.sabrSpec(
+                            media.id,
+                            preferences.loadVideoQuality()
+                        ) ?: error("SABR spec unavailable")
+                        resolvedSabrPlayback(media, spec, initialPositionMs)
+                    }
                 }
-            }.getOrNull()
-            if (sabr != null) {
-                return@runCatching sabr
+                val sabr = sabrAttempt.getOrNull()
+                if (sabr != null) {
+                    lastSabrFallbackReason = null
+                    return@runCatching sabr
+                }
+                lastSabrFallbackReason =
+                    sabrAttempt.exceptionOrNull()?.message ?: "SABR unavailable"
+            } else {
+                lastSabrFallbackReason = "temporary SABR cooldown"
             }
         }
 
