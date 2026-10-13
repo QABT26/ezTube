@@ -114,6 +114,7 @@ fun EzTubeApp() {
     var videoQuality by remember { mutableStateOf(playbackPrefs.loadVideoQuality()) }
     var actualVideoHeight by remember { mutableIntStateOf(0) }
     var playbackEngine by remember { mutableStateOf(PlaybackService.ENGINE_DIRECT) }
+    var movieDiagnostic by remember { mutableStateOf<String?>(null) }
     var subtitleOptions by remember { mutableStateOf<List<SubtitleOption>>(emptyList()) }
     var selectedSubtitleLabel by remember { mutableStateOf<String?>(null) }
     var videoMode by remember { mutableStateOf(playbackPrefs.loadVideoMode()) }
@@ -195,6 +196,8 @@ fun EzTubeApp() {
                         playbackEngine = mediaItem.mediaMetadata.extras
                             ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE)
                             ?: PlaybackService.ENGINE_DIRECT
+                        movieDiagnostic = mediaItem.mediaMetadata.extras
+                            ?.getString(PlaybackService.EXTRA_MOVIE_DIAGNOSTIC)
                         val saved = playbackPrefs.loadQueue()
                         val media = saved?.first?.firstOrNull { it.id == id }
                             ?: playbackPrefs.load()?.first?.takeIf { it.id == id }
@@ -215,6 +218,8 @@ fun EzTubeApp() {
                         playbackEngine = mediaMetadata.extras
                             ?.getString(PlaybackService.EXTRA_PLAYBACK_ENGINE)
                             ?: PlaybackService.ENGINE_DIRECT
+                        movieDiagnostic = mediaMetadata.extras
+                            ?.getString(PlaybackService.EXTRA_MOVIE_DIAGNOSTIC)
                     }
 
                     override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
@@ -319,6 +324,7 @@ fun EzTubeApp() {
                             nowPlaying = first
                             playerError = null
                             errorMessage = null
+                            movieDiagnostic = null
                             showPlayer = true
 
                             // A single movie can be mirrored on multiple servers.
@@ -873,6 +879,7 @@ fun EzTubeApp() {
                     compatibilityFallback = compatibilityFallback,
                     isBuffering = isBuffering,
                     playerError = playerError ?: errorMessage,
+                    movieDiagnostic = movieDiagnostic,
                     sleepMinutes = sleepMinutes,
                     autoplay = autoplay,
                     nextMode = nextMode,
@@ -2604,6 +2611,7 @@ private data class FullPlayerState(
     val compatibilityFallback: Boolean,
     val isBuffering: Boolean,
     val playerError: String?,
+    val movieDiagnostic: String?,
     val sleepMinutes: Int?,
     val autoplay: Boolean,
     val nextMode: NextMode,
@@ -2657,6 +2665,7 @@ private fun FullPlayer(
     val compatibilityFallback = state.compatibilityFallback
     val isBuffering = state.isBuffering
     val playerError = state.playerError
+    val movieDiagnostic = state.movieDiagnostic
     val sleepMinutes = state.sleepMinutes
     val autoplay = state.autoplay
     val nextMode = state.nextMode
@@ -3441,6 +3450,20 @@ private fun FullPlayer(
                     color = if (compatibilityFallback) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            if (isMovie && !movieDiagnostic.isNullOrBlank()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    tonalElevation = 1.dp,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        movieDiagnostic,
+                        modifier = Modifier.padding(8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             playerError?.let {
                 Row(
