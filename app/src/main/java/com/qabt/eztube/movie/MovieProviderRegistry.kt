@@ -187,7 +187,7 @@ class MovieProviderRegistry(
         fun default(): MovieProviderRegistry =
             MovieProviderRegistry(
                 providers = listOf(
-                    MotPhimMovieProvider()
+                    PhimApiMovieProvider()
                 )
             )
     }
