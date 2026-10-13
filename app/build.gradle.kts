@@ -41,7 +41,7 @@ android {
     buildTypes {
         debug {
             buildConfigField("String", "BUILD_ID", "\"$gitBuildId\"")
-            buildConfigField("String", "MOVIE_MILESTONE", "\"V0.3A\"")
+            buildConfigField("String", "MOVIE_MILESTONE", "\"V0.3C\"")
         }
         release {
             buildConfigField("String", "BUILD_ID", "\"$gitBuildId\"")
