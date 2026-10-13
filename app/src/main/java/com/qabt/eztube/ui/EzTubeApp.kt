@@ -1823,15 +1823,6 @@ private fun MovieDetailScreen(
                             key = { it.id }
                         ) { media ->
                             val progressEntry = historyByMediaId[media.id]
-                            val progressStatusLabel = progressEntry?.progress
-                                ?.takeIf { it > 0f }
-                                ?.let { progress ->
-                                    if (progress >= 0.95f) {
-                                        "Watched"
-                                    } else {
-                                        "Watching ${(progress * 100).toInt().coerceIn(1, 99)}%"
-                                    }
-                                }
                             val isCurrent = media.id == nowPlayingId
                             Surface(
                                 modifier = Modifier
@@ -1862,7 +1853,6 @@ private fun MovieDetailScreen(
                                         SearchResult(
                                             media = media,
                                             progressEntry = progressEntry,
-                                            progressStatusLabel = progressStatusLabel,
                                             resolving = resolvingId == media.id,
                                             enabled = resolvingId == null,
                                             onChannel = {},
@@ -1890,7 +1880,6 @@ private fun MovieDetailScreen(
 private fun SearchResult(
     media: MediaSummary,
     progressEntry: HistoryEntry? = null,
-    progressStatusLabel: String? = null,
     resolving: Boolean,
     enabled: Boolean,
     onChannel: () -> Unit,
@@ -1980,10 +1969,7 @@ private fun SearchResult(
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             progressEntry?.let { entry ->
-                SearchPlaybackProgress(
-                    progress = entry.progress,
-                    statusLabel = progressStatusLabel
-                )
+                SearchPlaybackProgress(progress = entry.progress)
             }
         }
         Spacer(Modifier.width(2.dp))
@@ -2249,10 +2235,7 @@ private fun CompactMediaRow(
 }
 
 @Composable
-private fun SearchPlaybackProgress(
-    progress: Float,
-    statusLabel: String? = null
-) {
+private fun SearchPlaybackProgress(progress: Float) {
     if (progress <= 0f) return
     val percent = (progress * 100).toInt().coerceIn(1, 100)
     Row(
@@ -2260,12 +2243,11 @@ private fun SearchPlaybackProgress(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            statusLabel ?: "$percent%",
+            "$percent%",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = if (statusLabel == null) Modifier.widthIn(min = 28.dp) else Modifier
+            modifier = Modifier.widthIn(min = 28.dp)
         )
-        Spacer(Modifier.width(6.dp))
         LinearProgressIndicator(
             progress = { progress.coerceIn(0f, 1f) },
             modifier = Modifier.weight(1f).height(3.dp).clip(RoundedCornerShape(50))
