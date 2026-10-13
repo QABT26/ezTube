@@ -32,7 +32,7 @@ class MovieProviderRegistry(
         }
 
         val candidates = futures.flatMap { future ->
-            runCatching { future.get(3, TimeUnit.SECONDS) }
+            runCatching { future.get(8, TimeUnit.SECONDS) }
                 .getOrElse {
                     future.cancel(true)
                     emptyList()
