@@ -65,6 +65,27 @@ final class SabrMediaBridge {
         );
     }
 
+    void noteRequestedFormat(YoutubeSabrInfo.Format format) {
+        final Selection previous = selection;
+        if (format == null) return;
+
+        if (format.isAudio()) {
+            selection = new Selection(
+                    format,
+                    previous.video,
+                    true,
+                    previous.videoActive
+            );
+        } else if (format.isVideo()) {
+            selection = new Selection(
+                    previous.audio,
+                    format,
+                    previous.audioActive,
+                    true
+            );
+        }
+    }
+
     YoutubeSabrFormatTimeline getTimeline(YoutubeSabrInfo.Format format) {
         final YoutubeSabrFormatTimeline timeline = timelines.get(format);
         if (timeline == null) {
