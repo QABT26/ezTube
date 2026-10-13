@@ -280,7 +280,10 @@ fun EzTubeApp() {
         }
     }
 
-    fun openMovie(media: MediaSummary) {
+    fun openMovie(
+        media: MediaSummary,
+        onSingleMovie: (MediaSummary, List<MediaSummary>) -> Unit
+    ) {
         if (!movieProviders.isTitle(media.id) || movieDetailLoading) return
         scope.launch {
             movieDetailLoading = true
@@ -288,7 +291,28 @@ fun EzTubeApp() {
             runCatching {
                 withContext(Dispatchers.IO) { movieProviders.detail(media.id) }
             }
-                .onSuccess { movieDetail = it }
+                .onSuccess { detail ->
+                    val playableItems = detail.episodes.map { it.toMediaSummary() }
+                    val uniqueEpisodeKeys = detail.episodes
+                        .map { it.episodeSlug.ifBlank { it.episodeName } }
+                        .distinct()
+
+                    val isSeries = detail.catalog.isSeries
+                        ?: (uniqueEpisodeKeys.size > 1)
+
+                    if (isSeries) {
+                        movieDetail = detail
+                    } else {
+                        movieDetail = null
+                        movieDetailError = null
+                        val first = playableItems.firstOrNull()
+                        if (first != null) {
+                            onSingleMovie(first, playableItems)
+                        } else {
+                            movieDetailError = "Movie has no playable item"
+                        }
+                    }
+                }
                 .onFailure { movieDetailError = it.message ?: "Unable to load movie" }
             movieDetailLoading = false
         }
@@ -995,7 +1019,11 @@ fun EzTubeApp() {
                         },
                         onSearchSubmitted = { q -> playbackPrefs.saveSearch(q); recentSearches = playbackPrefs.loadRecentSearches() },
                         onChannel = { openChannel(it.channelUrl) },
-                        onMovie = { openMovie(it) },
+                        onMovie = {
+                            openMovie(it) { single, items ->
+                                startQueue(single, items)
+                            }
+                        },
                         onPlay = { media, resultQueue -> startQueue(media, resultQueue) },
                         onPlayNext = { playNext(it) },
                         onAddToQueue = { addToQueue(it) }
@@ -1019,7 +1047,11 @@ fun EzTubeApp() {
                         onPlay = { media, items ->
                             startQueue(media, items)
                         },
-                        onMovie = { openMovie(it) },
+                        onMovie = {
+                            openMovie(it) { single, items ->
+                                startQueue(single, items)
+                            }
+                        },
                         onSearch = { selected = Tab.SEARCH }
                     )
                     Tab.LIBRARY -> LibraryScreen(
