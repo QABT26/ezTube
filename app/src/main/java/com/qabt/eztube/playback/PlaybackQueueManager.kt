@@ -233,14 +233,16 @@ class PlaybackQueueManager(
 
     private fun resolvedSabrPlayback(
         media: MediaSummary,
-        spec: com.qabt.eztube.playback.sabr.SabrSourceSpec
+        spec: com.qabt.eztube.playback.sabr.SabrSourceSpec,
+        initialPositionMs: Long = 0L
     ): ResolvedPlayback {
+        val bootstrapHeight = spec.bootstrapVideoFormat.height.coerceAtLeast(0)
         val metadata = MediaMetadata.Builder()
             .setTitle(media.title)
             .setArtist(media.channel)
             .setExtras(android.os.Bundle().apply {
                 putBoolean(PlaybackService.EXTRA_COMPATIBILITY_FALLBACK, false)
-                putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, 0)
+                putInt(PlaybackService.EXTRA_VIDEO_HEIGHT, bootstrapHeight)
                 putString(PlaybackService.EXTRA_PLAYBACK_ENGINE, PlaybackService.ENGINE_SABR)
             })
             .apply { media.thumbnailUrl?.let { setArtworkUri(Uri.parse(it)) } }
@@ -252,7 +254,11 @@ class PlaybackQueueManager(
             .build()
         return ResolvedPlayback(
             mediaItem = mediaItem,
-            mediaSource = SabrMediaSourceFactory.create(mediaItem, spec, 0L)
+            mediaSource = SabrMediaSourceFactory.create(
+                mediaItem,
+                spec,
+                initialPositionMs.coerceAtLeast(0L)
+            )
         )
     }
 
@@ -715,7 +721,11 @@ class PlaybackQueueManager(
         scope.launch {
             val media = items[target]
             val useFastStart = allowFastStart && preferences.loadVideoMode() && playWhenReady
-            val resolved = resolveWithRetry(media, fastStart = useFastStart)
+            val resolved = resolveWithRetry(
+                media,
+                fastStart = useFastStart,
+                initialPositionMs = positionMs
+            )
             resolved.onSuccess { item ->
                 if (requestGeneration != generation) {
                     onComplete?.invoke(Result.failure(IllegalStateException("Playback request was superseded")))
@@ -857,11 +867,12 @@ class PlaybackQueueManager(
 
     private suspend fun resolveWithRetry(
         media: MediaSummary,
-        fastStart: Boolean = false
+        fastStart: Boolean = false,
+        initialPositionMs: Long = 0L
     ): Result<ResolvedPlayback> {
         var lastError: Throwable? = null
         repeat(MAX_RESOLVE_ATTEMPTS) { attempt ->
-            val result = resolve(media, fastStart)
+            val result = resolve(media, fastStart, initialPositionMs)
             if (result.isSuccess) return result
             lastError = result.exceptionOrNull()
             if (attempt < MAX_RESOLVE_ATTEMPTS - 1) {
@@ -873,7 +884,8 @@ class PlaybackQueueManager(
 
     private suspend fun resolve(
         media: MediaSummary,
-        fastStart: Boolean = false
+        fastStart: Boolean = false,
+        initialPositionMs: Long = 0L
     ): Result<ResolvedPlayback> = runCatching {
         if (movieProviders.canResolve(media.id)) {
             val moviePlayback = withContext(Dispatchers.IO) {
@@ -896,7 +908,7 @@ class PlaybackQueueManager(
                         media.id,
                         preferences.loadVideoQuality()
                     ) ?: return@withContext null
-                    resolvedSabrPlayback(media, spec)
+                    resolvedSabrPlayback(media, spec, initialPositionMs)
                 }
             }.getOrNull()
             if (sabr != null) {
