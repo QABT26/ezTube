@@ -91,60 +91,10 @@ class MovieProviderRegistry(
     ): MovieDetail {
         val parsed = parseTitleId(mediaId)
             ?: throw IOException("Invalid movie title id")
-        val primary = providers.firstOrNull { it.id == parsed.first }
+        val provider = providers.firstOrNull { it.id == parsed.first }
             ?: throw IOException("Movie provider not installed: ${parsed.first}")
 
-        var lastError: Throwable? = null
-
-        val primaryResult = runCatching { primary.detail(parsed.second) }
-        if (primaryResult.isSuccess) {
-            return primaryResult.getOrThrow()
-        }
-        lastError = primaryResult.exceptionOrNull()
-
-        val title = mediaTitle.orEmpty().trim()
-        if (title.isBlank()) {
-            throw IOException(
-                lastError?.message ?: "Unable to load movie detail",
-                lastError
-            )
-        }
-
-        val alternates = providers
-            .filterNot { it.id == primary.id }
-            .sortedByDescending { provider ->
-                when (provider.id) {
-                    "motphim" -> 40
-                    "phimapi" -> 30
-                    else -> 0
-                }
-            }
-
-        for (provider in alternates) {
-            val searchResult = runCatching { provider.search(title) }
-            if (searchResult.isFailure) {
-                lastError = searchResult.exceptionOrNull()
-                continue
-            }
-
-            val candidates = searchResult.getOrThrow()
-                .sortedByDescending { queryScore(title, it) }
-
-            for (candidate in candidates.take(4)) {
-                if (queryScore(title, candidate) < 650) continue
-
-                val detailResult = runCatching { provider.detail(candidate.slug) }
-                if (detailResult.isSuccess) {
-                    return detailResult.getOrThrow()
-                }
-                lastError = detailResult.exceptionOrNull()
-            }
-        }
-
-        throw IOException(
-            lastError?.message ?: "No provider could load movie detail",
-            lastError
-        )
+        return provider.detail(parsed.second)
     }
 
     fun canResolve(mediaId: String): Boolean =
@@ -155,169 +105,18 @@ class MovieProviderRegistry(
         mediaId: String,
         mediaTitle: String? = null
     ): MoviePlayback {
-        val primary = providers.firstOrNull { it.canResolve(mediaId) }
+        val provider = providers.firstOrNull { it.canResolve(mediaId) }
             ?: throw IOException("No movie provider can resolve this item")
-
-        val failed = failedProvidersByMediaId
-            .computeIfAbsent(mediaId) { java.util.concurrent.ConcurrentHashMap.newKeySet<String>() }
-
-        var lastError: Throwable? = null
-
-        if (primary.id !in failed) {
-            val direct = runCatching { primary.resolve(mediaId) }
-            if (direct.isSuccess) {
-                activeProviderByMediaId[mediaId] = primary.id
-                return direct.getOrThrow()
-            }
-            lastError = direct.exceptionOrNull()
-            failed += primary.id
-        }
-
-        val fallback = resolveFromAlternateProviders(
-            mediaId = mediaId,
-            mediaTitle = mediaTitle,
-            excludedProviderIds = failed + primary.id
-        )
-        if (fallback.isSuccess) {
-            val playback = fallback.getOrThrow()
-            parseEpisodeProviderId(playback.mediaId)?.let {
-                activeProviderByMediaId[mediaId] = it
-            }
-            return playback
-        }
-        lastError = fallback.exceptionOrNull() ?: lastError
-
-        throw IOException(
-            lastError?.message ?: "No playable movie source is available",
-            lastError
-        )
+        return provider.resolve(mediaId)
     }
 
     fun reportPlaybackFailure(mediaId: String) {
-        val providerId = activeProviderByMediaId[mediaId]
-            ?: parseEpisodeProviderId(mediaId)
-            ?: return
-        failedProvidersByMediaId
-            .computeIfAbsent(mediaId) { java.util.concurrent.ConcurrentHashMap.newKeySet<String>() }
-            .add(providerId)
+        // Diagnostic build: keep MotPhim isolated and let Media3 retry the same
+        // exact source. Do not redirect to another provider.
     }
 
     fun reportPlaybackHealthy(mediaId: String) {
-        failedProvidersByMediaId.remove(mediaId)
-    }
-
-    private fun resolveFromAlternateProviders(
-        mediaId: String,
-        mediaTitle: String?,
-        excludedProviderIds: Set<String>
-    ): Result<MoviePlayback> = runCatching {
-        val movieTitle = logicalMovieTitle(mediaTitle)
-        if (movieTitle.isBlank()) {
-            throw IOException("Cannot identify movie title for source fallback")
-        }
-
-        val episodeHint = logicalEpisodeHint(mediaTitle)
-        var lastError: Throwable? = null
-
-        val alternates = providers
-            .filterNot { it.id in excludedProviderIds }
-            .sortedByDescending { provider ->
-                when (provider.id) {
-                    "motphim" -> 40
-                    "phimapi" -> 30
-                    else -> 0
-                }
-            }
-
-        for (provider in alternates) {
-            val searchResult = runCatching { provider.search(movieTitle) }
-            if (searchResult.isFailure) {
-                lastError = searchResult.exceptionOrNull()
-                continue
-            }
-
-            val candidates = searchResult.getOrThrow()
-                .sortedByDescending { queryScore(movieTitle, it) }
-
-            for (candidate in candidates.take(4)) {
-                if (queryScore(movieTitle, candidate) < 600) continue
-
-                val detailResult = runCatching { provider.detail(candidate.slug) }
-                if (detailResult.isFailure) {
-                    lastError = detailResult.exceptionOrNull()
-                    continue
-                }
-
-                val episode = selectEquivalentEpisode(
-                    detailResult.getOrThrow().episodes,
-                    episodeHint
-                ) ?: continue
-
-                val playbackResult = runCatching { provider.resolve(episode.stableId) }
-                if (playbackResult.isSuccess) {
-                    return@runCatching playbackResult.getOrThrow()
-                }
-                lastError = playbackResult.exceptionOrNull()
-            }
-        }
-
-        throw IOException(
-            lastError?.message ?: "No alternate provider has a playable source",
-            lastError
-        )
-    }
-
-    private fun selectEquivalentEpisode(
-        episodes: List<MovieEpisodeRef>,
-        hint: String?
-    ): MovieEpisodeRef? {
-        if (episodes.isEmpty()) return null
-        if (episodes.size == 1) return episodes.first()
-
-        val normalizedHint = normalizeTitle(hint.orEmpty())
-        if (normalizedHint.isBlank() || normalizedHint == "full") {
-            return episodes.firstOrNull {
-                normalizeTitle(it.episodeName) == "full" ||
-                    normalizeTitle(it.episodeSlug) == "full"
-            } ?: episodes.first()
-        }
-
-        val exact = episodes.firstOrNull {
-            normalizeTitle(it.episodeName) == normalizedHint ||
-                normalizeTitle(it.episodeSlug) == normalizedHint
-        }
-        if (exact != null) return exact
-
-        val episodeNumber = Regex("""\d+""")
-            .find(normalizedHint)
-            ?.value
-        if (episodeNumber != null) {
-            return episodes.firstOrNull {
-                Regex("""\d+""")
-                    .find(normalizeTitle(it.episodeName + " " + it.episodeSlug))
-                    ?.value == episodeNumber
-            }
-        }
-
-        return null
-    }
-
-    private fun logicalMovieTitle(mediaTitle: String?): String =
-        mediaTitle
-            .orEmpty()
-            .substringBefore(" · ")
-            .trim()
-
-    private fun logicalEpisodeHint(mediaTitle: String?): String? =
-        mediaTitle
-            ?.substringAfter(" · ", "")
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-
-    private fun parseEpisodeProviderId(mediaId: String): String? {
-        val parts = mediaId.split(':', limit = 3)
-        if (parts.size < 3 || parts[0] != "movie") return null
-        return parts[1].takeIf { it.isNotBlank() }
+        // No provider blacklist state in diagnostic mode.
     }
 
     fun isTitle(mediaId: String): Boolean = mediaId.startsWith("movie-title:")
@@ -388,8 +187,7 @@ class MovieProviderRegistry(
         fun default(): MovieProviderRegistry =
             MovieProviderRegistry(
                 providers = listOf(
-                    MotPhimMovieProvider(),
-                    PhimApiMovieProvider()
+                    MotPhimMovieProvider()
                 )
             )
     }
