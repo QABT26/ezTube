@@ -870,7 +870,7 @@ fun EzTubeApp() {
                     playbackSpeed = playbackSpeed,
                     compatibilityFallback = compatibilityFallback,
                     isBuffering = isBuffering,
-                    playerError = playerError,
+                    playerError = playerError ?: errorMessage,
                     sleepMinutes = sleepMinutes,
                     autoplay = autoplay,
                     nextMode = nextMode,
@@ -902,7 +902,11 @@ fun EzTubeApp() {
                         }
                     },
                     onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
-                    onRetry = { playerError = null; nowPlaying?.let { playMedia(it, controller?.currentPosition ?: 0L) } },
+                    onRetry = {
+                        playerError = null
+                        errorMessage = null
+                        nowPlaying?.let { playMedia(it, controller?.currentPosition ?: 0L) }
+                    },
                     onSleep = { sleepMinutes = it },
                     onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it); notifyQueueChanged() },
                     onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) },
