@@ -1,6 +1,5 @@
 package com.qabt.eztube.movie
 
-import com.grack.nanojson.JsonArray
 import com.grack.nanojson.JsonObject
 import com.grack.nanojson.JsonParser
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -335,7 +334,7 @@ class BiliIntlMovieProvider(
                 "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
 
         val VIDEO_URL_REGEX = Regex(
-            """https?://(?:www\.)?bilibili\.tv/(?:[a-zA-Z]{2}/)?video/(\d+)""",
+            """https?://(?:www\.)?(?:bilibili\.tv|biliintl\.com)/(?:[a-zA-Z]{2}/)?video/(\d+)""",
             RegexOption.IGNORE_CASE
         )
 
