@@ -112,34 +112,8 @@ class MotPhimMovieProvider(
             throw IOException("Unsupported MotPhim media id")
         }
 
-        val slug = parts[2]
-        val serverName = decodeStablePart(parts[3])
-        val episodeKey = decodeStablePart(parts[4])
-        val movie = findMovieBySlug(slug)
-            ?: throw IOException("MotPhim movie no longer exists")
-        val episodes = movie.getArray("episodes")
-            ?: throw IOException("MotPhim movie has no episodes")
-
-        var chosen: JsonObject? = null
-        for (index in 0 until episodes.size) {
-            val episode = episodes.getObject(index) ?: continue
-            val server = episode.getString("server").orEmpty().ifBlank { "Server" }
-            val key = episode.getString("slug").orEmpty()
-                .ifBlank { episode.getString("name").orEmpty() }
-            if (server.equals(serverName, ignoreCase = true) && key == episodeKey) {
-                chosen = episode
-                break
-            }
-        }
-
-        val episode = chosen ?: throw IOException("MotPhim episode no longer exists")
-        val hls = resolveToHls(episode.getString("link").orEmpty())
-            ?: throw IOException("MotPhim source could not be resolved to HLS")
-
-        return MoviePlayback(
-            mediaId = mediaId,
-            hlsUrl = hls,
-            subtitles = parseSubtitles(episode)
+        throw IOException(
+            "MotPhim playback source not wired yet for " + parts[2]
         )
     }
 
