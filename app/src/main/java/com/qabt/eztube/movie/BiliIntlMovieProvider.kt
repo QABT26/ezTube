@@ -39,7 +39,7 @@ class BiliIntlMovieProvider(
                     language = null,
                     durationText = null,
                     durationSeconds = null,
-                    episodeBadge = "Video",
+                    episodeBadge = null,
                     isSeries = false
                 )
             )
@@ -115,9 +115,17 @@ class BiliIntlMovieProvider(
                     ?.trim()
                     ?.takeIf { it.isNotBlank() }
 
-                val durationText = item.getString("duration")
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
+                val rawDuration = item.get("duration")
+                val durationText = when (rawDuration) {
+                    is String -> rawDuration.trim().takeIf { it.isNotBlank() }
+                    is Number -> formatClockDuration(rawDuration.toLong())
+                    else -> null
+                }
+                val durationSeconds = when (rawDuration) {
+                    is Number -> rawDuration.toLong().takeIf { it > 0L }
+                    is String -> parseClockDuration(rawDuration)
+                    else -> null
+                }
 
                 results += MovieCatalogItem(
                     providerId = id,
@@ -129,8 +137,8 @@ class BiliIntlMovieProvider(
                     year = null,
                     language = null,
                     durationText = durationText,
-                    durationSeconds = parseClockDuration(durationText),
-                    episodeBadge = "Bilibili",
+                    durationSeconds = durationSeconds,
+                    episodeBadge = null,
                     isSeries = false
                 )
             }
@@ -164,7 +172,7 @@ class BiliIntlMovieProvider(
             language = null,
             durationText = null,
             durationSeconds = null,
-            episodeBadge = "Video",
+            episodeBadge = null,
             isSeries = false
         )
 
@@ -400,6 +408,18 @@ class BiliIntlMovieProvider(
             raw.startsWith("//") -> "https:$raw"
             raw.startsWith("http://") || raw.startsWith("https://") -> raw
             else -> raw
+        }
+    }
+
+    private fun formatClockDuration(seconds: Long): String? {
+        if (seconds <= 0L) return null
+        val hours = seconds / 3600L
+        val minutes = (seconds % 3600L) / 60L
+        val secs = seconds % 60L
+        return if (hours > 0L) {
+            "%d:%02d:%02d".format(hours, minutes, secs)
+        } else {
+            "%d:%02d".format(minutes, secs)
         }
     }
 
