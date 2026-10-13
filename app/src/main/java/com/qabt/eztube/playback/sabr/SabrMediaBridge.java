@@ -10,6 +10,7 @@ import com.qabt.eztube.youtube.sabr.SabrAttestationRetryHandler;
 import com.qabt.eztube.youtube.sabr.SabrRequestCoordinator;
 
 import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -22,6 +23,7 @@ import java.util.function.BooleanSupplier;
 
 final class SabrMediaBridge {
     private static final int MAX_AHEAD_SEGMENTS = 48;
+    private static final int MAX_DIAGNOSTIC_EVENTS = 12;
 
     private final SabrSourceSpec spec;
     private final SabrRequestCoordinator requestCoordinator;
@@ -29,6 +31,7 @@ final class SabrMediaBridge {
     private final Map<SabrSegmentKey, SabrMediaSegment> ahead = new LinkedHashMap<>();
     private final Map<YoutubeSabrInfo.Format, Integer> nextSequences =
             new ConcurrentHashMap<>();
+    private final ArrayDeque<String> diagnosticEvents = new ArrayDeque<>();
 
     private volatile Selection selection;
     private final Map<YoutubeSabrInfo.Format, YoutubeSabrFormatTimeline> timelines =
@@ -83,6 +86,7 @@ final class SabrMediaBridge {
                     previous.audioActive,
                     true
             );
+            diagnostic("select " + format.getHeight() + "p itag=" + format.getItag());
         }
     }
 
@@ -139,7 +143,11 @@ final class SabrMediaBridge {
         nextSequences.put(key.getFormat(), key.getSequenceNumber());
         while (true) {
             final SabrMediaSegment cached = cachedSegment(key);
-            if (cached != null) return cached;
+            if (cached != null) {
+                diagnostic("hit " + diagnosticKey(key));
+                return cached;
+            }
+            diagnostic("miss " + diagnosticKey(key));
 
             if (!transactionLock.tryLock()) {
                 final SabrMediaSegment arrived = cachedSegment(key);
@@ -183,6 +191,7 @@ final class SabrMediaBridge {
         if (current.videoActive || key.getFormat().isVideo()) {
             tracks.add(track(video));
         }
+        diagnostic("request " + diagnosticKey(key));
         requestOnce(
                 YoutubeSabrRequest.playback(playerTimeMs, 1.0f, tracks),
                 audio
@@ -241,6 +250,11 @@ final class SabrMediaBridge {
         // and either replay a short piece or rebuffer. Warm only the next boundary
         // and one segment after it so the current representation can finish cleanly.
         final int firstWarmSequence = Math.min(end, currentSequence + 1);
+        diagnostic(
+                "warm " + format.getHeight() + "p seq="
+                        + firstWarmSequence + ".."
+                        + Math.min(end, firstWarmSequence + 1)
+        );
         for (
                 int candidate = firstWarmSequence;
                 candidate <= Math.min(end, firstWarmSequence + 1);
@@ -253,7 +267,10 @@ final class SabrMediaBridge {
 
     private void ensureCachedForWarm(SabrSegmentKey key)
             throws IOException, ExtractionException {
-        if (cachedSegment(key) != null) return;
+        if (cachedSegment(key) != null) {
+            diagnostic("warm-hit " + diagnosticKey(key));
+            return;
+        }
 
         // SABR Track.bufferedThrough is derived from nextSequences. A warm request
         // must advertise the same sequence Media3 will need next; otherwise the
@@ -272,12 +289,14 @@ final class SabrMediaBridge {
         }
 
         if (cachedSegment(key) == null) {
+            diagnostic("warm-fail " + diagnosticKey(key));
             throw new IOException(
                     "SABR warm did not cache target segment: itag="
                             + key.getFormat().getItag()
                             + ", seq=" + key.getSequenceNumber()
             );
         }
+        diagnostic("warm-ok " + diagnosticKey(key));
     }
 
     void discard(SabrSegmentKey key) {
@@ -285,7 +304,51 @@ final class SabrMediaBridge {
         synchronized (ahead) {
             segment = ahead.remove(key);
         }
-        if (segment != null) segment.delete();
+        if (segment != null) {
+            diagnostic("discard " + diagnosticKey(key));
+            segment.delete();
+        }
+    }
+
+    String diagnosticSnapshot() {
+        final Selection current = selection;
+        final StringBuilder out = new StringBuilder();
+        if (current.video != null) {
+            out.append("selected=")
+                    .append(current.video.getHeight())
+                    .append("p itag=")
+                    .append(current.video.getItag());
+            final Integer next = nextSequences.get(current.video);
+            if (next != null) out.append(" nextSeq=").append(next);
+        } else {
+            out.append("selected=none");
+        }
+        synchronized (ahead) {
+            out.append(" cache=").append(ahead.size());
+        }
+        synchronized (diagnosticEvents) {
+            for (String event : diagnosticEvents) {
+                out.append("\n").append(event);
+            }
+        }
+        return out.toString();
+    }
+
+    private void diagnostic(String message) {
+        final long now = android.os.SystemClock.elapsedRealtime();
+        synchronized (diagnosticEvents) {
+            diagnosticEvents.addLast((now % 100000L) + " " + message);
+            while (diagnosticEvents.size() > MAX_DIAGNOSTIC_EVENTS) {
+                diagnosticEvents.removeFirst();
+            }
+        }
+    }
+
+    private static String diagnosticKey(SabrSegmentKey key) {
+        final YoutubeSabrInfo.Format format = key.getFormat();
+        return (format.isVideo() ? format.getHeight() + "p" : "audio")
+                + "/itag=" + format.getItag()
+                + "/seq=" + key.getSequenceNumber();
     }
 
     void stop() {
@@ -360,6 +423,7 @@ final class SabrMediaBridge {
                 return;
             }
             ahead.put(key, segment);
+            diagnostic("cache " + diagnosticKey(key));
             if (ahead.size() > MAX_AHEAD_SEGMENTS) {
                 final Iterator<SabrMediaSegment> iterator = ahead.values().iterator();
                 final SabrMediaSegment oldest = iterator.next();
