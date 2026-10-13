@@ -74,10 +74,7 @@ class OPhimMovieProvider(
     }
 
     override fun detail(slug: String): MovieDetail {
-        val root = getJson(
-            "$BASE_URL/v1/api/phim/" +
-                java.net.URLEncoder.encode(slug, "UTF-8")
-        )
+        val root = getMovieDetailJson(slug)
 
         val data = root.getObject("data")
         val movie = root.getObject("movie")
@@ -156,10 +153,7 @@ class OPhimMovieProvider(
         val slug = parts[2]
         val serverName = decodeStablePart(parts[3])
         val episodeKey = decodeStablePart(parts[4])
-        val root = getJson(
-            "$BASE_URL/v1/api/phim/" +
-                java.net.URLEncoder.encode(slug, "UTF-8")
-        )
+        val root = getMovieDetailJson(slug)
 
         val data = root.getObject("data")
         val episodes = root.getArray("episodes")
@@ -340,6 +334,32 @@ class OPhimMovieProvider(
                 Charsets.UTF_8
             )
         }.getOrElse { throw IOException("Invalid OPhim stable id") }
+
+    private fun getMovieDetailJson(slug: String): JsonObject {
+        val encoded = java.net.URLEncoder.encode(slug, "UTF-8")
+        val candidates = listOf(
+            "$BASE_URL/v1/api/phim/$encoded",
+            "$BASE_URL/phim/$encoded"
+        )
+
+        var lastError: Throwable? = null
+        for (url in candidates) {
+            val result = runCatching { getJson(url) }
+            if (result.isSuccess) return result.getOrThrow()
+
+            val error = result.exceptionOrNull()
+            lastError = error
+
+            // Only fall through to the legacy endpoint for a missing route/item.
+            // Other network errors are still allowed to try the alternate endpoint
+            // because OPhim has historically served both API shapes.
+        }
+
+        throw IOException(
+            lastError?.message ?: "OPhim detail unavailable for $slug",
+            lastError
+        )
+    }
 
     private fun getJson(url: String): JsonObject {
         val request = Request.Builder()
