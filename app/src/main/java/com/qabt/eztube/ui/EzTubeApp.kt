@@ -2995,6 +2995,31 @@ private fun FullPlayer(
                 modifier = Modifier.fillMaxSize()
             )
 
+            if (
+                developerMode &&
+                !isMovie &&
+                !sabrDiagnostic.isNullOrBlank()
+            ) {
+                val fullscreenDiagnostic = sabrDiagnostic
+                    .split('\n')
+                    .takeLast(8)
+                    .joinToString("\n")
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(10.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.58f)
+                ) {
+                    Text(
+                        fullscreenDiagnostic,
+                        modifier = Modifier.padding(8.dp),
+                        color = androidx.compose.ui.graphics.Color.White,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+
             // Fullscreen surface gestures:
             // single tap toggles controls; double tap seeks 5s; hold seeks continuously.
             Box(
