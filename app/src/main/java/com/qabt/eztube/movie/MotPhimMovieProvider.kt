@@ -238,18 +238,44 @@ class MotPhimMovieProvider(
     }
 
     private fun getJson(url: String): JsonObject {
-        val body = getText(url)
-        if (body.isBlank()) throw IOException("MotPhim returned empty body")
-        return runCatching { JsonParser.`object`().from(body) }
-            .getOrElse { throw IOException("MotPhim returned invalid JSON", it) }
+        val first = getText(url)
+        parseJsonOrNull(first)?.let { return it }
+
+        val retryUrl = runCatching {
+            url.toHttpUrl()
+                .newBuilder()
+                .addQueryParameter("_ez", System.currentTimeMillis().toString())
+                .build()
+                .toString()
+        }.getOrDefault(url)
+
+        val second = getText(retryUrl)
+        return parseJsonOrNull(second)
+            ?: throw IOException(
+                "MotPhim returned non-JSON response (" +
+                    second.take(80).replace("\n", " ") +
+                    ")"
+            )
+    }
+
+    private fun parseJsonOrNull(body: String): JsonObject? {
+        if (body.isBlank()) return null
+        val trimmed = body.trimStart()
+        if (!trimmed.startsWith("{")) return null
+        return runCatching { JsonParser.`object`().from(body) }.getOrNull()
     }
 
     private fun getText(url: String): String {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
-            .header("Accept", "application/json,text/plain,*/*")
+            .header("Accept", "application/json, text/plain, */*")
             .header("Referer", "$BASE_URL/")
+            .header("Origin", BASE_URL)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Dest", "empty")
             .get()
             .build()
 
