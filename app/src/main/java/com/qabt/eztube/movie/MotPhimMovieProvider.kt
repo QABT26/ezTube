@@ -166,7 +166,7 @@ class MotPhimMovieProvider(
             subtitles = parseSubtitles(episode),
             requestHeaders = mapOf(
                 "User-Agent" to DESKTOP_USER_AGENT,
-                "Referer" to "$BASE_URL/phim/$slug",
+                "Referer" to "$BASE_URL/phim/$slug/$episodeKey",
                 "Origin" to BASE_URL,
                 "Accept" to "*/*"
             )
