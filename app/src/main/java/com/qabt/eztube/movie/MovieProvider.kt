@@ -71,9 +71,21 @@ data class MovieDetail(
     val episodes: List<MovieEpisodeRef>
 )
 
+data class MovieVideoStream(
+    val url: String,
+    val mimeType: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val bitrate: Int? = null,
+    val codecs: String? = null
+)
+
 data class MoviePlayback(
     val mediaId: String,
-    val hlsUrl: String,
+    val hlsUrl: String? = null,
+    val videoStreams: List<MovieVideoStream> = emptyList(),
+    val audioUrl: String? = null,
+    val audioMimeType: String? = null,
     val subtitles: List<MovieSubtitle> = emptyList(),
     val requestHeaders: Map<String, String> = emptyMap(),
     val diagnostic: String? = null
