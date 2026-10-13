@@ -268,21 +268,25 @@ class PlaybackQueueManager(
             ?: PlaybackService.ENGINE_DIRECT
         activePlaybackEngine = engine
 
-        if (
-            engine == PlaybackService.ENGINE_SABR ||
-            engine == PlaybackService.ENGINE_HLS
-        ) {
-            applyAdaptiveVideoQualityConstraint()
-        }
-
         if (playback.mediaSource != null) {
             player.setMediaSource(playback.mediaSource)
         } else {
             player.setMediaItem(playback.mediaItem)
         }
+
+        if (
+            engine == PlaybackService.ENGINE_SABR ||
+            engine == PlaybackService.ENGINE_HLS
+        ) {
+            // A newly attached source does not have its new Tracks yet. Do not
+            // build an override from the previous source's track group.
+            applyAdaptiveVideoQualityConstraint(useCurrentTracks = false)
+        }
     }
 
-    private fun applyAdaptiveVideoQualityConstraint() {
+    private fun applyAdaptiveVideoQualityConstraint(
+        useCurrentTracks: Boolean = true
+    ) {
         val targetHeight = preferences.loadVideoQuality().targetHeight
         val builder = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
@@ -296,10 +300,14 @@ class PlaybackQueueManager(
             return
         }
 
-        val videoGroups = player.currentTracks.groups.filter { group ->
-            (0 until group.length).any { index ->
-                group.getTrackFormat(index).sampleMimeType?.startsWith("video/") == true
+        val videoGroups = if (useCurrentTracks) {
+            player.currentTracks.groups.filter { group ->
+                (0 until group.length).any { index ->
+                    group.getTrackFormat(index).sampleMimeType?.startsWith("video/") == true
+                }
             }
+        } else {
+            emptyList()
         }
 
         var bestGroup: androidx.media3.common.Tracks.Group? = null
