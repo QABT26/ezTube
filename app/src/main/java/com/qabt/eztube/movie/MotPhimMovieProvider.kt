@@ -160,16 +160,25 @@ class MotPhimMovieProvider(
             else -> resolveToHls(rawLink)
         } ?: throw IOException("MotPhim source could not be resolved to HLS")
 
+        val headers = mapOf(
+            "User-Agent" to DESKTOP_USER_AGENT,
+            "Referer" to "$BASE_URL/phim/$slug/$episodeKey",
+            "Origin" to BASE_URL,
+            "Accept" to "*/*"
+        )
+        val diagnostic = diagnoseHls(
+            movieId = discoverMovieId(slug),
+            episodeSlug = episodeKey,
+            manifestUrl = hls,
+            headers = headers
+        )
+
         return MoviePlayback(
             mediaId = mediaId,
             hlsUrl = hls,
             subtitles = parseSubtitles(episode),
-            requestHeaders = mapOf(
-                "User-Agent" to DESKTOP_USER_AGENT,
-                "Referer" to "$BASE_URL/phim/$slug/$episodeKey",
-                "Origin" to BASE_URL,
-                "Accept" to "*/*"
-            )
+            requestHeaders = headers,
+            diagnostic = diagnostic
         )
     }
 
@@ -550,6 +559,149 @@ class MotPhimMovieProvider(
                 else -> null
             }
         )
+    }
+
+    private fun diagnoseHls(
+        movieId: String,
+        episodeSlug: String,
+        manifestUrl: String,
+        headers: Map<String, String>
+    ): String {
+        val manifest = fetchDiagnosticText(manifestUrl, headers, "manifest")
+        if (!manifest.body.trimStart().startsWith("#EXTM3U", ignoreCase = true)) {
+            throw IOException(
+                "MotPhim diagnostic: movie_id=$movieId · episode=$episodeSlug · " +
+                    "manifest HTTP ${manifest.code} but body is not #EXTM3U"
+            )
+        }
+
+        var mediaPlaylistUrl = manifestUrl
+        var mediaPlaylistBody = manifest.body
+        var childCode: Int? = null
+
+        val childCandidate = firstPlaylistUri(manifest.body)
+        if (childCandidate != null) {
+            val resolvedChild = resolveHlsUri(manifestUrl, childCandidate)
+                ?: throw IOException(
+                    "MotPhim diagnostic: manifest HTTP ${manifest.code} · child playlist URL invalid"
+                )
+            val child = fetchDiagnosticText(resolvedChild, headers, "child playlist")
+            if (!child.body.trimStart().startsWith("#EXTM3U", ignoreCase = true)) {
+                throw IOException(
+                    "MotPhim diagnostic: manifest HTTP ${manifest.code} · " +
+                        "child HTTP ${child.code} but body is not #EXTM3U"
+                )
+            }
+            mediaPlaylistUrl = resolvedChild
+            mediaPlaylistBody = child.body
+            childCode = child.code
+        }
+
+        val segmentCandidate = firstMediaSegmentUri(mediaPlaylistBody)
+            ?: throw IOException(
+                "MotPhim diagnostic: manifest HTTP ${manifest.code}" +
+                    (childCode?.let { " · child HTTP $it" } ?: "") +
+                    " · no media segment found"
+            )
+
+        val segmentUrl = resolveHlsUri(mediaPlaylistUrl, segmentCandidate)
+            ?: throw IOException(
+                "MotPhim diagnostic: media segment URL invalid"
+            )
+        val segmentCode = probeSegment(segmentUrl, headers)
+
+        return buildString {
+            append("Provider: MotPhim")
+            append("\nMovie ID: ").append(movieId)
+            append("\nEpisode: ").append(episodeSlug)
+            append("\nManifest: HTTP ").append(manifest.code).append(" · VALID #EXTM3U")
+            if (childCode != null) {
+                append("\nMedia playlist: HTTP ").append(childCode).append(" · VALID #EXTM3U")
+            }
+            append("\nSegment #1: HTTP ").append(segmentCode)
+            append("\nMedia3: starting direct HLS")
+        }
+    }
+
+    private data class DiagnosticResponse(
+        val code: Int,
+        val body: String
+    )
+
+    private fun fetchDiagnosticText(
+        url: String,
+        headers: Map<String, String>,
+        label: String
+    ): DiagnosticResponse {
+        val builder = Request.Builder()
+            .url(url)
+            .get()
+        headers.forEach { (name, value) -> builder.header(name, value) }
+
+        http.newCall(builder.build()).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException(
+                    "MotPhim diagnostic: $label HTTP ${response.code}"
+                )
+            }
+            return DiagnosticResponse(response.code, body)
+        }
+    }
+
+    private fun probeSegment(
+        url: String,
+        headers: Map<String, String>
+    ): Int {
+        val builder = Request.Builder()
+            .url(url)
+            .header("Range", "bytes=0-1023")
+            .get()
+        headers.forEach { (name, value) -> builder.header(name, value) }
+
+        http.newCall(builder.build()).execute().use { response ->
+            if (!response.isSuccessful && response.code != 206) {
+                throw IOException(
+                    "MotPhim diagnostic: segment #1 HTTP ${response.code}"
+                )
+            }
+            return response.code
+        }
+    }
+
+    private fun firstPlaylistUri(body: String): String? {
+        val lines = body.lineSequence().map { it.trim() }.toList()
+        for (index in lines.indices) {
+            val line = lines[index]
+            if (line.startsWith("#EXT-X-STREAM-INF", ignoreCase = true)) {
+                val next = lines.drop(index + 1)
+                    .firstOrNull { it.isNotBlank() && !it.startsWith("#") }
+                if (!next.isNullOrBlank()) return next
+            }
+        }
+        return lines.firstOrNull {
+            it.isNotBlank() &&
+                !it.startsWith("#") &&
+                it.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+        }
+    }
+
+    private fun firstMediaSegmentUri(body: String): String? =
+        body.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { line ->
+                line.isNotBlank() &&
+                    !line.startsWith("#") &&
+                    !line.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+            }
+
+    private fun resolveHlsUri(baseUrl: String, value: String): String? {
+        val raw = value.trim()
+        if (raw.isBlank()) return null
+        if (raw.startsWith("http://") || raw.startsWith("https://")) return raw
+        return runCatching {
+            baseUrl.toHttpUrl().resolve(raw)?.toString()
+        }.getOrNull()
     }
 
     private fun resolveToHls(link: String): String? {
