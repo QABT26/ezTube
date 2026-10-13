@@ -311,9 +311,12 @@ fun EzTubeApp() {
                         movieDetailError = null
                         val first = playableItems.firstOrNull()
                         if (first != null) {
-                            // Single movies should transition directly to Now Playing.
-                            // showPlayer is armed before playback resolves; once playMedia
-                            // publishes nowPlaying the full player becomes visible immediately.
+                            // Publish the selected movie before opening the full player.
+                            // Otherwise the UI can briefly reopen the previously played item
+                            // while the new movie is still resolving in the playback service.
+                            nowPlaying = first
+                            playerError = null
+                            errorMessage = null
                             showPlayer = true
 
                             // A single movie can be mirrored on multiple servers.
@@ -778,6 +781,9 @@ fun EzTubeApp() {
                         movieDetailLoading = false
                     },
                     onPlay = { media, items ->
+                        nowPlaying = media
+                        playerError = null
+                        errorMessage = null
                         showPlayer = true
                         startQueue(media, items)
                     }
