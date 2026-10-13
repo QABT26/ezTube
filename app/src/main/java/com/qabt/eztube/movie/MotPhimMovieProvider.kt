@@ -193,15 +193,25 @@ class MotPhimMovieProvider(
     }
 
     private fun parseSearchHtml(body: String): List<MovieCatalogItem> {
+        data class HtmlCardMatch(
+            val match: MatchResult,
+            val titleFirst: Boolean
+        )
+
         val matches = buildList {
-            addAll(HTML_CARD_TITLE_FIRST.findAll(body).toList())
-            addAll(HTML_CARD_HREF_FIRST.findAll(body).toList())
+            HTML_CARD_TITLE_FIRST.findAll(body).forEach {
+                add(HtmlCardMatch(it, titleFirst = true))
+            }
+            HTML_CARD_HREF_FIRST.findAll(body).forEach {
+                add(HtmlCardMatch(it, titleFirst = false))
+            }
         }
 
-        return matches.mapNotNull { match ->
+        return matches.mapNotNull { card ->
+            val match = card.match
             val title: String
             val slug: String
-            if (match.regex == HTML_CARD_TITLE_FIRST) {
+            if (card.titleFirst) {
                 title = htmlDecode(match.groupValues[1]).trim()
                 slug = match.groupValues[2].trim()
             } else {
@@ -257,7 +267,7 @@ class MotPhimMovieProvider(
     private fun decodeRscText(value: String): String =
         value
             .replace("\\\"", "\"")
-            .replace("\\\/", "/")
+            .replace("\\/", "/")
             .replace("\\n", " ")
             .replace("\\r", " ")
             .replace("\\t", " ")
