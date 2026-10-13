@@ -59,42 +59,9 @@ class MotPhimMovieProvider(
     }
 
     override fun detail(slug: String): MovieDetail {
-        val movie = findMovieBySlug(slug)
-            ?: throw IOException("MotPhim movie not found: $slug")
-        val catalog = toCatalog(movie)
-            ?: throw IOException("MotPhim movie metadata is incomplete")
-
-        val episodes = movie.getArray("episodes")
-            ?: throw IOException("MotPhim movie has no episodes")
-        val refs = mutableListOf<MovieEpisodeRef>()
-        for (index in 0 until episodes.size) {
-            val episode = episodes.getObject(index) ?: continue
-            val link = episode.getString("link").orEmpty().trim()
-            if (link.isBlank()) continue
-            val server = episode.getString("server").orEmpty().ifBlank { "Server" }
-            val name = episode.getString("name").orEmpty()
-                .ifBlank { if (catalog.isSeries == false) "Full" else "Tập ${index + 1}" }
-
-            refs += MovieEpisodeRef(
-                providerId = id,
-                providerName = displayName,
-                movieSlug = catalog.slug,
-                movieTitle = catalog.title,
-                serverIndex = 0,
-                episodeIndex = index,
-                serverName = server,
-                episodeSlug = episode.getString("slug").orEmpty()
-                    .ifBlank { name }
-                    .ifBlank { "episode-${index + 1}" },
-                episodeName = name,
-                thumbnailUrl = catalog.thumbnailUrl,
-                durationSeconds = catalog.durationSeconds,
-                language = catalog.language
-            )
-        }
-
-        if (refs.isEmpty()) throw IOException("MotPhim returned no playable episodes")
-        return MovieDetail(catalog, refs)
+        throw IOException(
+            "MotPhim detail endpoint not wired yet for $slug"
+        )
     }
 
     override fun resolve(mediaId: String): MoviePlayback {
@@ -181,31 +148,76 @@ class MotPhimMovieProvider(
     }
 
     private fun parseSearchRsc(body: String): List<MovieCatalogItem> {
-        val matches = SEARCH_CARD_REGEX.findAll(body).toList()
-        if (matches.isEmpty()) {
-            if (body.contains("/phim/")) {
-                throw IOException("MotPhim RSC format changed")
+        val rscItems = SEARCH_CARD_REGEX.findAll(body)
+            .mapNotNull { match ->
+                val title = decodeRscText(match.groupValues[1]).trim()
+                val slug = decodeRscText(match.groupValues[2]).trim()
+                if (title.isBlank() || slug.isBlank()) return@mapNotNull null
+
+                val start = match.range.first.coerceAtLeast(0)
+                val end = (match.range.last + 1400).coerceAtMost(body.length)
+                val window = body.substring(start, end)
+                val image = SEARCH_IMAGE_REGEX.find(window)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.let(::decodeRscText)
+
+                MovieCatalogItem(
+                    providerId = id,
+                    providerName = displayName,
+                    slug = slug,
+                    title = title,
+                    originalTitle = null,
+                    thumbnailUrl = normalizeImage(image),
+                    year = null,
+                    language = if (window.contains("Vietsub", ignoreCase = true)) "Vietsub" else null,
+                    durationText = null,
+                    durationSeconds = null,
+                    episodeBadge = null,
+                    isSeries = null
+                )
             }
-            return emptyList()
+            .distinctBy { it.slug }
+            .toList()
+
+        if (rscItems.isNotEmpty()) return rscItems.take(24)
+
+        val htmlItems = parseSearchHtml(body)
+        if (htmlItems.isNotEmpty()) return htmlItems.take(24)
+
+        throw IOException(
+            "MotPhim search format not recognized (" +
+                body.take(80).replace("\n", " ") +
+                ")"
+        )
+    }
+
+    private fun parseSearchHtml(body: String): List<MovieCatalogItem> {
+        val matches = buildList {
+            addAll(HTML_CARD_TITLE_FIRST.findAll(body).toList())
+            addAll(HTML_CARD_HREF_FIRST.findAll(body).toList())
         }
 
         return matches.mapNotNull { match ->
-            val title = decodeRscText(match.groupValues[1]).trim()
-            val slug = decodeRscText(match.groupValues[2]).trim()
+            val title: String
+            val slug: String
+            if (match.regex == HTML_CARD_TITLE_FIRST) {
+                title = htmlDecode(match.groupValues[1]).trim()
+                slug = match.groupValues[2].trim()
+            } else {
+                slug = match.groupValues[1].trim()
+                title = htmlDecode(match.groupValues[2]).trim()
+            }
             if (title.isBlank() || slug.isBlank()) return@mapNotNull null
 
             val start = match.range.first.coerceAtLeast(0)
-            val end = (match.range.last + 1400).coerceAtMost(body.length)
+            val end = (match.range.last + 1600).coerceAtMost(body.length)
             val window = body.substring(start, end)
-            val image = SEARCH_IMAGE_REGEX.find(window)
+            val image = HTML_IMAGE_REGEX.find(window)
                 ?.groupValues
                 ?.getOrNull(1)
-                ?.let(::decodeRscText)
-            val language = when {
-                window.contains("Vietsub", ignoreCase = true) -> "Vietsub"
-                window.contains("Thuyết Minh", ignoreCase = true) -> "Thuyết Minh"
-                else -> null
-            }
+                ?.let(::htmlDecode)
+                ?.let(::decodeImageProxyUrl)
 
             MovieCatalogItem(
                 providerId = id,
@@ -215,7 +227,7 @@ class MotPhimMovieProvider(
                 originalTitle = null,
                 thumbnailUrl = normalizeImage(image),
                 year = null,
-                language = language,
+                language = if (window.contains("Vietsub", ignoreCase = true)) "Vietsub" else null,
                 durationText = null,
                 durationSeconds = null,
                 episodeBadge = null,
@@ -223,8 +235,24 @@ class MotPhimMovieProvider(
             )
         }
             .distinctBy { it.slug }
-            .take(24)
     }
+
+    private fun decodeImageProxyUrl(value: String): String {
+        val raw = value.trim()
+        return runCatching {
+            val parsed = raw.toHttpUrl()
+            parsed.queryParameter("url")?.let { URLDecoder.decode(it, "UTF-8") } ?: raw
+        }.getOrDefault(raw)
+    }
+
+    private fun htmlDecode(value: String): String =
+        value
+            .replace("&quot;", "\"")
+            .replace("&#34;", "\"")
+            .replace("&amp;", "&")
+            .replace("&#39;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
 
     private fun decodeRscText(value: String): String =
         value
@@ -537,6 +565,18 @@ class MotPhimMovieProvider(
         val SEARCH_IMAGE_REGEX = Regex(
             """src\\?":\\?"([^"]+(?:thumb|poster)\\.webp)""",
             RegexOption.IGNORE_CASE
+        )
+        val HTML_CARD_TITLE_FIRST = Regex(
+            """<a[^>]*title=["']([^"']+)["'][^>]*href=["']/phim/([^"'?#]+)["'][^>]*>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        val HTML_CARD_HREF_FIRST = Regex(
+            """<a[^>]*href=["']/phim/([^"'?#]+)["'][^>]*title=["']([^"']+)["'][^>]*>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        val HTML_IMAGE_REGEX = Regex(
+            """<img[^>]*src=["']([^"']+)["'][^>]*>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
         val UNICODE_ESCAPE_REGEX = Regex("""\\u([0-9a-fA-F]{4})""")
     }
