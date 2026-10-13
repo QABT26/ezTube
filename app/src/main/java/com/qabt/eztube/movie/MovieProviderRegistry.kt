@@ -22,21 +22,45 @@ class MovieProviderRegistry(
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) return emptyList()
 
+        data class ProviderSearchResult(
+            val providerName: String,
+            val items: List<MovieCatalogItem> = emptyList(),
+            val error: Throwable? = null
+        )
+
         val futures = providers.map { provider ->
-            searchExecutor.submit(
+            provider to searchExecutor.submit(
                 Callable {
                     runCatching { provider.search(normalizedQuery) }
-                        .getOrDefault(emptyList())
+                        .fold(
+                            onSuccess = { ProviderSearchResult(provider.displayName, it) },
+                            onFailure = { ProviderSearchResult(provider.displayName, error = it) }
+                        )
                 }
             )
         }
 
-        val candidates = futures.flatMap { future ->
+        val searchResults = futures.map { (provider, future) ->
             runCatching { future.get(8, TimeUnit.SECONDS) }
                 .getOrElse {
                     future.cancel(true)
-                    emptyList()
+                    ProviderSearchResult(
+                        providerName = provider.displayName,
+                        error = IOException("${provider.displayName} search timed out", it)
+                    )
                 }
+        }
+
+        val candidates = searchResults.flatMap { it.items }
+        if (candidates.isEmpty()) {
+            val errors = searchResults.mapNotNull { result ->
+                result.error?.message?.takeIf { it.isNotBlank() }?.let {
+                    "${result.providerName}: $it"
+                }
+            }
+            if (errors.isNotEmpty()) {
+                throw IOException(errors.joinToString(" | "))
+            }
         }
 
         return candidates
