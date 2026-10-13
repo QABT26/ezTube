@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -11,7 +12,7 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.dash.DashMediaSource
 
 @UnstableApi
-class PlaybackMediaSourceFactory(context: Context) {
+class PlaybackMediaSourceFactory(private val context: Context) {
     private val dataSourceFactory = DefaultDataSource.Factory(context)
     private val progressiveFactory = ProgressiveMediaSource.Factory(dataSourceFactory)
     private val hlsFactory = HlsMediaSource.Factory(dataSourceFactory)
@@ -46,6 +47,34 @@ class PlaybackMediaSourceFactory(context: Context) {
             is PlaybackSource.YouTube ->
                 error("YouTube source must be resolved by the YouTube adapter first")
         }
+
+    fun createMovieHls(
+        mediaItem: MediaItem,
+        manifestUrl: String,
+        headers: Map<String, String>
+    ): MediaSource {
+        if (headers.isEmpty()) {
+            return hlsFactory.createMediaSource(
+                mediaItem.buildUpon()
+                    .setUri(manifestUrl)
+                    .setMimeType("application/x-mpegURL")
+                    .build()
+            )
+        }
+
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(headers)
+        val factory = HlsMediaSource.Factory(
+            DefaultDataSource.Factory(context, httpFactory)
+        )
+        return factory.createMediaSource(
+            mediaItem.buildUpon()
+                .setUri(manifestUrl)
+                .setMimeType("application/x-mpegURL")
+                .build()
+        )
+    }
 
     fun createMerged(
         mediaItem: MediaItem,
