@@ -155,9 +155,10 @@ class PlaybackQueueManager(
 
         return ResolvedPlayback(
             mediaItem = mediaItem,
-            mediaSource = mediaSourceFactory.create(
-                mediaItem,
-                PlaybackSource.Hls(media.id, playback.hlsUrl)
+            mediaSource = mediaSourceFactory.createMovieHls(
+                mediaItem = mediaItem,
+                manifestUrl = playback.hlsUrl,
+                headers = playback.requestHeaders
             )
         )
     }
