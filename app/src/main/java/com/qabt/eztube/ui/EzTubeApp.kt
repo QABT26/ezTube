@@ -3,6 +3,7 @@ package com.qabt.eztube.ui
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.content.ComponentName
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -115,7 +116,15 @@ fun EzTubeApp() {
     var actualVideoHeight by remember { mutableIntStateOf(0) }
     var playbackEngine by remember { mutableStateOf(PlaybackService.ENGINE_DIRECT) }
     var movieDiagnostic by remember { mutableStateOf<String?>(null) }
-    var developerMode by remember { mutableStateOf(playbackPrefs.loadDeveloperMode()) }
+    var developerUnlocked by remember {
+        mutableStateOf(playbackPrefs.loadDeveloperUnlocked())
+    }
+    var developerMode by remember {
+        mutableStateOf(
+            playbackPrefs.loadDeveloperMode() &&
+                playbackPrefs.loadDeveloperUnlocked()
+        )
+    }
     var subtitleOptions by remember { mutableStateOf<List<SubtitleOption>>(emptyList()) }
     var selectedSubtitleLabel by remember { mutableStateOf<String?>(null) }
     var videoMode by remember { mutableStateOf(playbackPrefs.loadVideoMode()) }
@@ -992,10 +1001,21 @@ fun EzTubeApp() {
                 onTrendingTopic = { trendingTopic = it; playbackPrefs.saveTrendingTopic(it) },
                 trendingLanguage = trendingLanguage,
                 onTrendingLanguage = { trendingLanguage = it; playbackPrefs.saveTrendingLanguage(it) },
+                developerUnlocked = developerUnlocked,
                 developerMode = developerMode,
                 onDeveloperMode = {
                     developerMode = it
                     playbackPrefs.saveDeveloperMode(it)
+                },
+                onDeveloperUnlocked = {
+                    developerUnlocked = true
+                    playbackPrefs.saveDeveloperUnlocked(true)
+                },
+                onDeveloperLock = {
+                    developerMode = false
+                    developerUnlocked = false
+                    playbackPrefs.saveDeveloperMode(false)
+                    playbackPrefs.saveDeveloperUnlocked(false)
                 },
                 onClose = { showSettings = false }
             )
@@ -1167,10 +1187,16 @@ private fun SettingsScreen(
     onTrendingTopic: (String) -> Unit,
     trendingLanguage: String,
     onTrendingLanguage: (String) -> Unit,
+    developerUnlocked: Boolean,
     developerMode: Boolean,
     onDeveloperMode: (Boolean) -> Unit,
+    onDeveloperUnlocked: () -> Unit,
+    onDeveloperLock: () -> Unit,
     onClose: () -> Unit
 ) {
+    val context = LocalContext.current
+    var developerTapCount by remember { mutableIntStateOf(0) }
+
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(
             Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
@@ -1245,23 +1271,31 @@ private fun SettingsScreen(
                 }
             }
 
-            HorizontalDivider()
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Develop...", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "Show playback source and network diagnostics.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+            if (developerUnlocked) {
+                HorizontalDivider()
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Develop...", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Show playback source and network diagnostics.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = developerMode,
+                        onCheckedChange = onDeveloperMode
                     )
                 }
-                Switch(
-                    checked = developerMode,
-                    onCheckedChange = onDeveloperMode
-                )
+                TextButton(
+                    onClick = onDeveloperLock,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Lock developer access")
+                }
             }
 
             HorizontalDivider()
@@ -1274,6 +1308,30 @@ private fun SettingsScreen(
                 )
                 Text(
                     "${BuildConfig.BUILD_ID} · Android build ${BuildConfig.VERSION_CODE}",
+                    modifier = Modifier.clickable {
+                        if (!developerUnlocked) {
+                            developerTapCount += 1
+                            val remaining = 7 - developerTapCount
+                            when {
+                                remaining <= 0 -> {
+                                    developerTapCount = 0
+                                    onDeveloperUnlocked()
+                                    Toast.makeText(
+                                        context,
+                                        "Developer access unlocked",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                                developerTapCount >= 3 -> {
+                                    Toast.makeText(
+                                        context,
+                                        "$remaining more taps to unlock developer access",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
