@@ -3051,6 +3051,20 @@ private fun FullPlayer(
     val hasPrevious = state.hasPrevious
     val hasNext = state.hasNext
     val isFavorite = state.isFavorite
+    val movieEpisodePosition =
+        if (isMovie && queue.size > 1 && queueIndex in queue.indices) {
+            "${queueIndex + 1} / ${queue.size}"
+        } else {
+            null
+        }
+    val movieNextLabel =
+        if (isMovie && queueIndex in queue.indices && queueIndex < queue.lastIndex) {
+            queue[queueIndex + 1].title
+                .substringAfter(" · ", queue[queueIndex + 1].title)
+                .takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
 
     val onSubtitle = actions.onSubtitle
     val onVideoMode = actions.onVideoMode
@@ -3338,6 +3352,37 @@ private fun FullPlayer(
             )
 
             if (fullscreenControlsVisible) {
+                if (movieEpisodePosition != null) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(start = 14.dp, top = 12.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.34f)
+                    ) {
+                        Column(
+                            Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                                .widthIn(max = 280.dp)
+                        ) {
+                            Text(
+                                "Episode $movieEpisodePosition",
+                                color = androidx.compose.ui.graphics.Color.White,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            movieNextLabel?.let { nextLabel ->
+                                Text(
+                                    "Next: $nextLabel",
+                                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.82f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Row(
                     Modifier.align(Alignment.BottomEnd)
                         .padding(end = 12.dp, bottom = 46.dp),
@@ -3809,6 +3854,36 @@ private fun FullPlayer(
             Spacer(Modifier.height(12.dp))
             Text(media.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
                 maxLines = 3, overflow = TextOverflow.Ellipsis)
+            movieEpisodePosition?.let { episodePosition ->
+                Spacer(Modifier.height(3.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AssistChip(
+                        onClick = { showQueue = true },
+                        label = { Text("Episode $episodePosition") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.PlaylistPlay,
+                                null,
+                                Modifier.size(15.dp)
+                            )
+                        }
+                    )
+                    movieNextLabel?.let { nextLabel ->
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "Next: $nextLabel",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(3.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
