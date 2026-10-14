@@ -6,6 +6,7 @@ on:
       - main
       - feat/newpipe-media3-v1
       - feat/beta-v2
+      - feat/playback-library-expansion-v1
   pull_request:
     branches:
       - main
@@ -33,8 +34,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build debug APK
-        run: bash ./gradlew clean assembleDebug --stacktrace
+      - name: Test, lint and build debug APK
+        run: bash ./gradlew clean testDebugUnitTest lintDebug assembleDebug --stacktrace
 
       - name: Upload Beta APK
         uses: actions/upload-artifact@v4
