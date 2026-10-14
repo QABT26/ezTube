@@ -117,6 +117,22 @@ fun EzTubeApp(
     val recent by history.recent.collectAsState(initial = emptyList())
     val favorites by favoritesRepo.all.collectAsState(initial = emptyList())
     val watchLater by watchLaterRepo.all.collectAsState(initial = emptyList())
+
+    LaunchedEffect(watchLater, recent) {
+        if (watchLater.isEmpty() || recent.isEmpty()) return@LaunchedEffect
+        val progressById = recent.associateBy { it.mediaId }
+        val watchedIds = watchLater.mapNotNull { entry ->
+            progressById[entry.mediaId]
+                ?.takeIf { it.durationMs > 0L && it.progress >= 0.95f }
+                ?.mediaId
+        }
+        if (watchedIds.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                watchLaterRepo.removeMany(watchedIds)
+            }
+        }
+    }
+
     val playbackPrefs = remember { PlaybackPreferences(context) }
     val personalPlaylistStore = remember { PersonalPlaylistStore(context) }
     var personalPlaylists by remember { mutableStateOf(personalPlaylistStore.load()) }
@@ -1731,14 +1747,13 @@ fun EzTubeApp(
                                 startQueue(media, items, preserveSourceOrder = true)
                             }
                         },
-                        onPlayAllWatchLater = { shuffled ->
+                        onPlayAllWatchLater = {
                             val items = watchLater
                                 .filterNot {
                                     movieProviders.isTitle(it.mediaId) ||
                                         it.mediaId.startsWith("movie-title:")
                                 }
                                 .map { it.toMediaSummary() }
-                                .let { if (shuffled) it.shuffled() else it }
                             if (items.isNotEmpty()) {
                                 startQueue(
                                     items.first(),
@@ -1754,19 +1769,6 @@ fun EzTubeApp(
                         },
                         onToggleWatchLaterMedia = { media ->
                             toggleWatchLater(media)
-                        },
-                        onClearWatchedLater = {
-                            val progressById = recent.associateBy { it.mediaId }
-                            val watchedIds = watchLater.mapNotNull { entry ->
-                                progressById[entry.mediaId]
-                                    ?.takeIf { it.durationMs > 0L && it.progress >= 0.95f }
-                                    ?.mediaId
-                            }
-                            if (watchedIds.isNotEmpty()) {
-                                scope.launch(Dispatchers.IO) {
-                                    watchLaterRepo.removeMany(watchedIds)
-                                }
-                            }
                         },
                         onCreatePlaylist = { name ->
                             personalPlaylists = personalPlaylistStore.create(name)
@@ -3665,10 +3667,9 @@ private fun LibraryScreen(
     onPlayAllMovieFavorites: () -> Unit,
     onRemoveFavorite: (FavoriteEntry) -> Unit,
     onPlayWatchLater: (WatchLaterEntry) -> Unit,
-    onPlayAllWatchLater: (Boolean) -> Unit,
+    onPlayAllWatchLater: () -> Unit,
     onRemoveWatchLater: (WatchLaterEntry) -> Unit,
     onToggleWatchLaterMedia: (MediaSummary) -> Unit,
-    onClearWatchedLater: () -> Unit,
     onCreatePlaylist: (String) -> Unit,
     onRenamePlaylist: (String, String) -> Unit,
     onDeletePlaylist: (String) -> Unit,
@@ -3700,12 +3701,6 @@ private fun LibraryScreen(
         }.take(3)
     }
     val historyByMediaId = remember(recent) { recent.associateBy { it.mediaId } }
-    val watchedLaterCount = remember(watchLater, recent) {
-        watchLater.count { entry ->
-            historyByMediaId[entry.mediaId]
-                ?.let { it.durationMs > 0L && it.progress >= 0.95f } == true
-        }
-    }
 
     LazyColumn(
         modifier = modifier.padding(horizontal = 14.dp),
@@ -3807,8 +3802,26 @@ private fun LibraryScreen(
                                 maxLines = 1
                             )
                         }
-                        IconButton(onClick = { onRemoveFavorite(entry) }) {
-                            Icon(Icons.Outlined.Favorite, "Remove favorite")
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy((-1).dp)
+                        ) {
+                            IconButton(
+                                onClick = { onPlayFavorite(entry) },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
+                            }
+                            IconButton(
+                                onClick = { onRemoveFavorite(entry) },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Favorite,
+                                    "Remove favorite",
+                                    Modifier.size(17.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -3883,18 +3896,30 @@ private fun LibraryScreen(
                                 maxLines = 1
                             )
                         }
-                        IconButton(
-                            onClick = { onPlayFavorite(entry) },
-                            modifier = Modifier.size(30.dp)
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy((-1).dp)
                         ) {
-                            Icon(
-                                Icons.Outlined.PlayArrow,
-                                "Play movie",
-                                Modifier.size(20.dp)
-                            )
-                        }
-                        IconButton(onClick = { onRemoveFavorite(entry) }) {
-                            Icon(Icons.Outlined.Favorite, "Remove favorite")
+                            IconButton(
+                                onClick = { onPlayFavorite(entry) },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.PlayArrow,
+                                    "Play movie",
+                                    Modifier.size(18.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { onRemoveFavorite(entry) },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Favorite,
+                                    "Remove favorite",
+                                    Modifier.size(17.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -3914,53 +3939,35 @@ private fun LibraryScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        watchLater.size.toString() + " saved" +
-                            if (watchedLaterCount > 0) " · $watchedLaterCount watched" else "",
+                        watchLater.size.toString() + " saved · watched items clear automatically",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                if (watchLater.size > 5) {
-                    TextButton(
-                        onClick = { showAllWatchLater = !showAllWatchLater },
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
-                    ) {
-                        Text(if (showAllWatchLater) "Show less" else "View all")
-                    }
-                }
-            }
-            if (watchLater.isNotEmpty()) {
-                androidx.compose.foundation.layout.FlowRow(
-                    Modifier.fillMaxWidth().padding(top = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    FilledTonalButton(
-                        onClick = { onPlayAllWatchLater(false) },
+                if (watchLater.isNotEmpty()) {
+                    AssistChip(
+                        onClick = onPlayAllWatchLater,
                         enabled = resolvingId == null,
-                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp)
-                    ) {
-                        Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("Play all")
-                    }
-                    FilledTonalButton(
-                        onClick = { onPlayAllWatchLater(true) },
-                        enabled = resolvingId == null,
-                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp)
-                    ) {
-                        Icon(Icons.Outlined.Shuffle, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("Shuffle")
-                    }
-                    TextButton(
-                        onClick = onClearWatchedLater,
-                        enabled = watchedLaterCount > 0,
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 4.dp)
-                    ) {
-                        Icon(Icons.Outlined.DeleteSweep, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("Clear watched")
+                        label = { Text("Play all", maxLines = 1) },
+                        leadingIcon = {
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(15.dp))
+                        },
+                        modifier = Modifier.height(32.dp)
+                    )
+                    if (watchLater.size > 3) {
+                        Spacer(Modifier.width(5.dp))
+                        AssistChip(
+                            onClick = { showAllWatchLater = !showAllWatchLater },
+                            label = {
+                                Text(
+                                    if (showAllWatchLater) "Less" else "View all",
+                                    maxLines = 1
+                                )
+                            },
+                            modifier = Modifier.height(32.dp)
+                        )
                     }
                 }
             }
@@ -3976,7 +3983,7 @@ private fun LibraryScreen(
             }
         } else {
             items(
-                if (showAllWatchLater) watchLater else watchLater.take(5),
+                if (showAllWatchLater) watchLater else watchLater.take(3),
                 key = { "watch-later-" + it.mediaId }
             ) { entry ->
                 val progressEntry = historyByMediaId[entry.mediaId]
@@ -4025,18 +4032,27 @@ private fun LibraryScreen(
                     if (resolvingId == entry.mediaId) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
-                        IconButton(
-                            onClick = { onPlayWatchLater(entry) },
-                            modifier = Modifier.size(30.dp)
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy((-1).dp)
                         ) {
-                            Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(20.dp))
+                            IconButton(
+                                onClick = { onPlayWatchLater(entry) },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
+                            }
+                            IconButton(
+                                onClick = { onRemoveWatchLater(entry) },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Bookmark,
+                                    "Remove from Watch later",
+                                    Modifier.size(17.dp)
+                                )
+                            }
                         }
-                    }
-                    IconButton(
-                        onClick = { onRemoveWatchLater(entry) },
-                        modifier = Modifier.size(30.dp)
-                    ) {
-                        Icon(Icons.Outlined.Bookmark, "Remove from Watch later", Modifier.size(19.dp))
                     }
                 }
             }
@@ -4330,17 +4346,22 @@ private fun LibraryScreen(
                 if (resolvingId == entry.mediaId) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 } else {
-                    IconButton(
-                        onClick = { onPlay(entry) },
-                        modifier = Modifier.size(28.dp)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy((-1).dp)
                     ) {
-                        Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(19.dp))
-                    }
-                    IconButton(
-                        onClick = { onDelete(entry) },
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(Icons.Outlined.Close, "Remove from history", Modifier.size(16.dp))
+                        IconButton(
+                            onClick = { onPlay(entry) },
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(18.dp))
+                        }
+                        IconButton(
+                            onClick = { onDelete(entry) },
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(Icons.Outlined.Close, "Remove from history", Modifier.size(16.dp))
+                        }
                     }
                 }
             }
