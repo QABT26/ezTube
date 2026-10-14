@@ -190,6 +190,7 @@ fun EzTubeApp() {
     var movieDetail by remember { mutableStateOf<MovieDetail?>(null) }
     var movieDetailLoading by remember { mutableStateOf(false) }
     var movieDetailError by remember { mutableStateOf<String?>(null) }
+    var movieDetailFocusId by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -304,6 +305,7 @@ fun EzTubeApp() {
 
     fun openMovie(
         media: MediaSummary,
+        focusEpisodeId: String? = null,
         onSingleMovie: (MediaSummary, List<MediaSummary>) -> Unit
     ) {
         if (!movieProviders.isTitle(media.id) || movieDetailLoading) return
@@ -325,8 +327,10 @@ fun EzTubeApp() {
                         ?: (uniqueEpisodeKeys.size > 1)
 
                     if (isSeries) {
+                        movieDetailFocusId = focusEpisodeId
                         movieDetail = detail
                     } else {
+                        movieDetailFocusId = null
                         movieDetail = null
                         movieDetailError = null
                         val first = playableItems.firstOrNull()
@@ -351,6 +355,44 @@ fun EzTubeApp() {
                 }
                 .onFailure { movieDetailError = it.message ?: "Unable to load movie" }
             movieDetailLoading = false
+        }
+    }
+
+    fun openMovieFromHistory(entry: HistoryEntry) {
+        if (!entry.mediaId.startsWith("movie:") || movieDetailLoading) return
+        val providerId = entry.mediaId.split(':').getOrNull(1).orEmpty()
+        val lookupTitle = movieLookupTitle(entry.title)
+        if (providerId.isBlank() || lookupTitle.isBlank()) return
+
+        scope.launch {
+            movieDetailLoading = true
+            movieDetailError = null
+            val titleMedia = runCatching {
+                withContext(Dispatchers.IO) {
+                    movieProviders.search(lookupTitle)
+                        .firstOrNull {
+                            it.id.startsWith("movie-title:$providerId:")
+                        }
+                        ?: movieProviders.search(lookupTitle).firstOrNull()
+                }
+            }.getOrNull()
+
+            movieDetailLoading = false
+            if (titleMedia == null) {
+                movieDetailError = "Unable to reopen movie detail"
+                return@launch
+            }
+
+            openMovie(
+                media = titleMedia,
+                focusEpisodeId = entry.mediaId
+            ) { single, items ->
+                startQueue(
+                    single,
+                    items,
+                    startPositionMs = entry.positionMs.coerceAtLeast(0L)
+                )
+            }
         }
     }
 
@@ -842,8 +884,10 @@ fun EzTubeApp() {
                     error = movieDetailError,
                     resolvingId = resolvingId,
                     nowPlayingId = nowPlaying?.id,
+                    focusEpisodeId = movieDetailFocusId,
                     historyEntries = recent,
                     onBack = {
+                        movieDetailFocusId = null
                         movieDetail = null
                         movieDetailError = null
                         movieDetailLoading = false
@@ -1178,13 +1222,18 @@ fun EzTubeApp() {
                         listState = libraryListState,
                         resolvingId = resolvingId,
                         onPlay = { entry ->
-                            val items = recent.map { it.toMediaSummary() }
+                            val items = if (entry.mediaId.startsWith("movie:")) {
+                                listOf(entry.toMediaSummary())
+                            } else {
+                                recent.map { it.toMediaSummary() }
+                            }
                             startQueue(
                                 entry.toMediaSummary(),
                                 items,
                                 startPositionMs = entry.positionMs.coerceAtLeast(0L)
                             )
                         },
+                        onOpenMovie = { entry -> openMovieFromHistory(entry) },
                         onPlayFavorite = { entry ->
                             val items = favorites.map { it.toMediaSummary() }
                             startQueue(entry.toMediaSummary(), items)
@@ -1686,6 +1735,7 @@ private fun MovieDetailScreen(
     error: String?,
     resolvingId: String?,
     nowPlayingId: String?,
+    focusEpisodeId: String?,
     historyEntries: List<HistoryEntry>,
     onBack: () -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>, Long) -> Unit
@@ -1698,9 +1748,10 @@ private fun MovieDetailScreen(
         detail?.episodes?.groupBy { it.serverName }.orEmpty()
     }
     val serverNames = remember(grouped) { grouped.keys.toList() }
-    val initialServer = remember(detail?.catalog?.stableId) {
+    val navigationEpisodeId = focusEpisodeId ?: nowPlayingId
+    val initialServer = remember(detail?.catalog?.stableId, navigationEpisodeId) {
         detail?.episodes
-            ?.firstOrNull { it.stableId == nowPlayingId }
+            ?.firstOrNull { it.stableId == navigationEpisodeId }
             ?.serverName
             ?: serverNames.firstOrNull()
     }
@@ -1708,9 +1759,9 @@ private fun MovieDetailScreen(
         mutableStateOf(initialServer)
     }
 
-    LaunchedEffect(detail?.catalog?.stableId, nowPlayingId) {
+    LaunchedEffect(detail?.catalog?.stableId, navigationEpisodeId) {
         val playingServer = detail?.episodes
-            ?.firstOrNull { it.stableId == nowPlayingId }
+            ?.firstOrNull { it.stableId == navigationEpisodeId }
             ?.serverName
         if (playingServer != null && grouped.containsKey(playingServer)) {
             selectedServer = playingServer
@@ -1723,7 +1774,7 @@ private fun MovieDetailScreen(
     val serverQueue = remember(selectedRefs) {
         selectedRefs.map { it.toMediaSummary() }
     }
-    val currentLocalIndex = selectedRefs.indexOfFirst { it.stableId == nowPlayingId }
+    val currentLocalIndex = selectedRefs.indexOfFirst { it.stableId == navigationEpisodeId }
     val episodeRowsStartIndex =
         1 + // movie header
             (if (serverNames.size > 1) 1 else 0) + // server selector
@@ -1735,7 +1786,7 @@ private fun MovieDetailScreen(
     LaunchedEffect(
         detail?.catalog?.stableId,
         selectedServer,
-        nowPlayingId,
+        navigationEpisodeId,
         targetListIndex
     ) {
         if (targetListIndex >= 0) {
@@ -1907,13 +1958,13 @@ private fun MovieDetailScreen(
                         item(key = "server-picker-$selectedServer") {
                             val pickerState = rememberLazyListState()
                             val currentPickerIndex = selectedRefs.indexOfFirst {
-                                it.stableId == nowPlayingId
+                                it.stableId == navigationEpisodeId
                             }
 
                             LaunchedEffect(
                                 detail.catalog.stableId,
                                 selectedServer,
-                                nowPlayingId,
+                                navigationEpisodeId,
                                 currentPickerIndex
                             ) {
                                 if (currentPickerIndex >= 0) {
@@ -2392,8 +2443,16 @@ private fun CompactMediaRow(
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (resolving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-        else Icon(Icons.Outlined.PlayArrow, "Play")
+        if (resolving) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        } else {
+            IconButton(
+                onClick = onPlay,
+                modifier = Modifier.size(30.dp)
+            ) {
+                Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(20.dp))
+            }
+        }
     }
 }
 
@@ -2532,7 +2591,8 @@ private fun ProgressMediaRow(
     entry: HistoryEntry,
     movieProviders: MovieProviderRegistry,
     resolving: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onPlay: () -> Unit
 ) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
@@ -2571,6 +2631,7 @@ private fun LibraryScreen(
     listState: androidx.compose.foundation.lazy.LazyListState,
     resolvingId: String?,
     onPlay: (HistoryEntry) -> Unit,
+    onOpenMovie: (HistoryEntry) -> Unit,
     onPlayFavorite: (FavoriteEntry) -> Unit,
     onPlayAllFavorites: () -> Unit,
     onRemoveFavorite: (FavoriteEntry) -> Unit,
@@ -2661,8 +2722,16 @@ private fun LibraryScreen(
                 ProgressMediaRow(
                     entry = entry,
                     movieProviders = movieProviders,
-                    resolving = resolvingId == entry.mediaId
-                ) { onPlay(entry) }
+                    resolving = resolvingId == entry.mediaId,
+                    onClick = {
+                        if (isMovieLibraryItem(entry.mediaId, entry.channel)) {
+                            onOpenMovie(entry)
+                        } else {
+                            onPlay(entry)
+                        }
+                    },
+                    onPlay = { onPlay(entry) }
+                )
             }
         }
 
@@ -2687,7 +2756,13 @@ private fun LibraryScreen(
         items(if (showAllHistory) recent else recent.take(3), key = { "history-" + it.mediaId }) { entry ->
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                    .clickable(enabled = resolvingId == null) { onPlay(entry) }.padding(7.dp),
+                    .clickable(enabled = resolvingId == null) {
+                        if (isMovieLibraryItem(entry.mediaId, entry.channel)) {
+                            onOpenMovie(entry)
+                        } else {
+                            onPlay(entry)
+                        }
+                    }.padding(7.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 LibraryThumbnail(
