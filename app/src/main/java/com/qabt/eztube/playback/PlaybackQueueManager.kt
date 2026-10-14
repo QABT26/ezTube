@@ -377,6 +377,12 @@ class PlaybackQueueManager(
 
     fun onPlaybackEnded() {
         if (busy) return
+        if (preferences.loadSleepEndCurrent()) {
+            preferences.saveSleepEndCurrent(false)
+            player.pause()
+            checkpointSession()
+            return
+        }
         val saved = preferences.loadQueue() ?: return
         val items = saved.first
         if (items.isEmpty()) return
@@ -389,6 +395,25 @@ class PlaybackQueueManager(
             repeatMode = preferences.loadRepeatMode()
         ) ?: return
         resolveAndPlay(items, target)
+    }
+
+    fun setSleepEndCurrent(enabled: Boolean) {
+        preferences.saveSleepEndCurrent(enabled)
+        val playerIndex = player.currentMediaItemIndex
+        if (enabled) {
+            // Media3 may already have the logical next item preloaded. Remove only the native
+            // resolved tail so the current item reaches STATE_ENDED instead of auto-transitioning.
+            if (playerIndex >= 0 && playerIndex + 1 < player.mediaItemCount) {
+                player.removeMediaItems(playerIndex + 1, player.mediaItemCount)
+            }
+            preloadId = null
+        } else {
+            val saved = preferences.loadQueue() ?: return
+            val currentId = player.currentMediaItem?.mediaId
+            val index = saved.first.indexOfFirst { it.id == currentId }
+                .takeIf { it >= 0 } ?: saved.second
+            if (index in saved.first.indices) ensureNext(saved.first, index)
+        }
     }
 
     fun refreshFromPreferences() {
