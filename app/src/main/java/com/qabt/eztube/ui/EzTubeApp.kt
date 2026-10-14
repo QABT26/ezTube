@@ -778,6 +778,16 @@ fun EzTubeApp(
         }
     }
 
+    fun toggleWatchLater(media: MediaSummary) {
+        scope.launch(Dispatchers.IO) {
+            if (watchLater.any { it.mediaId == media.id }) {
+                watchLaterRepo.remove(media.id)
+            } else {
+                watchLaterRepo.add(media)
+            }
+        }
+    }
+
     fun playNext(media: MediaSummary) {
         if (queue.isEmpty() || queueIndex !in queue.indices) {
             startQueue(media, listOf(media))
@@ -1517,7 +1527,9 @@ fun EzTubeApp(
                         },
                         onPlay = { media, resultQueue -> startQueue(media, resultQueue) },
                         onPlayNext = { playNext(it) },
-                        onAddToQueue = { addToQueue(it) }
+                        onAddToQueue = { addToQueue(it) },
+                        watchLaterIds = watchLater.mapTo(mutableSetOf()) { it.mediaId },
+                        onToggleWatchLater = { toggleWatchLater(it) }
                     )
                     Tab.HOME -> HomeScreen(
                         modifier = Modifier.fillMaxSize().padding(padding),
@@ -1560,6 +1572,8 @@ fun EzTubeApp(
                                 startQueue(single, items)
                             }
                         },
+                        watchLaterIds = watchLater.mapTo(mutableSetOf()) { it.mediaId },
+                        onToggleWatchLater = { toggleWatchLater(it) },
                         onSearch = { selected = Tab.SEARCH }
                     )
                     Tab.LIBRARY -> LibraryScreen(
