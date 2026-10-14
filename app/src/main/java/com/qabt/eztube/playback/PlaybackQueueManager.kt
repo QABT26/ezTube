@@ -371,7 +371,9 @@ class PlaybackQueueManager(
         preferences.saveQueue(saved.first, index)
         preferences.save(saved.first[index], 0L)
         clearAlternateStream()
-        ensureNext(saved.first, index)
+        if (!preferences.loadSleepEndCurrent()) {
+            ensureNext(saved.first, index)
+        }
         warmAlternateStream(saved.first[index])
     }
 
@@ -401,12 +403,16 @@ class PlaybackQueueManager(
         preferences.saveSleepEndCurrent(enabled)
         val playerIndex = player.currentMediaItemIndex
         if (enabled) {
-            // Media3 may already have the logical next item preloaded. Remove only the native
-            // resolved tail so the current item reaches STATE_ENDED instead of auto-transitioning.
+            // End-of-current is a hard stop override. Cancel any in-flight preload before
+            // removing the resolved tail; otherwise an older preload coroutine can append
+            // another item after this command and Media3 will auto-transition instead of
+            // reaching STATE_ENDED. Also force native repeat off in case a transport client
+            // enabled it independently of ezTube's logical repeat preference.
+            invalidatePending()
+            player.repeatMode = Player.REPEAT_MODE_OFF
             if (playerIndex >= 0 && playerIndex + 1 < player.mediaItemCount) {
                 player.removeMediaItems(playerIndex + 1, player.mediaItemCount)
             }
-            preloadId = null
         } else {
             val saved = preferences.loadQueue() ?: return
             val currentId = player.currentMediaItem?.mediaId
@@ -421,6 +427,15 @@ class PlaybackQueueManager(
         val saved = preferences.loadQueue() ?: return
         val currentId = player.currentMediaItem?.mediaId
         val index = saved.first.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
+
+        if (preferences.loadSleepEndCurrent()) {
+            player.repeatMode = Player.REPEAT_MODE_OFF
+            val playerIndex = player.currentMediaItemIndex
+            if (playerIndex >= 0 && playerIndex + 1 < player.mediaItemCount) {
+                player.removeMediaItems(playerIndex + 1, player.mediaItemCount)
+            }
+            return
+        }
 
         if (!preferences.loadAutoplay()) {
             preloadId = null
@@ -745,6 +760,7 @@ class PlaybackQueueManager(
     }
 
     fun ensureNext(items: List<MediaSummary>, index: Int) {
+        if (preferences.loadSleepEndCurrent()) return
         if (!preferences.loadAutoplay()) return
         val next = items.getOrNull(index + 1) ?: return
         val current = player.currentMediaItemIndex
