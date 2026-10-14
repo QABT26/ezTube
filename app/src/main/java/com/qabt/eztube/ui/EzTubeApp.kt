@@ -3724,7 +3724,7 @@ private fun LibraryScreen(
                         enabled = watchedLaterCount > 0,
                         contentPadding = PaddingValues(horizontal = 7.dp, vertical = 4.dp)
                     ) {
-                        Icon(Icons.Outlined.DoneAll, null, Modifier.size(16.dp))
+                        Icon(Icons.Outlined.DeleteSweep, null, Modifier.size(16.dp))
                         Spacer(Modifier.width(3.dp))
                         Text("Clear watched")
                     }
@@ -3804,7 +3804,7 @@ private fun LibraryScreen(
                         onClick = { onRemoveWatchLater(entry) },
                         modifier = Modifier.size(30.dp)
                     ) {
-                        Icon(Icons.Outlined.BookmarkRemove, "Remove from Watch later", Modifier.size(19.dp))
+                        Icon(Icons.Outlined.Bookmark, "Remove from Watch later", Modifier.size(19.dp))
                     }
                 }
             }
