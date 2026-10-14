@@ -22,53 +22,30 @@ Write-Host "APK=$Apk"
 Write-Host "PACKAGE=$Package"
 Write-Host "TARGET_USER=$currentUser"
 
-# Plain adb install -r can involve multiple Android users/profiles on Samsung.
-# Push once, then let Package Manager install explicitly for the foreground user.
-# This path is more reliable than "adb install --user" across Samsung/ADB variants.
 $remoteApk = "/data/local/tmp/eztube-debug.apk"
+
 Write-Host "[INFO] Pushing APK..."
 & $Adb push $Apk $remoteApk
 if ($LASTEXITCODE -ne 0) {
     throw "APK push failed"
 }
 
-Write-Host "[INFO] Installing only for Android user $currentUser..."
-$installOutput = & $Adb shell pm install -r --user $currentUser $remoteApk 2>&1
-$installExit = $LASTEXITCODE
-$installOutput | ForEach-Object { Write-Host $_ }
+try {
+    Write-Host "[INFO] Installing only for Android user $currentUser..."
+    $installOutput = & $Adb shell pm install -r --user $currentUser $remoteApk 2>&1
+    $installExit = $LASTEXITCODE
+    $installText = $installOutput -join [Environment]::NewLine
+    $installOutput | ForEach-Object { Write-Host $_ }
 
-& $Adb shell rm -f $remoteApk | Out-Null
-
-if ($installExit -ne 0 -or (($installOutput -join [Environment]::NewLine) -notmatch '(?m)^Success\s*
-
-# Defensive Samsung cleanup: if an old ezTube copy already exists in a DUAL_APP
-# profile, remove only ezTube from that profile. Do not remove/disable the profile.
-$userList = & $Adb shell pm list users
-$dualUserIds = @()
-foreach ($line in $userList) {
-    if ($line -match 'UserInfo\{(\d+):DUAL_APP:') {
-        $dualUserIds += $Matches[1]
+    if ($installExit -ne 0 -or $installText -notmatch '(?m)^Success\s*$') {
+        throw "APK install failed for user $currentUser"
     }
 }
-
-foreach ($dualUserId in $dualUserIds) {
-    $installed = & $Adb shell pm list packages --user $dualUserId $Package
-    if (($installed -join [Environment]::NewLine) -match [regex]::Escape("package:$Package")) {
-        Write-Host "[INFO] Removing Samsung DUAL_APP ezTube copy from user $dualUserId..."
-        & $Adb shell pm uninstall --user $dualUserId $Package
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to remove ezTube from DUAL_APP user $dualUserId"
-        }
-    }
+finally {
+    & $Adb shell rm -f $remoteApk | Out-Null
 }
 
-Write-Host "[PASS] ezTube installed only for Android user $currentUser."
-)) {
-    throw "APK install failed for user $currentUser"
-}
-
-# Defensive Samsung cleanup: if an old ezTube copy already exists in a DUAL_APP
-# profile, remove only ezTube from that profile. Do not remove/disable the profile.
+# Remove only the ezTube package from Samsung Dual Messenger profiles.
 $userList = & $Adb shell pm list users
 $dualUserIds = @()
 foreach ($line in $userList) {
