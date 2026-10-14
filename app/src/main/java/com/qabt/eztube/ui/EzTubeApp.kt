@@ -2740,24 +2740,10 @@ private fun SearchResult(
     onToggleWatchLater: (() -> Unit)? = null
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    var titleTouchActive by remember(media.id) { mutableStateOf(false) }
     Row(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .pointerInput(media.id) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    titleTouchActive = true
-                    try {
-                        do {
-                            val event = awaitPointerEvent()
-                        } while (event.changes.any { it.pressed })
-                    } finally {
-                        titleTouchActive = false
-                    }
-                }
-            }
             .clickable(enabled = enabled, onClick = onPlay)
             .padding(7.dp), verticalAlignment = Alignment.CenterVertically
     ) {
@@ -2789,20 +2775,10 @@ private fun SearchResult(
         }
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                media.title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = if (titleTouchActive) 1 else 2,
-                softWrap = !titleTouchActive,
-                overflow = if (titleTouchActive) TextOverflow.Clip else TextOverflow.Ellipsis,
-                modifier = if (titleTouchActive) {
-                    Modifier.fillMaxWidth().basicMarquee(
-                        iterations = Int.MAX_VALUE,
-                        spacing = MarqueeSpacing(20.dp),
-                        initialDelayMillis = 120
-                    )
-                } else Modifier.fillMaxWidth()
+            TouchMarqueeTitle(
+                text = media.title,
+                maxLines = 2,
+                fontWeight = FontWeight.SemiBold
             )
             Spacer(Modifier.height(3.dp))
             Text(
@@ -2821,7 +2797,10 @@ private fun SearchResult(
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             progressEntry?.let { entry ->
-                SearchPlaybackProgress(progress = entry.progress)
+                SearchPlaybackProgress(
+                    progress = entry.progress,
+                    durationMs = entry.durationMs
+                )
             }
         }
         Spacer(Modifier.width(2.dp))
@@ -2872,6 +2851,48 @@ private fun SearchResult(
             }
         } else Icon(Icons.Outlined.PlayCircle, "Play")
     }
+}
+
+@Composable
+private fun TouchMarqueeTitle(
+    text: String,
+    maxLines: Int = 1,
+    fontWeight: FontWeight? = null,
+    modifier: Modifier = Modifier
+) {
+    var marqueeActive by remember(text) { mutableStateOf(false) }
+
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = fontWeight,
+        maxLines = if (marqueeActive) 1 else maxLines,
+        softWrap = !marqueeActive,
+        overflow = if (marqueeActive) TextOverflow.Clip else TextOverflow.Ellipsis,
+        modifier = modifier
+            .fillMaxWidth()
+            .pointerInput(text) {
+                detectTapGestures(
+                    onPress = {
+                        marqueeActive = true
+                        tryAwaitRelease()
+                        delay(2_500L)
+                        marqueeActive = false
+                    }
+                )
+            }
+            .then(
+                if (marqueeActive) {
+                    Modifier.basicMarquee(
+                        iterations = Int.MAX_VALUE,
+                        spacing = MarqueeSpacing(20.dp),
+                        initialDelayMillis = 80
+                    )
+                } else {
+                    Modifier
+                }
+            )
+    )
 }
 
 @Composable
@@ -3203,12 +3224,32 @@ private fun CompactMediaRow(
             .clickable(enabled = !resolving, onClick = onClick).padding(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        AsyncImage(media.thumbnailUrl, null, Modifier.size(54.dp).clip(RoundedCornerShape(9.dp)),
-            contentScale = ContentScale.Crop)
+        Box(Modifier.size(54.dp)) {
+            AsyncImage(
+                media.thumbnailUrl,
+                null,
+                Modifier.fillMaxSize().clip(RoundedCornerShape(9.dp)),
+                contentScale = ContentScale.Crop
+            )
+            media.durationSeconds.takeIf { it >= 0 }?.let { seconds ->
+                Text(
+                    formatDuration(seconds),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = androidx.compose.ui.graphics.Color.White,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(3.dp)
+                        .background(
+                            MaterialTheme.colorScheme.scrim.copy(alpha = 0.78f),
+                            RoundedCornerShape(4.dp)
+                        )
+                        .padding(horizontal = 3.dp, vertical = 1.dp)
+                )
+            }
+        }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(media.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
-                overflow = TextOverflow.Ellipsis)
+            TouchMarqueeTitle(text = media.title)
             Text(media.channel, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             val meta = mediaMeta(media)
@@ -3248,7 +3289,10 @@ private fun CompactMediaRow(
 }
 
 @Composable
-private fun SearchPlaybackProgress(progress: Float) {
+private fun SearchPlaybackProgress(
+    progress: Float,
+    durationMs: Long = 0L
+) {
     if (progress <= 0f) return
     val percent = (progress * 100).toInt().coerceIn(1, 100)
     Row(
@@ -3265,6 +3309,14 @@ private fun SearchPlaybackProgress(progress: Float) {
             progress = { progress.coerceIn(0f, 1f) },
             modifier = Modifier.weight(1f).height(3.dp).clip(RoundedCornerShape(50))
         )
+        if (durationMs > 0L) {
+            Spacer(Modifier.width(5.dp))
+            Text(
+                formatDuration(durationMs / 1000L),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -3382,6 +3434,8 @@ private fun ProgressMediaRow(
     entry: HistoryEntry,
     movieProviders: MovieProviderRegistry,
     resolving: Boolean,
+    isWatchLater: Boolean = false,
+    onToggleWatchLater: (() -> Unit)? = null,
     onClick: () -> Unit,
     onPlay: () -> Unit
 ) {
@@ -3401,20 +3455,39 @@ private fun ProgressMediaRow(
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
-                overflow = TextOverflow.Ellipsis)
+            TouchMarqueeTitle(text = entry.title)
             Text(entry.channel, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            SearchPlaybackProgress(entry.progress)
+            SearchPlaybackProgress(
+                progress = entry.progress,
+                durationMs = entry.durationMs
+            )
         }
         if (resolving) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         } else {
-            IconButton(
-                onClick = onPlay,
-                modifier = Modifier.size(30.dp)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(1.dp)
             ) {
-                Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(20.dp))
+                onToggleWatchLater?.let { action ->
+                    IconButton(
+                        onClick = action,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                            if (isWatchLater) "Remove from Watch later" else "Watch later",
+                            Modifier.size(18.dp)
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = onPlay,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(20.dp))
+                }
             }
         }
     }
