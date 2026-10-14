@@ -778,6 +778,47 @@ fun EzTubeApp(
         }
     }
 
+    fun openMovieFromWatchLater(entry: WatchLaterEntry) {
+        val media = entry.toMediaSummary()
+        if (movieProviders.isTitle(entry.mediaId) || entry.mediaId.startsWith("movie-title:")) {
+            openMovie(media) { single, items ->
+                startQueue(single, items)
+            }
+            return
+        }
+        if (!entry.mediaId.startsWith("movie:") || movieDetailLoading) return
+
+        val providerId = entry.mediaId.split(':').getOrNull(1).orEmpty()
+        val lookupTitle = movieLookupTitle(entry.title)
+        if (providerId.isBlank() || lookupTitle.isBlank()) return
+
+        scope.launch {
+            movieDetailLoading = true
+            movieDetailError = null
+            val titleMedia = runCatching {
+                withContext(Dispatchers.IO) {
+                    val results = movieProviders.search(lookupTitle)
+                    results.firstOrNull {
+                        it.id.startsWith("movie-title:$providerId:")
+                    } ?: results.firstOrNull()
+                }
+            }.getOrNull()
+
+            movieDetailLoading = false
+            if (titleMedia == null) {
+                movieDetailError = "Unable to reopen movie detail"
+                return@launch
+            }
+
+            openMovie(
+                media = titleMedia,
+                focusEpisodeId = entry.mediaId
+            ) { single, items ->
+                startQueue(single, items)
+            }
+        }
+    }
+
     fun toggleWatchLater(media: MediaSummary) {
         scope.launch(Dispatchers.IO) {
             if (watchLater.any { it.mediaId == media.id }) {
@@ -1580,6 +1621,7 @@ fun EzTubeApp(
                         modifier = Modifier.fillMaxSize().padding(padding),
                         recent = recent,
                         favorites = favorites,
+                        watchLater = watchLater,
                         personalPlaylists = personalPlaylists,
                         nowPlaying = nowPlaying,
                         movieProviders = movieProviders,
@@ -1639,6 +1681,50 @@ fun EzTubeApp(
                             }
                         },
                         onRemoveFavorite = { entry -> scope.launch(Dispatchers.IO) { favoritesRepo.remove(entry.mediaId) } },
+                        onPlayWatchLater = { entry ->
+                            if (isMovieLibraryItem(entry.mediaId, entry.channel)) {
+                                openMovieFromWatchLater(entry)
+                            } else {
+                                val media = entry.toMediaSummary()
+                                val items = watchLater
+                                    .filterNot {
+                                        movieProviders.isTitle(it.mediaId) ||
+                                            it.mediaId.startsWith("movie-title:")
+                                    }
+                                    .map { it.toMediaSummary() }
+                                startQueue(media, items)
+                            }
+                        },
+                        onPlayAllWatchLater = { shuffled ->
+                            val items = watchLater
+                                .filterNot {
+                                    movieProviders.isTitle(it.mediaId) ||
+                                        it.mediaId.startsWith("movie-title:")
+                                }
+                                .map { it.toMediaSummary() }
+                                .let { if (shuffled) it.shuffled() else it }
+                            if (items.isNotEmpty()) {
+                                startQueue(items.first(), items)
+                            }
+                        },
+                        onRemoveWatchLater = { entry ->
+                            scope.launch(Dispatchers.IO) {
+                                watchLaterRepo.remove(entry.mediaId)
+                            }
+                        },
+                        onClearWatchedLater = {
+                            val progressById = recent.associateBy { it.mediaId }
+                            val watchedIds = watchLater.mapNotNull { entry ->
+                                progressById[entry.mediaId]
+                                    ?.takeIf { it.durationMs > 0L && it.progress >= 0.95f }
+                                    ?.mediaId
+                            }
+                            if (watchedIds.isNotEmpty()) {
+                                scope.launch(Dispatchers.IO) {
+                                    watchLaterRepo.removeMany(watchedIds)
+                                }
+                            }
+                        },
                         onCreatePlaylist = { name ->
                             personalPlaylists = personalPlaylistStore.create(name)
                         },
