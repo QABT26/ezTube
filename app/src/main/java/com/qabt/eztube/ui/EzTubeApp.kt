@@ -589,6 +589,14 @@ fun EzTubeApp(
         queueIndex = queue.indexOfFirst { it.id == media.id }.coerceAtLeast(0)
         playbackPrefs.saveQueue(queue, queueIndex)
         playMedia(media, startPositionMs)
+
+        // One presentation rule for every entry point (Home/Search/Library/etc):
+        // YouTube in VIDEO mode opens the full Now Playing screen immediately.
+        // YouTube in AUDIO mode keeps the user in context and uses MiniPlayer.
+        // Movie/local video are video-first and therefore open Now Playing.
+        val isMovie = media.id.startsWith("movie:")
+        val isLocalVideo = media.channel == "Local video"
+        showPlayer = isMovie || isLocalVideo || videoMode
     }
 
     LaunchedEffect(externalMedia?.id, controller) {
@@ -600,7 +608,6 @@ fun EzTubeApp(
             playbackPrefs.saveVideoMode(localVideo)
         }
         startQueue(media, listOf(media))
-        if (localVideo) showPlayer = true
         onExternalMediaConsumed()
     }
 
@@ -1497,9 +1504,6 @@ fun EzTubeApp(
                                     listOf(media),
                                     startPositionMs = entry.positionMs.coerceAtLeast(0L)
                                 )
-                                if (videoMode) {
-                                    showPlayer = true
-                                }
                             }
                         },
                         onPlay = { media, items ->
@@ -1537,9 +1541,6 @@ fun EzTubeApp(
                                 items,
                                 startPositionMs = entry.positionMs.coerceAtLeast(0L)
                             )
-                            if (!isMovie && videoMode) {
-                                showPlayer = true
-                            }
                         },
                         onOpenMovie = { entry -> openMovieFromHistory(entry) },
                         onOpenFavoriteMovie = { entry -> openMovieFromFavorite(entry) },
@@ -1556,9 +1557,6 @@ fun EzTubeApp(
                                     .map { it.toMediaSummary() }
                             }
                             startQueue(media, items)
-                            if (!isMovie && videoMode) {
-                                showPlayer = true
-                            }
                         },
                         onPlayAllYouTubeFavorites = {
                             val items = favorites
@@ -1568,9 +1566,6 @@ fun EzTubeApp(
                                 .map { it.toMediaSummary() }
                             if (items.isNotEmpty()) {
                                 startQueue(items.first(), items)
-                                if (videoMode) {
-                                    showPlayer = true
-                                }
                             }
                         },
                         onPlayAllMovieFavorites = {
@@ -3949,10 +3944,29 @@ private fun formatDuration(seconds: Long): String {
     else "%d:%02d".format(minutes, secs)
 }
 
+private fun displayUploadDate(text: String?): String? {
+    val value = text?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    if (Regex("""^\d{4}$""").matches(value)) return value
+
+    // PipePipe/NewPipe can occasionally return YouTube's relative-date label in an
+    // unexpected locale (for example "9 iminyaka edlule"). Do not leak that raw
+    // extractor locale into ezTube. Keep only English/Vietnamese labels that the UI
+    // currently understands; duration and view count remain available regardless.
+    val normalized = value.lowercase()
+    val supportedDateWords = listOf(
+        "ago", "today", "yesterday",
+        "minute", "minutes", "hour", "hours", "day", "days",
+        "week", "weeks", "month", "months", "year", "years",
+        "trước", "hôm nay", "hôm qua",
+        "phút", "giờ", "ngày", "tuần", "tháng", "năm"
+    )
+    return value.takeIf { supportedDateWords.any(normalized::contains) }
+}
+
 private fun mediaMeta(media: MediaSummary, includeDuration: Boolean = true): String =
     buildList {
         if (media.viewCount >= 0) add(formatViews(media.viewCount))
-        media.uploadDateText?.takeIf { it.isNotBlank() }?.let(::add)
+        displayUploadDate(media.uploadDateText)?.let(::add)
         if (includeDuration && media.durationSeconds >= 0) add(formatDuration(media.durationSeconds))
     }.joinToString(" · ")
 
