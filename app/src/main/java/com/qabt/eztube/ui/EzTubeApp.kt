@@ -3385,6 +3385,7 @@ private fun LibraryScreen(
     modifier: Modifier,
     recent: List<HistoryEntry>,
     favorites: List<FavoriteEntry>,
+    watchLater: List<WatchLaterEntry>,
     personalPlaylists: List<PersonalPlaylist>,
     nowPlaying: MediaSummary?,
     movieProviders: MovieProviderRegistry,
@@ -3397,6 +3398,10 @@ private fun LibraryScreen(
     onPlayAllYouTubeFavorites: () -> Unit,
     onPlayAllMovieFavorites: () -> Unit,
     onRemoveFavorite: (FavoriteEntry) -> Unit,
+    onPlayWatchLater: (WatchLaterEntry) -> Unit,
+    onPlayAllWatchLater: (Boolean) -> Unit,
+    onRemoveWatchLater: (WatchLaterEntry) -> Unit,
+    onClearWatchedLater: () -> Unit,
     onCreatePlaylist: (String) -> Unit,
     onRenamePlaylist: (String, String) -> Unit,
     onDeletePlaylist: (String) -> Unit,
@@ -3411,6 +3416,7 @@ private fun LibraryScreen(
     var showAllHistory by remember { mutableStateOf(false) }
     var showAllYouTubeFavorites by remember { mutableStateOf(false) }
     var showAllMovieFavorites by remember { mutableStateOf(false) }
+    var showAllWatchLater by remember { mutableStateOf(false) }
     var expandedPlaylistId by remember { mutableStateOf<String?>(null) }
     var showCreatePlaylist by remember { mutableStateOf(false) }
     var renamePlaylist by remember { mutableStateOf<PersonalPlaylist?>(null) }
@@ -3425,6 +3431,13 @@ private fun LibraryScreen(
         recent.filter { entry ->
             entry.durationMs <= 0L || entry.progress < 0.95f
         }.take(3)
+    }
+    val historyByMediaId = remember(recent) { recent.associateBy { it.mediaId } }
+    val watchedLaterCount = remember(watchLater, recent) {
+        watchLater.count { entry ->
+            historyByMediaId[entry.mediaId]
+                ?.let { it.durationMs > 0L && it.progress >= 0.95f } == true
+        }
     }
 
     LazyColumn(
@@ -3626,6 +3639,148 @@ private fun LibraryScreen(
                         IconButton(onClick = { onRemoveFavorite(entry) }) {
                             Icon(Icons.Outlined.Favorite, "Remove favorite")
                         }
+                    }
+                }
+            }
+        }
+
+        item(key = "watch-later-heading") {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Watch later",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        watchLater.size.toString() + " saved" +
+                            if (watchedLaterCount > 0) " · $watchedLaterCount watched" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (watchLater.size > 5) {
+                    TextButton(
+                        onClick = { showAllWatchLater = !showAllWatchLater },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                    ) {
+                        Text(if (showAllWatchLater) "Show less" else "View all")
+                    }
+                }
+            }
+            if (watchLater.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = { onPlayAllWatchLater(false) },
+                        enabled = resolvingId == null,
+                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text("Play all")
+                    }
+                    FilledTonalButton(
+                        onClick = { onPlayAllWatchLater(true) },
+                        enabled = resolvingId == null,
+                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Outlined.Shuffle, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text("Shuffle")
+                    }
+                    TextButton(
+                        onClick = onClearWatchedLater,
+                        enabled = watchedLaterCount > 0,
+                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Outlined.DoneAll, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text("Clear watched")
+                    }
+                }
+            }
+        }
+
+        if (watchLater.isEmpty()) {
+            item(key = "watch-later-empty") {
+                Text(
+                    "Save videos and movies here to watch them later.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            items(
+                if (showAllWatchLater) watchLater else watchLater.take(5),
+                key = { "watch-later-" + it.mediaId }
+            ) { entry ->
+                val progressEntry = historyByMediaId[entry.mediaId]
+                Row(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable(enabled = resolvingId == null) {
+                            onPlayWatchLater(entry)
+                        }
+                        .padding(7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    LibraryThumbnail(
+                        mediaId = entry.mediaId,
+                        title = entry.title,
+                        channel = entry.channel,
+                        thumbnailUrl = entry.thumbnailUrl,
+                        movieProviders = movieProviders,
+                        modifier = Modifier.size(58.dp),
+                        cornerRadius = 9
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            entry.title,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            entry.channel,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (progressEntry != null) {
+                            SearchPlaybackProgress(progress = progressEntry.progress)
+                        } else {
+                            Text(
+                                "Not started",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    if (resolvingId == entry.mediaId) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        IconButton(
+                            onClick = { onPlayWatchLater(entry) },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(20.dp))
+                        }
+                    }
+                    IconButton(
+                        onClick = { onRemoveWatchLater(entry) },
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(Icons.Outlined.BookmarkRemove, "Remove from Watch later", Modifier.size(19.dp))
                     }
                 }
             }
