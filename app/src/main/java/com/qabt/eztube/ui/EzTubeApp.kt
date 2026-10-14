@@ -75,6 +75,7 @@ import com.qabt.eztube.playback.PlaybackSource
 import com.qabt.eztube.playback.PlaybackSourceResolver
 import com.qabt.eztube.playback.PlaybackRuntimePolicy
 import com.qabt.eztube.playback.PlayerPresentationPolicy
+import com.qabt.eztube.playback.QueueLimitPolicy
 import com.qabt.eztube.movie.MovieProviderRegistry
 import com.qabt.eztube.movie.MovieDetail
 import com.qabt.eztube.youtube.MediaSummary
@@ -463,14 +464,22 @@ fun EzTubeApp(
     fun queueForStart(media: MediaSummary, sourceItems: List<MediaSummary>): List<MediaSummary> {
         // Movie episode queues represent an ordered series/server. Never mix or
         // shuffle them with recommendations; Next/Previous must stay episodic.
-        if (media.id.startsWith("movie:")) return sourceItems.distinctBy { it.id }
-        if (nextMode == NextMode.LIST) return sourceItems
-        val pool = (sourceItems + homeSuggestions + trending + searchResults)
-            .distinctBy { it.id }
-            .filterNot { it.id == media.id }
-        if (pool.isEmpty()) return listOf(media)
-        val seed = (media.id.hashCode().toLong() shl 32) xor System.nanoTime()
-        return listOf(media) + pool.shuffled(kotlin.random.Random(seed))
+        val candidate = when {
+            media.id.startsWith("movie:") -> sourceItems.distinctBy { it.id }
+            nextMode == NextMode.LIST -> sourceItems.distinctBy { it.id }
+            else -> {
+                val pool = (sourceItems + homeSuggestions + trending + searchResults)
+                    .distinctBy { it.id }
+                    .filterNot { it.id == media.id }
+                if (pool.isEmpty()) {
+                    listOf(media)
+                } else {
+                    val seed = (media.id.hashCode().toLong() shl 32) xor System.nanoTime()
+                    listOf(media) + pool.shuffled(kotlin.random.Random(seed))
+                }
+            }
+        }
+        return QueueLimitPolicy.bound(candidate, media.id)
     }
 
     fun notifyQueueChanged() {
@@ -774,8 +783,8 @@ fun EzTubeApp(
         val updated = queue.filterNot { it.id == media.id }.toMutableList()
         val current = updated.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
         updated.add((current + 1).coerceAtMost(updated.size), media)
-        queue = updated
-        queueIndex = current
+        queue = QueueLimitPolicy.bound(updated, currentId)
+        queueIndex = queue.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
         playbackPrefs.saveQueue(queue, queueIndex)
         notifyQueueChanged()
     }
@@ -786,7 +795,9 @@ fun EzTubeApp(
             return
         }
         if (queue.none { it.id == media.id }) {
-            queue = queue + media
+            val currentId = queue[queueIndex].id
+            queue = QueueLimitPolicy.bound(queue + media, currentId)
+            queueIndex = queue.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
             playbackPrefs.saveQueue(queue, queueIndex)
             // If the current item used to be the end of the queue, the service needs
             // an immediate refresh so autoplay can preload this newly appended item.
@@ -859,10 +870,22 @@ fun EzTubeApp(
     LaunchedEffect(Unit) {
         playbackPrefs.loadQueue()?.let { (savedQueue, savedIndex) ->
             val normalizedQueue = savedQueue.map(::normalizeMoviePresentation)
-            queue = normalizedQueue
-            queueIndex = savedIndex
-            if (normalizedQueue != savedQueue) {
-                playbackPrefs.saveQueue(normalizedQueue, savedIndex)
+            val savedCurrentId = normalizedQueue
+                .getOrNull(savedIndex)
+                ?.id
+                ?: normalizedQueue.firstOrNull()?.id
+            val boundedQueue = if (savedCurrentId != null) {
+                QueueLimitPolicy.bound(normalizedQueue, savedCurrentId)
+            } else {
+                emptyList()
+            }
+            queue = boundedQueue
+            queueIndex = savedCurrentId
+                ?.let { id -> boundedQueue.indexOfFirst { it.id == id } }
+                ?.takeIf { it >= 0 }
+                ?: 0
+            if (boundedQueue != savedQueue || queueIndex != savedIndex) {
+                playbackPrefs.saveQueue(boundedQueue, queueIndex)
             }
         }
         playbackPrefs.load()?.let { (media, position) ->
