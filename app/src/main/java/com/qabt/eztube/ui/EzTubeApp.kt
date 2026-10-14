@@ -70,6 +70,7 @@ import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
 import com.qabt.eztube.playback.PlaybackSource
 import com.qabt.eztube.playback.PlaybackSourceResolver
+import com.qabt.eztube.playback.PlaybackRuntimePolicy
 import com.qabt.eztube.movie.MovieProviderRegistry
 import com.qabt.eztube.movie.MovieDetail
 import com.qabt.eztube.youtube.MediaSummary
@@ -719,8 +720,10 @@ fun EzTubeApp(
         // it is armed even if the user changes Repeat after arming Sleep End. Once End
         // fires (or is turned off), the user's saved repeat choice becomes active again.
         controller?.repeatMode = if (
-            sleepMinutes != -1 &&
-            repeatMode == RepeatMode.ONE
+            PlaybackRuntimePolicy.nativeRepeatOneEnabled(
+                repeatMode = repeatMode.ordinal,
+                sleepEndCurrent = sleepMinutes == -1
+            )
         ) {
             Player.REPEAT_MODE_ONE
         } else {
