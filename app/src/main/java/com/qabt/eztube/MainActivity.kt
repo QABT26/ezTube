@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.util.Rational
+import kotlin.math.roundToInt
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +25,7 @@ class MainActivity : ComponentActivity() {
     private val externalMedia = mutableStateOf<MediaSummary?>(null)
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var mediaController: MediaController? = null
+    private val pipMode = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,7 +34,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             EzTubeApp(
                 externalMedia = externalMedia.value,
-                onExternalMediaConsumed = { externalMedia.value = null }
+                onExternalMediaConsumed = { externalMedia.value = null },
+                isInPictureInPictureMode = pipMode.value
             )
         }
     }
@@ -48,7 +51,19 @@ class MainActivity : ComponentActivity() {
         val future = MediaController.Builder(this, token).buildAsync()
         controllerFuture = future
         future.addListener({
-            runCatching { future.get() }.onSuccess { mediaController = it }
+            runCatching { future.get() }.onSuccess { controller ->
+                mediaController = controller
+                controller.addListener(object : Player.Listener {
+                    override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            updatePipParams(
+                                autoEnter = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                    isInPictureInPictureMode.not()
+                            )
+                        }
+                    }
+                })
+            }
         }, mainExecutor)
     }
 
@@ -94,15 +109,34 @@ class MainActivity : ComponentActivity() {
             controller.playWhenReady
     }
 
-    private fun updatePipParams(autoEnter: Boolean) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    private fun currentPipAspectRatio(): Rational {
+        val size = mediaController?.videoSize
+        if (size != null && size.width > 0 && size.height > 0) {
+            val correctedWidth = (size.width * size.pixelWidthHeightRatio)
+                .roundToInt()
+                .coerceAtLeast(1)
+            val ratio = correctedWidth.toFloat() / size.height.toFloat()
+            // Android PiP only accepts aspect ratios in the platform-supported range.
+            if (ratio in (1f / 2.39f)..2.39f) {
+                return Rational(correctedWidth, size.height)
+            }
+        }
+        return Rational(16, 9)
+    }
+
+    private fun buildPipParams(autoEnter: Boolean): PictureInPictureParams {
         val builder = PictureInPictureParams.Builder()
-            .setAspectRatio(Rational(16, 9))
+            .setAspectRatio(currentPipAspectRatio())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setAutoEnterEnabled(autoEnter)
             builder.setSeamlessResizeEnabled(true)
         }
-        setPictureInPictureParams(builder.build())
+        return builder.build()
+    }
+
+    private fun updatePipParams(autoEnter: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        setPictureInPictureParams(buildPipParams(autoEnter))
     }
 
     override fun onUserLeaveHint() {
@@ -110,9 +144,7 @@ class MainActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 updatePipParams(true)
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val params = PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(16, 9))
-                    .build()
+                val params = buildPipParams(autoEnter = false)
                 setPictureInPictureParams(params)
                 enterPictureInPictureMode(params)
             }
@@ -125,6 +157,7 @@ class MainActivity : ComponentActivity() {
         newConfig: Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pipMode.value = isInPictureInPictureMode
         if (!isInPictureInPictureMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             updatePipParams(false)
         }
