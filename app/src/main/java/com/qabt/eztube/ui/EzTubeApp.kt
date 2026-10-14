@@ -50,6 +50,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.localization.ContentCountry
+import org.schabi.newpipe.extractor.localization.Localization
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -190,6 +193,8 @@ fun EzTubeApp(
     var homeRefreshToken by remember { mutableIntStateOf(0) }
     var trendingTopic by remember { mutableStateOf(playbackPrefs.loadTrendingTopic()) }
     var trendingLanguage by remember { mutableStateOf(playbackPrefs.loadTrendingLanguage()) }
+    var metadataLanguage by remember { mutableStateOf(playbackPrefs.loadMetadataLanguage()) }
+    var contentRegion by remember { mutableStateOf(playbackPrefs.loadContentRegion()) }
     val searchListState = rememberLazyListState()
     val homeListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
@@ -1381,6 +1386,26 @@ fun EzTubeApp(
                 onTrendingTopic = { trendingTopic = it; playbackPrefs.saveTrendingTopic(it) },
                 trendingLanguage = trendingLanguage,
                 onTrendingLanguage = { trendingLanguage = it; playbackPrefs.saveTrendingLanguage(it) },
+                metadataLanguage = metadataLanguage,
+                onMetadataLanguage = { language ->
+                    metadataLanguage = language
+                    playbackPrefs.saveMetadataLanguage(language)
+                    NewPipe.setupLocalization(
+                        Localization(metadataLanguage, contentRegion),
+                        ContentCountry(contentRegion)
+                    )
+                    homeRefreshToken += 1
+                },
+                contentRegion = contentRegion,
+                onContentRegion = { region ->
+                    contentRegion = region
+                    playbackPrefs.saveContentRegion(region)
+                    NewPipe.setupLocalization(
+                        Localization(metadataLanguage, contentRegion),
+                        ContentCountry(contentRegion)
+                    )
+                    homeRefreshToken += 1
+                },
                 developerUnlocked = developerUnlocked,
                 developerMode = developerMode,
                 onDeveloperMode = {
@@ -1651,6 +1676,10 @@ private fun SettingsScreen(
     onTrendingTopic: (String) -> Unit,
     trendingLanguage: String,
     onTrendingLanguage: (String) -> Unit,
+    metadataLanguage: String,
+    onMetadataLanguage: (String) -> Unit,
+    contentRegion: String,
+    onContentRegion: (String) -> Unit,
     developerUnlocked: Boolean,
     developerMode: Boolean,
     onDeveloperMode: (Boolean) -> Unit,
@@ -1729,6 +1758,53 @@ private fun SettingsScreen(
                     )
                 }
                 Switch(checked = shuffleEnabled, onCheckedChange = onShuffle)
+            }
+
+            HorizontalDivider()
+            Text("YouTube", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+
+            Column {
+                Text("Metadata language", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Language used for YouTube text metadata such as relative upload dates.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf("en" to "English", "vi" to "Tiếng Việt").forEach { (code, label) ->
+                        FilterChip(
+                            selected = metadataLanguage == code,
+                            onClick = { onMetadataLanguage(code) },
+                            label = { Text(label, maxLines = 1) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Column {
+                Text("Content region", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Controls the regional YouTube catalogue and feed. This is separate from metadata language.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    listOf("VN", "US", "GB", "KR", "JP").forEach { region ->
+                        CompactPresetButton(
+                            region,
+                            contentRegion == region,
+                            { onContentRegion(region) },
+                            Modifier.weight(1f)
+                        )
+                    }
+                }
             }
 
             HorizontalDivider()
