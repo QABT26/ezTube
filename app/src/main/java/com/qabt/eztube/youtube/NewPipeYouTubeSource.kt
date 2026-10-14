@@ -318,24 +318,24 @@ class NewPipeYouTubeSource : YouTubeSource {
 
         return if (language == "vi") {
             when (unit) {
-                "minute" -> if (value == 0L) "vừa đăng" else "$" + "value phút trước"
-                "hour" -> "$" + "value giờ trước"
-                "day" -> "$" + "value ngày trước"
-                "week" -> "$" + "value tuần trước"
-                "month" -> "$" + "value tháng trước"
-                else -> "$" + "value năm trước"
+                "minute" -> if (value == 0L) "vừa đăng" else "$value phút trước"
+                "hour" -> "$value giờ trước"
+                "day" -> "$value ngày trước"
+                "week" -> "$value tuần trước"
+                "month" -> "$value tháng trước"
+                else -> "$value năm trước"
             }
         } else {
             fun plural(singular: String): String =
                 if (value == 1L) singular else singular + "s"
 
             when (unit) {
-                "minute" -> if (value == 0L) "just now" else "$" + "value " + plural("minute") + " ago"
-                "hour" -> "$" + "value " + plural("hour") + " ago"
-                "day" -> "$" + "value " + plural("day") + " ago"
-                "week" -> "$" + "value " + plural("week") + " ago"
-                "month" -> "$" + "value " + plural("month") + " ago"
-                else -> "$" + "value " + plural("year") + " ago"
+                "minute" -> if (value == 0L) "just now" else "$value ${plural("minute")} ago"
+                "hour" -> "$value ${plural("hour")} ago"
+                "day" -> "$value ${plural("day")} ago"
+                "week" -> "$value ${plural("week")} ago"
+                "month" -> "$value ${plural("month")} ago"
+                else -> "$value ${plural("year")} ago"
             }
         }
     }
