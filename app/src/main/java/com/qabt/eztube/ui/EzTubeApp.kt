@@ -1203,40 +1203,53 @@ fun EzTubeApp(
                         if (queueIndex in queue.indices) {
                             val current = queue[queueIndex]
                             if (current.id.startsWith("movie:")) {
-                                // Movie queues are ordered episodes/servers. Do not replace
-                                // them with unrelated search results; just resync the owner.
+                                // Movie queues are ordered episodes/servers. Keep their
+                                // episode ordering intact and only resync playback ownership.
                                 playbackPrefs.saveQueue(queue, queueIndex)
                                 notifyQueueChanged()
                             } else {
                                 scope.launch {
-                                    val stablePrefix = queue.take(queueIndex + 1)
-                                    val prefixIds = stablePrefix.mapTo(mutableSetOf()) { it.id }
                                     val query = when {
                                         searchQuery.isNotBlank() &&
                                             searchResults.any { it.id == current.id } -> searchQuery
                                         current.channel.isNotBlank() -> current.channel
                                         else -> current.title
                                     }
+
                                     val fresh = runCatching {
                                         withContext(Dispatchers.IO) { source.search(query) }
                                     }.getOrDefault(emptyList())
                                         .map(::normalizeMoviePresentation)
                                         .distinctBy { it.id }
-                                        .filterNot { it.id in prefixIds }
 
                                     if (fresh.isNotEmpty()) {
-                                        val upcoming = if (nextMode == NextMode.RECOMMENDED) {
-                                            fresh.shuffled()
-                                        } else {
-                                            fresh
+                                        // Reload replaces the complete logical queue, not only
+                                        // the tail. Keep the currently playing media represented
+                                        // in the new queue so playback can continue uninterrupted.
+                                        val rebuilt = fresh.toMutableList()
+                                        var currentIndex = rebuilt.indexOfFirst { it.id == current.id }
+                                        if (currentIndex < 0) {
+                                            rebuilt.add(0, current)
+                                            currentIndex = 0
                                         }
-                                        queue = stablePrefix + upcoming.take(30)
-                                        queueIndex = stablePrefix.lastIndex
+
+                                        val replacement = if (nextMode == NextMode.RECOMMENDED) {
+                                            val head = rebuilt[currentIndex]
+                                            val rest = rebuilt
+                                                .filterNot { it.id == head.id }
+                                                .shuffled()
+                                            listOf(head) + rest
+                                        } else {
+                                            rebuilt
+                                        }
+
+                                        queue = replacement.take(30)
+                                        queueIndex = queue.indexOfFirst { it.id == current.id }
+                                            .coerceAtLeast(0)
                                         playbackPrefs.saveQueue(queue, queueIndex)
                                         notifyQueueChanged()
                                     } else {
-                                        // Even if the network refresh returns nothing, keep
-                                        // the current logical queue and resync the service.
+                                        // If refresh returns nothing, keep the previous queue.
                                         playbackPrefs.saveQueue(queue, queueIndex)
                                         notifyQueueChanged()
                                     }
