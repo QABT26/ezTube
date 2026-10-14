@@ -171,12 +171,17 @@ class PlaybackService : MediaSessionService() {
                         .setAvailableSessionCommands(sessionCommands)
                         .setAvailablePlayerCommands(playerCommands)
 
+                    // Samsung/Android lockscreen media controls expose the discrete
+                    // previous/next buttons reliably when the buttons are backed by the
+                    // MEDIA_ITEM commands. onPlayerCommandRequest below still routes both
+                    // command families through PlaybackQueueManager, so the logical queue
+                    // remains the single playback owner and native timeline mutation is rejected.
                     val previousButton = CommandButton.Builder(CommandButton.ICON_PREVIOUS)
-                        .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
+                        .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
                         .setSlots(CommandButton.SLOT_BACK)
                         .build()
                     val nextButton = CommandButton.Builder(CommandButton.ICON_NEXT)
-                        .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
+                        .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
                         .setSlots(CommandButton.SLOT_FORWARD)
                         .build()
                     result.setMediaButtonPreferences(listOf(previousButton, nextButton))
