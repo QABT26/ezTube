@@ -604,6 +604,79 @@ fun EzTubeApp(
         onExternalMediaConsumed()
     }
 
+    fun continueMovieFromHistory(entry: HistoryEntry) {
+        if (!entry.mediaId.startsWith("movie:")) return
+
+        val parts = entry.mediaId.split(':', limit = 5)
+        val providerId = parts.getOrNull(1).orEmpty()
+        val movieSlug = parts.getOrNull(2).orEmpty()
+        if (providerId.isBlank() || movieSlug.isBlank()) {
+            val fallback = entry.toMediaSummary()
+            startQueue(
+                fallback,
+                listOf(fallback),
+                startPositionMs = entry.positionMs.coerceAtLeast(0L)
+            )
+            showPlayer = true
+            return
+        }
+
+        scope.launch {
+            val detail = runCatching {
+                withContext(Dispatchers.IO) {
+                    movieProviders.detail(
+                        mediaId = "movie-title:$providerId:$movieSlug",
+                        mediaTitle = movieLookupTitle(entry.title)
+                    )
+                }
+            }.getOrNull()
+
+            if (detail == null) {
+                val fallback = entry.toMediaSummary()
+                startQueue(
+                    fallback,
+                    listOf(fallback),
+                    startPositionMs = entry.positionMs.coerceAtLeast(0L)
+                )
+                showPlayer = true
+                return@launch
+            }
+
+            val selectedRef = detail.episodes.firstOrNull {
+                it.stableId == entry.mediaId
+            }
+            if (selectedRef == null) {
+                val fallback = entry.toMediaSummary()
+                startQueue(
+                    fallback,
+                    listOf(fallback),
+                    startPositionMs = entry.positionMs.coerceAtLeast(0L)
+                )
+                showPlayer = true
+                return@launch
+            }
+
+            // Continue Watching must restore the logical episode list, not a one-item
+            // queue. Keep only the selected server because alternate servers are mirrors,
+            // while episodes inside that server are the real sequential queue.
+            val serverQueue = detail.episodes
+                .filter { it.serverName == selectedRef.serverName }
+                .map { it.toMediaSummary() }
+                .distinctBy { it.id }
+
+            val selectedMedia = serverQueue.firstOrNull {
+                it.id == entry.mediaId
+            } ?: selectedRef.toMediaSummary()
+
+            startQueue(
+                selectedMedia,
+                serverQueue.ifEmpty { listOf(selectedMedia) },
+                startPositionMs = entry.positionMs.coerceAtLeast(0L)
+            )
+            showPlayer = true
+        }
+    }
+
     fun openMovieFromHistory(entry: HistoryEntry) {
         if (!entry.mediaId.startsWith("movie:") || movieDetailLoading) return
         val providerId = entry.mediaId.split(':').getOrNull(1).orEmpty()
@@ -1415,14 +1488,18 @@ fun EzTubeApp(
                         onRefresh = { homeRefreshToken += 1 },
                         resolvingId = resolvingId,
                         onContinue = { entry ->
-                            val media = entry.toMediaSummary()
-                            startQueue(
-                                media,
-                                listOf(media),
-                                startPositionMs = entry.positionMs.coerceAtLeast(0L)
-                            )
-                            if (isMovieLibraryItem(entry.mediaId, entry.channel) || videoMode) {
-                                showPlayer = true
+                            if (isMovieLibraryItem(entry.mediaId, entry.channel)) {
+                                continueMovieFromHistory(entry)
+                            } else {
+                                val media = entry.toMediaSummary()
+                                startQueue(
+                                    media,
+                                    listOf(media),
+                                    startPositionMs = entry.positionMs.coerceAtLeast(0L)
+                                )
+                                if (videoMode) {
+                                    showPlayer = true
+                                }
                             }
                         },
                         onPlay = { media, items ->
