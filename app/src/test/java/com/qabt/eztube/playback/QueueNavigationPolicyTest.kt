@@ -49,9 +49,17 @@ class QueueNavigationPolicyTest {
         assertEquals(0, QueueNavigationPolicy.manualTarget(3, 5, -3, 0))
     }
 
-    @Test fun oversizedCoalescedDeltaDoesNotInventAnInvalidTarget() {
-        assertNull(QueueNavigationPolicy.manualTarget(1, 5, 10, 0))
-        assertNull(QueueNavigationPolicy.manualTarget(3, 5, -10, 0))
+    @Test fun coalescedDeltaStopsAtEdgesWithoutRepeatAll() {
+        assertEquals(4, QueueNavigationPolicy.manualTarget(1, 5, 10, 0))
+        assertEquals(0, QueueNavigationPolicy.manualTarget(3, 5, -10, 0))
+        assertNull(QueueNavigationPolicy.manualTarget(4, 5, 3, 0))
+        assertNull(QueueNavigationPolicy.manualTarget(0, 5, -3, 0))
+    }
+
+    @Test fun coalescedDeltaWrapsByEveryTapWithRepeatAll() {
+        assertEquals(1, QueueNavigationPolicy.manualTarget(3, 4, 2, 2))
+        assertEquals(2, QueueNavigationPolicy.manualTarget(0, 4, -2, 2))
+        assertEquals(3, QueueNavigationPolicy.manualTarget(1, 4, 10, 2))
     }
 
     @Test fun invalidCurrentAndEmptyQueueNeverNavigate() {
