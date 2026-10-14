@@ -3807,12 +3807,6 @@ private fun LibraryScreen(
                             verticalArrangement = Arrangement.spacedBy((-1).dp)
                         ) {
                             IconButton(
-                                onClick = { onPlayFavorite(entry) },
-                                modifier = Modifier.size(26.dp)
-                            ) {
-                                Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
-                            }
-                            IconButton(
                                 onClick = { onRemoveFavorite(entry) },
                                 modifier = Modifier.size(26.dp)
                             ) {
@@ -3821,6 +3815,12 @@ private fun LibraryScreen(
                                     "Remove favorite",
                                     Modifier.size(17.dp)
                                 )
+                            }
+                            IconButton(
+                                onClick = { onPlayFavorite(entry) },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
                             }
                         }
                     }
@@ -3901,16 +3901,6 @@ private fun LibraryScreen(
                             verticalArrangement = Arrangement.spacedBy((-1).dp)
                         ) {
                             IconButton(
-                                onClick = { onPlayFavorite(entry) },
-                                modifier = Modifier.size(26.dp)
-                            ) {
-                                Icon(
-                                    Icons.Outlined.PlayArrow,
-                                    "Play movie",
-                                    Modifier.size(18.dp)
-                                )
-                            }
-                            IconButton(
                                 onClick = { onRemoveFavorite(entry) },
                                 modifier = Modifier.size(26.dp)
                             ) {
@@ -3918,6 +3908,16 @@ private fun LibraryScreen(
                                     Icons.Outlined.Favorite,
                                     "Remove favorite",
                                     Modifier.size(17.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { onPlayFavorite(entry) },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.PlayArrow,
+                                    "Play movie",
+                                    Modifier.size(18.dp)
                                 )
                             }
                         }
@@ -4037,12 +4037,6 @@ private fun LibraryScreen(
                             verticalArrangement = Arrangement.spacedBy((-1).dp)
                         ) {
                             IconButton(
-                                onClick = { onPlayWatchLater(entry) },
-                                modifier = Modifier.size(26.dp)
-                            ) {
-                                Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
-                            }
-                            IconButton(
                                 onClick = { onRemoveWatchLater(entry) },
                                 modifier = Modifier.size(26.dp)
                             ) {
@@ -4051,6 +4045,12 @@ private fun LibraryScreen(
                                     "Remove from Watch later",
                                     Modifier.size(17.dp)
                                 )
+                            }
+                            IconButton(
+                                onClick = { onPlayWatchLater(entry) },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
                             }
                         }
                     }
@@ -4351,16 +4351,16 @@ private fun LibraryScreen(
                         verticalArrangement = Arrangement.spacedBy((-1).dp)
                     ) {
                         IconButton(
-                            onClick = { onPlay(entry) },
-                            modifier = Modifier.size(26.dp)
-                        ) {
-                            Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(18.dp))
-                        }
-                        IconButton(
                             onClick = { onDelete(entry) },
                             modifier = Modifier.size(26.dp)
                         ) {
                             Icon(Icons.Outlined.Close, "Remove from history", Modifier.size(16.dp))
+                        }
+                        IconButton(
+                            onClick = { onPlay(entry) },
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(18.dp))
                         }
                     }
                 }
