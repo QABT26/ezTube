@@ -118,7 +118,7 @@ class PlaybackQueueManager(
     ): ResolvedPlayback {
         val splitVideo = playback.videoStreams
             .let { streams ->
-                val target = preferences.loadVideoQuality().targetHeight
+                val target = preferences.effectiveVideoQuality().targetHeight
                 when {
                     streams.isEmpty() -> null
                     target == null -> streams.maxWithOrNull(
@@ -299,7 +299,7 @@ class PlaybackQueueManager(
     private fun applyAdaptiveVideoQualityConstraint(
         useCurrentTracks: Boolean = true
     ) {
-        val targetHeight = preferences.loadVideoQuality().targetHeight
+        val targetHeight = preferences.effectiveVideoQuality().targetHeight
         val builder = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
             .setForceHighestSupportedBitrate(false)
@@ -610,7 +610,7 @@ class PlaybackQueueManager(
         if (activePlaybackEngine == PlaybackService.ENGINE_SABR && sabrQualityWarmPending) {
             return
         }
-        if (preferences.loadVideoQuality().targetHeight == null) return
+        if (preferences.effectiveVideoQuality().targetHeight == null) return
         applyAdaptiveVideoQualityConstraint()
     }
 
@@ -624,7 +624,7 @@ class PlaybackQueueManager(
 
             val requestGeneration = ++sabrQualityWarmGeneration
             sabrQualityWarmPending = true
-            val targetHeight = preferences.loadVideoQuality().targetHeight
+            val targetHeight = preferences.effectiveVideoQuality().targetHeight
             val warmPositionMs = maxOf(
                 positionMs.coerceAtLeast(0L),
                 player.currentPosition.coerceAtLeast(0L)
@@ -676,7 +676,7 @@ class PlaybackQueueManager(
             Player.STATE_ENDED -> "ENDED"
             else -> player.playbackState.toString()
         }
-        val target = preferences.loadVideoQuality().targetHeight
+        val target = preferences.effectiveVideoQuality().targetHeight
             ?.let { height -> height.toString() + "p" }
             ?: "Auto"
         val header = buildString {
@@ -777,7 +777,8 @@ class PlaybackQueueManager(
             !PlaybackRuntimePolicy.allowPreload(
                 autoplay = preferences.loadAutoplay(),
                 sleepEndCurrent = preferences.loadSleepEndCurrent()
-            )
+            ) ||
+            !preferences.shouldPreloadOnCurrentNetwork()
         ) return
         val next = items.getOrNull(index + 1) ?: return
         val current = player.currentMediaItemIndex
@@ -902,7 +903,7 @@ class PlaybackQueueManager(
 
             val targetStream = VideoStreamSelector.select(
                 streams,
-                preferences.loadVideoQuality()
+                preferences.effectiveVideoQuality()
             ) ?: return@launch
 
             val currentHeight = player.currentMediaItem?.mediaMetadata?.extras
@@ -964,6 +965,7 @@ class PlaybackQueueManager(
     }
 
     private fun warmAlternateStream(media: MediaSummary) {
+        if (!preferences.shouldPreloadOnCurrentNetwork()) return
         if (PlaybackSourceResolver.resolve(media.id) !is PlaybackSource.YouTube) return
         val requestGeneration = generation
         val targetVideoMode = !preferences.loadVideoMode()
@@ -972,8 +974,8 @@ class PlaybackQueueManager(
                 val streams = withContext(Dispatchers.IO) {
                     if (targetVideoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
                 }
-                if (targetVideoMode) VideoStreamSelector.select(streams, preferences.loadVideoQuality())
-                else AudioStreamSelector.select(streams, preferences.loadQuality())
+                if (targetVideoMode) VideoStreamSelector.select(streams, preferences.effectiveVideoQuality())
+                else AudioStreamSelector.select(streams, preferences.effectiveAudioQuality())
             }.getOrNull() ?: return@launch
             if (requestGeneration != generation) return@launch
             if (player.currentMediaItem?.mediaId != media.id) return@launch
@@ -1005,6 +1007,10 @@ class PlaybackQueueManager(
         fastStart: Boolean = false,
         initialPositionMs: Long = 0L
     ): Result<ResolvedPlayback> = runCatching {
+        preferences.networkPolicyBlockReason()?.let { reason ->
+            error(reason)
+        }
+
         if (movieProviders.canResolve(media.id)) {
             val moviePlayback = withContext(Dispatchers.IO) {
                 movieProviders.resolve(media.id, media.title)
@@ -1028,7 +1034,7 @@ class PlaybackQueueManager(
                     withContext(Dispatchers.IO) {
                         val spec = source.sabrSpec(
                             media.id,
-                            preferences.loadVideoQuality()
+                            preferences.effectiveVideoQuality()
                         ) ?: error("SABR spec unavailable")
                         resolvedSabrPlayback(media, spec, initialPositionMs)
                     }
@@ -1049,14 +1055,14 @@ class PlaybackQueueManager(
             if (videoMode) source.videoStreams(media.id) else source.audioStreams(media.id)
         }
         val stream = if (videoMode) {
-            val quality = preferences.loadVideoQuality()
+            val quality = preferences.effectiveVideoQuality()
             if (fastStart) {
                 VideoStreamSelector.selectFastStart(streams, quality)
             } else {
                 VideoStreamSelector.select(streams, quality)
             }
         } else {
-            AudioStreamSelector.select(streams, preferences.loadQuality())
+            AudioStreamSelector.select(streams, preferences.effectiveAudioQuality())
         } ?: error(if (videoMode) "No playable video stream" else "No playable audio stream")
         resolvedPlayback(media, stream)
     }
