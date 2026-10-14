@@ -34,6 +34,8 @@ class PlaybackService : MediaSessionService() {
         const val COMMAND_GET_SABR_DIAGNOSTIC = "com.qabt.eztube.GET_SABR_DIAGNOSTIC"
         const val COMMAND_SET_SLEEP_END_CURRENT = "com.qabt.eztube.SET_SLEEP_END_CURRENT"
         const val COMMAND_MOVE_QUEUE = "com.qabt.eztube.MOVE_QUEUE"
+        const val COMMAND_SYSTEM_PREVIOUS = "com.qabt.eztube.SYSTEM_PREVIOUS"
+        const val COMMAND_SYSTEM_NEXT = "com.qabt.eztube.SYSTEM_NEXT"
         const val ARG_ENABLED = "enabled"
         const val ARG_DELTA = "delta"
         const val ARG_POSITION_MS = "position_ms"
@@ -159,6 +161,8 @@ class PlaybackService : MediaSessionService() {
                         .add(androidx.media3.session.SessionCommand(COMMAND_GET_SABR_DIAGNOSTIC, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_SET_SLEEP_END_CURRENT, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_MOVE_QUEUE, android.os.Bundle.EMPTY))
+                        .add(androidx.media3.session.SessionCommand(COMMAND_SYSTEM_PREVIOUS, android.os.Bundle.EMPTY))
+                        .add(androidx.media3.session.SessionCommand(COMMAND_SYSTEM_NEXT, android.os.Bundle.EMPTY))
                         .build()
                     val playerCommands = ConnectionResult.DEFAULT_PLAYER_COMMANDS
                         .buildUpon()
@@ -171,17 +175,29 @@ class PlaybackService : MediaSessionService() {
                         .setAvailableSessionCommands(sessionCommands)
                         .setAvailablePlayerCommands(playerCommands)
 
-                    // Samsung/Android lockscreen media controls expose the discrete
-                    // previous/next buttons reliably when the buttons are backed by the
-                    // MEDIA_ITEM commands. onPlayerCommandRequest below still routes both
-                    // command families through PlaybackQueueManager, so the logical queue
-                    // remains the single playback owner and native timeline mutation is rejected.
+                    // Keep lockscreen / notification transport buttons independent
+                    // from ExoPlayer's currently resolved one-item timeline. The logical queue
+                    // may already contain a next item while Media3 has not preloaded it yet.
+                    // Session commands stay available to the system UI and are routed to the
+                    // single queue owner below.
                     val previousButton = CommandButton.Builder(CommandButton.ICON_PREVIOUS)
-                        .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                        .setDisplayName("Previous")
+                        .setSessionCommand(
+                            androidx.media3.session.SessionCommand(
+                                COMMAND_SYSTEM_PREVIOUS,
+                                android.os.Bundle.EMPTY
+                            )
+                        )
                         .setSlots(CommandButton.SLOT_BACK)
                         .build()
                     val nextButton = CommandButton.Builder(CommandButton.ICON_NEXT)
-                        .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        .setDisplayName("Next")
+                        .setSessionCommand(
+                            androidx.media3.session.SessionCommand(
+                                COMMAND_SYSTEM_NEXT,
+                                android.os.Bundle.EMPTY
+                            )
+                        )
                         .setSlots(CommandButton.SLOT_FORWARD)
                         .build()
                     result.setMediaButtonPreferences(listOf(previousButton, nextButton))
@@ -242,6 +258,18 @@ class PlaybackService : MediaSessionService() {
                     }
                     if (customCommand.customAction == COMMAND_MOVE_QUEUE) {
                         queueManager.move(args.getInt(ARG_DELTA, 0))
+                        return com.google.common.util.concurrent.Futures.immediateFuture(
+                            SessionResult(SessionResult.RESULT_SUCCESS)
+                        )
+                    }
+                    if (customCommand.customAction == COMMAND_SYSTEM_PREVIOUS) {
+                        queueManager.move(-1)
+                        return com.google.common.util.concurrent.Futures.immediateFuture(
+                            SessionResult(SessionResult.RESULT_SUCCESS)
+                        )
+                    }
+                    if (customCommand.customAction == COMMAND_SYSTEM_NEXT) {
+                        queueManager.move(1)
                         return com.google.common.util.concurrent.Futures.immediateFuture(
                             SessionResult(SessionResult.RESULT_SUCCESS)
                         )
