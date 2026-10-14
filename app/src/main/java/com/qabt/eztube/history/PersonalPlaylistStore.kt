@@ -48,8 +48,8 @@ class PersonalPlaylistStore(context: Context) {
                             )
                         }
                     }
+                    val updatedAt = obj.optLong("updatedAt", 0L)
                     add(
-                        val updatedAt = obj.optLong("updatedAt", 0L)
                         PersonalPlaylist(
                             id = id,
                             name = obj.optString("name").ifBlank { "Playlist" },
@@ -82,7 +82,7 @@ class PersonalPlaylistStore(context: Context) {
             )
         ) + load()
         save(updated)
-        return updated
+        return sort(updated)
     }
 
     @Synchronized
@@ -101,7 +101,7 @@ class PersonalPlaylistStore(context: Context) {
     fun delete(id: String): List<PersonalPlaylist> {
         val updated = load().filterNot { it.id == id }
         save(updated)
-        return updated
+        return sort(updated)
     }
 
     @Synchronized
