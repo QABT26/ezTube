@@ -465,10 +465,17 @@ fun EzTubeApp(
         )
     }
 
-    fun queueForStart(media: MediaSummary, sourceItems: List<MediaSummary>): List<MediaSummary> {
-        // Movie episode queues represent an ordered series/server. Never mix or
-        // shuffle them with recommendations; Next/Previous must stay episodic.
+    fun queueForStart(
+        media: MediaSummary,
+        sourceItems: List<MediaSummary>,
+        preserveSourceOrder: Boolean = false
+    ): List<MediaSummary> {
+        // Explicit user collections (Watch later / playlists / Play all) keep their
+        // stored order regardless of the global Recommended next-mode.
         val candidate = when {
+            preserveSourceOrder -> sourceItems.distinctBy { it.id }
+            // Movie episode queues represent an ordered series/server. Never mix or
+            // shuffle them with recommendations; Next/Previous must stay episodic.
             media.id.startsWith("movie:") -> sourceItems.distinctBy { it.id }
             nextMode == NextMode.LIST -> sourceItems.distinctBy { it.id }
             else -> {
@@ -603,8 +610,13 @@ fun EzTubeApp(
         }, context.mainExecutor)
     }
 
-    fun startQueue(media: MediaSummary, sourceItems: List<MediaSummary>, startPositionMs: Long = 0L) {
-        queue = queueForStart(media, sourceItems)
+    fun startQueue(
+        media: MediaSummary,
+        sourceItems: List<MediaSummary>,
+        startPositionMs: Long = 0L,
+        preserveSourceOrder: Boolean = false
+    ) {
+        queue = queueForStart(media, sourceItems, preserveSourceOrder)
         queueIndex = queue.indexOfFirst { it.id == media.id }.coerceAtLeast(0)
         playbackPrefs.saveQueue(queue, queueIndex)
         playMedia(media, startPositionMs)
@@ -1671,7 +1683,7 @@ fun EzTubeApp(
                                 }
                                 .map { it.toMediaSummary() }
                             if (items.isNotEmpty()) {
-                                startQueue(items.first(), items)
+                                startQueue(items.first(), items, preserveSourceOrder = true)
                             }
                         },
                         onPlayAllMovieFavorites = {
@@ -1696,7 +1708,7 @@ fun EzTubeApp(
                                             it.mediaId.startsWith("movie-title:")
                                     }
                                     .map { it.toMediaSummary() }
-                                startQueue(media, items)
+                                startQueue(media, items, preserveSourceOrder = true)
                             }
                         },
                         onPlayAllWatchLater = { shuffled ->
@@ -1708,7 +1720,11 @@ fun EzTubeApp(
                                 .map { it.toMediaSummary() }
                                 .let { if (shuffled) it.shuffled() else it }
                             if (items.isNotEmpty()) {
-                                startQueue(items.first(), items)
+                                startQueue(
+                                    items.first(),
+                                    items,
+                                    preserveSourceOrder = true
+                                )
                             }
                         },
                         onRemoveWatchLater = { entry ->
@@ -1751,11 +1767,15 @@ fun EzTubeApp(
                         },
                         onPlayPlaylist = { playlist ->
                             if (playlist.items.isNotEmpty()) {
-                                startQueue(playlist.items.first(), playlist.items)
+                                startQueue(
+                                    playlist.items.first(),
+                                    playlist.items,
+                                    preserveSourceOrder = true
+                                )
                             }
                         },
                         onPlayPlaylistItem = { media, items ->
-                            startQueue(media, items)
+                            startQueue(media, items, preserveSourceOrder = true)
                         },
                         onDelete = { entry -> scope.launch(Dispatchers.IO) { history.delete(entry.mediaId) } },
                         onClear = { scope.launch(Dispatchers.IO) { history.clear() } }
