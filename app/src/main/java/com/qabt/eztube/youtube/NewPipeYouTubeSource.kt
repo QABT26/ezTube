@@ -15,6 +15,8 @@ import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 class NewPipeYouTubeSource : YouTubeSource {
     private companion object {
@@ -297,6 +299,65 @@ class NewPipeYouTubeSource : YouTubeSource {
         )
     }
 
+    private fun relativeUploadDate(item: StreamInfoItem): String? {
+        val instant = item.uploadDate?.instant ?: return null
+        val now = Instant.now()
+        val safeInstant = if (instant.isAfter(now)) now else instant
+        val seconds = ChronoUnit.SECONDS.between(safeInstant, now).coerceAtLeast(0L)
+        val language = NewPipe.getPreferredLocalization().languageCode.lowercase()
+
+        val (value, unit) = when {
+            seconds < 60L -> 0L to "minute"
+            seconds < 3_600L -> (seconds / 60L).coerceAtLeast(1L) to "minute"
+            seconds < 86_400L -> (seconds / 3_600L).coerceAtLeast(1L) to "hour"
+            seconds < 604_800L -> (seconds / 86_400L).coerceAtLeast(1L) to "day"
+            seconds < 2_629_800L -> (seconds / 604_800L).coerceAtLeast(1L) to "week"
+            seconds < 31_557_600L -> (seconds / 2_629_800L).coerceAtLeast(1L) to "month"
+            else -> (seconds / 31_557_600L).coerceAtLeast(1L) to "year"
+        }
+
+        return if (language == "vi") {
+            when (unit) {
+                "minute" -> if (value == 0L) "vừa đăng" else "$" + "value phút trước"
+                "hour" -> "$" + "value giờ trước"
+                "day" -> "$" + "value ngày trước"
+                "week" -> "$" + "value tuần trước"
+                "month" -> "$" + "value tháng trước"
+                else -> "$" + "value năm trước"
+            }
+        } else {
+            fun plural(singular: String): String =
+                if (value == 1L) singular else singular + "s"
+
+            when (unit) {
+                "minute" -> if (value == 0L) "just now" else "$" + "value " + plural("minute") + " ago"
+                "hour" -> "$" + "value " + plural("hour") + " ago"
+                "day" -> "$" + "value " + plural("day") + " ago"
+                "week" -> "$" + "value " + plural("week") + " ago"
+                "month" -> "$" + "value " + plural("month") + " ago"
+                else -> "$" + "value " + plural("year") + " ago"
+            }
+        }
+    }
+
+    private fun uploadDateLabel(item: StreamInfoItem): String? =
+        relativeUploadDate(item)
+            ?: item.textualUploadDate
+                ?.trim()
+                ?.takeIf { text ->
+                    val normalized = text.lowercase()
+                    when (NewPipe.getPreferredLocalization().languageCode.lowercase()) {
+                        "vi" -> listOf(
+                            "trước", "hôm nay", "hôm qua", "phút", "giờ",
+                            "ngày", "tuần", "tháng", "năm"
+                        ).any(normalized::contains)
+                        else -> listOf(
+                            "ago", "today", "yesterday", "minute", "hour",
+                            "day", "week", "month", "year"
+                        ).any(normalized::contains)
+                    }
+                }
+
     private fun StreamInfoItem.toSummary(fallbackChannelUrl: String? = null, fallbackChannel: String = "") =
         MediaSummary(
             id = url,
@@ -305,7 +366,7 @@ class NewPipeYouTubeSource : YouTubeSource {
             thumbnailUrl = thumbnailUrl,
             channelUrl = uploaderUrl ?: fallbackChannelUrl,
             viewCount = viewCount,
-            uploadDateText = textualUploadDate,
+            uploadDateText = uploadDateLabel(this),
             durationSeconds = duration
         )
 
@@ -345,7 +406,7 @@ class NewPipeYouTubeSource : YouTubeSource {
                     thumbnailUrl = item.thumbnailUrl,
                     channelUrl = item.uploaderUrl,
                     viewCount = item.viewCount,
-                    uploadDateText = item.textualUploadDate,
+                    uploadDateText = uploadDateLabel(item),
                     durationSeconds = item.duration
                 )
             }
