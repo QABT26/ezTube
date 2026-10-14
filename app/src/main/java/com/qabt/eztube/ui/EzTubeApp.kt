@@ -1275,7 +1275,8 @@ fun EzTubeApp(
                     hasPrevious = queueIndex > 0 || (repeatMode == RepeatMode.ALL && queue.size > 1),
                     hasNext = (queueIndex >= 0 && queueIndex < queue.lastIndex) ||
                         (repeatMode == RepeatMode.ALL && queue.size > 1),
-                    isFavorite = favorites.any { it.mediaId == nowPlaying?.id }
+                    isFavorite = favorites.any { it.mediaId == nowPlaying?.id },
+                    isWatchLater = watchLater.any { it.mediaId == nowPlaying?.id }
                 ),
                 actions = FullPlayerActions(
                     onSubtitle = { selectMovieSubtitle(it) },
@@ -1432,6 +1433,9 @@ fun EzTubeApp(
                                 else favoritesRepo.add(media)
                             }
                         }
+                    },
+                    onWatchLater = {
+                        nowPlaying?.let { toggleWatchLater(it) }
                     },
                     onToggle = {
                         if (controller?.currentMediaItem == null) {
@@ -4407,7 +4411,8 @@ private data class FullPlayerState(
     val queueIndex: Int,
     val hasPrevious: Boolean,
     val hasNext: Boolean,
-    val isFavorite: Boolean
+    val isFavorite: Boolean,
+    val isWatchLater: Boolean
 )
 
 private class FullPlayerActions(
@@ -4430,6 +4435,7 @@ private class FullPlayerActions(
     val onNext: () -> Unit,
     val onChannel: () -> Unit,
     val onFavorite: () -> Unit,
+    val onWatchLater: () -> Unit,
     val onToggle: () -> Unit,
     val onClose: () -> Unit
 )
@@ -4466,6 +4472,7 @@ private fun FullPlayer(
     val hasPrevious = state.hasPrevious
     val hasNext = state.hasNext
     val isFavorite = state.isFavorite
+    val isWatchLater = state.isWatchLater
     val movieEpisodePosition =
         if (isMovie && queue.size > 1 && queueIndex in queue.indices) {
             "${queueIndex + 1} / ${queue.size}"
@@ -4500,6 +4507,7 @@ private fun FullPlayer(
     val onNext = actions.onNext
     val onChannel = actions.onChannel
     val onFavorite = actions.onFavorite
+    val onWatchLater = actions.onWatchLater
     val onToggle = actions.onToggle
     val onClose = actions.onClose
 
@@ -5335,6 +5343,12 @@ private fun FullPlayer(
                         if (media.channelUrl != null) Modifier.clickable(onClick = onChannel) else Modifier
                     )
                 )
+                IconButton(onClick = onWatchLater) {
+                    Icon(
+                        if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                        if (isWatchLater) "Remove from Watch later" else "Watch later"
+                    )
+                }
                 IconButton(onClick = onFavorite) {
                     Icon(
                         if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
