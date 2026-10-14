@@ -15,6 +15,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
@@ -51,6 +53,7 @@ class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var preferences: PlaybackPreferences
+    private lateinit var networkUsageTracker: NetworkUsageTracker
     private val source by lazy { NewPipeYouTubeSource() }
     private val movieProviders by lazy { MovieProviderRegistry.default() }
     private lateinit var queueManager: PlaybackQueueManager
@@ -58,6 +61,13 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         preferences = PlaybackPreferences(this)
+        networkUsageTracker = NetworkUsageTracker(this)
+        serviceScope.launch {
+            while (true) {
+                networkUsageTracker.sample()
+                delay(5_000L)
+            }
+        }
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
