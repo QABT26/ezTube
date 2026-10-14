@@ -3245,8 +3245,13 @@ private fun HomeScreen(
         if (trendingLoading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         itemsIndexed(trending, key = { index, media -> "trend-" + index + "-" + media.id }) { index, media ->
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text((index + 1).toString(), style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold, modifier = Modifier.width(28.dp))
+                Text(
+                    (index + 1).toString(),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(24.dp)
+                )
                 Box(Modifier.weight(1f)) {
                     CompactMediaRow(
                         media = media,
