@@ -90,7 +90,10 @@ private enum class SearchSort(val label: String) {
 }
 
 @Composable
-fun EzTubeApp() {
+fun EzTubeApp(
+    externalMedia: MediaSummary? = null,
+    onExternalMediaConsumed: () -> Unit = {}
+) {
     var selected by remember { mutableStateOf(Tab.SEARCH) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -558,6 +561,19 @@ fun EzTubeApp() {
         playMedia(media, startPositionMs)
     }
 
+    LaunchedEffect(externalMedia?.id, controller) {
+        val media = externalMedia ?: return@LaunchedEffect
+        if (controller == null) return@LaunchedEffect
+        val localVideo = media.channel == "Local video"
+        if (videoMode != localVideo) {
+            videoMode = localVideo
+            playbackPrefs.saveVideoMode(localVideo)
+        }
+        startQueue(media, listOf(media))
+        if (localVideo) showPlayer = true
+        onExternalMediaConsumed()
+    }
+
     fun openMovieFromHistory(entry: HistoryEntry) {
         if (!entry.mediaId.startsWith("movie:") || movieDetailLoading) return
         val providerId = entry.mediaId.split(':').getOrNull(1).orEmpty()
@@ -737,6 +753,7 @@ fun EzTubeApp() {
 
     LaunchedEffect(sleepMinutes) {
         val minutes = sleepMinutes ?: return@LaunchedEffect
+        if (minutes <= 0) return@LaunchedEffect
         delay(minutes * 60_000L)
         controller?.pause()
         sleepMinutes = null
@@ -1055,7 +1072,21 @@ fun EzTubeApp() {
                         errorMessage = null
                         nowPlaying?.let { playMedia(it, controller?.currentPosition ?: 0L) }
                     },
-                    onSleep = { sleepMinutes = it },
+                    onSleep = { option ->
+                        sleepMinutes = option
+                        val active = controller
+                        if (active != null) {
+                            active.sendCustomCommand(
+                                androidx.media3.session.SessionCommand(
+                                    PlaybackService.COMMAND_SET_SLEEP_END_CURRENT,
+                                    android.os.Bundle.EMPTY
+                                ),
+                                android.os.Bundle().apply {
+                                    putBoolean(PlaybackService.ARG_ENABLED, option == -1)
+                                }
+                            )
+                        }
+                    },
                     onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it); notifyQueueChanged() },
                     onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) },
                     onRepeatMode = { repeatMode = it; playbackPrefs.saveRepeatMode(it.ordinal) },
@@ -1223,6 +1254,11 @@ fun EzTubeApp() {
                     )
                     Tab.HOME -> HomeScreen(
                         modifier = Modifier.fillMaxSize().padding(padding),
+                        continueWatching = recent.filter { entry ->
+                            entry.positionMs > 5_000L &&
+                                (entry.durationMs <= 0L || entry.progress in 0.01f..0.94f)
+                        }.take(6),
+                        movieProviders = movieProviders,
                         suggestions = homeSuggestions,
                         movieSuggestions = movieSuggestions,
                         movieSuggestionsLoading = movieSuggestionsLoading,
@@ -1237,6 +1273,17 @@ fun EzTubeApp() {
                         loading = homeLoading,
                         onRefresh = { homeRefreshToken += 1 },
                         resolvingId = resolvingId,
+                        onContinue = { entry ->
+                            val media = entry.toMediaSummary()
+                            startQueue(
+                                media,
+                                listOf(media),
+                                startPositionMs = entry.positionMs.coerceAtLeast(0L)
+                            )
+                            if (isMovieLibraryItem(entry.mediaId, entry.channel) || videoMode) {
+                                showPlayer = true
+                            }
+                        },
                         onPlay = { media, items ->
                             startQueue(media, items)
                         },
@@ -2340,6 +2387,8 @@ private fun MiniPlayer(
 @Composable
 private fun HomeScreen(
     modifier: Modifier,
+    continueWatching: List<HistoryEntry>,
+    movieProviders: MovieProviderRegistry,
     suggestions: List<MediaSummary>,
     movieSuggestions: List<MediaSummary>,
     movieSuggestionsLoading: Boolean,
@@ -2351,6 +2400,7 @@ private fun HomeScreen(
     loading: Boolean,
     onRefresh: () -> Unit,
     resolvingId: String?,
+    onContinue: (HistoryEntry) -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
     onMovie: (MediaSummary) -> Unit,
     onSearch: () -> Unit
@@ -2392,6 +2442,28 @@ private fun HomeScreen(
                     Spacer(Modifier.width(5.dp))
                     Text("Trending")
                 }
+            }
+        }
+        if (continueWatching.isNotEmpty()) {
+            item {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Continue Watching",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            items(
+                continueWatching,
+                key = { "home-continue-" + it.mediaId }
+            ) { entry ->
+                ProgressMediaRow(
+                    entry = entry,
+                    movieProviders = movieProviders,
+                    resolving = resolvingId == entry.mediaId,
+                    onClick = { onContinue(entry) },
+                    onPlay = { onContinue(entry) }
+                )
             }
         }
         if (recommendationLoading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
@@ -3892,7 +3964,7 @@ private fun FullPlayer(
                         ) {
                             Box(Modifier.padding(horizontal = 9.dp), contentAlignment = Alignment.Center) {
                                 Text(
-                                    sleepMinutes?.let { it.toString() + "m" } ?: "Sleep",
+                                    sleepMinutes?.let { if (it == -1) "End" else it.toString() + "m" } ?: "Sleep",
                                     color = androidx.compose.ui.graphics.Color.White,
                                     style = MaterialTheme.typography.labelSmall,
                                     maxLines = 1
@@ -3900,12 +3972,12 @@ private fun FullPlayer(
                             }
                         }
                         DropdownMenu(expanded = fullscreenSleepMenu, onDismissRequest = { fullscreenSleepMenu = false }) {
-                            listOf<Int?>(null, 15, 30, 60, 120).forEach { option ->
+                            listOf<Int?>(null, -1, 15, 30, 60, 120).forEach { option ->
                                 DropdownMenuItem(
                                     text = {
                                         Text(
                                             (if (sleepMinutes == option) "✓ " else "") +
-                                                (option?.let { it.toString() + " phút" } ?: "Tắt")
+                                                (when (option) { null -> "Tắt"; -1 -> "Hết bài hiện tại"; else -> option.toString() + " phút" })
                                         )
                                     },
                                     onClick = {
