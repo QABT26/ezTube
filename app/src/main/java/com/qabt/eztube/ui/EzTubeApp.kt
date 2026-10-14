@@ -1537,10 +1537,13 @@ fun EzTubeApp(
                         nowPlaying?.let { media ->
                             MiniPlayer(
                                 media = media,
+                                controller = controller,
                                 isPlaying = isPlaying,
                                 isFavorite = favorites.any { it.mediaId == media.id },
+                                isWatchLater = watchLater.any { it.mediaId == media.id },
                                 onOpen = { channelDetail = null; playlistDetail = null; showPlayer = true },
                                 onFavorite = { scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } },
+                                onWatchLater = { toggleWatchLater(media) },
                                 onToggle = {
                                     if (controller?.currentMediaItem == null) {
                                         nowPlaying?.let { playMedia(it, resumePositionMs) }
@@ -2925,8 +2928,17 @@ private fun MiniPlayer(
     LaunchedEffect(controller, media.id) {
         while (true) {
             val active = controller
-            positionMs = active?.currentPosition?.coerceAtLeast(0L) ?: 0L
-            durationMs = active?.duration?.takeIf { it > 0L } ?: 0L
+            val isCurrent = active?.currentMediaItem?.mediaId == media.id
+            positionMs = if (isCurrent) {
+                active.currentPosition.coerceAtLeast(0L)
+            } else {
+                0L
+            }
+            durationMs = if (isCurrent) {
+                active.duration.takeIf { it > 0L } ?: 0L
+            } else {
+                0L
+            }
             delay(500L)
         }
     }
