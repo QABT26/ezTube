@@ -3403,7 +3403,10 @@ private fun ProgressMediaRow(
     }
 }
 
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@OptIn(
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class
+)
 @Composable
 private fun LibraryScreen(
     modifier: Modifier,
@@ -3697,9 +3700,10 @@ private fun LibraryScreen(
                 }
             }
             if (watchLater.isNotEmpty()) {
-                Row(
+                androidx.compose.foundation.layout.FlowRow(
                     Modifier.fillMaxWidth().padding(top = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     FilledTonalButton(
                         onClick = { onPlayAllWatchLater(false) },
