@@ -562,6 +562,12 @@ fun EzTubeApp(
         resolvingId = media.id
         errorMessage = null
 
+        // Publish the user's selection immediately. Navigation/presentation must not
+        // wait for extractor/network/SABR resolution; the player can show loading/error
+        // state while COMMAND_PLAY_CURRENT resolves in the service.
+        nowPlaying = media
+        resumePositionMs = startPositionMs.coerceAtLeast(0L)
+
         if (queue.isEmpty()) {
             queue = listOf(media)
             queueIndex = 0
@@ -592,7 +598,6 @@ fun EzTubeApp(
                 .onSuccess { result ->
                     if (result.resultCode == androidx.media3.session.SessionResult.RESULT_SUCCESS) {
                         playerError = null
-                        nowPlaying = media
                         resumePositionMs = 0L
                         playbackPrefs.save(media, startPositionMs.coerceAtLeast(0L))
                         scope.launch(Dispatchers.IO) {
@@ -619,9 +624,10 @@ fun EzTubeApp(
         queue = queueForStart(media, sourceItems, preserveSourceOrder)
         queueIndex = queue.indexOfFirst { it.id == media.id }.coerceAtLeast(0)
         playbackPrefs.saveQueue(queue, queueIndex)
-        playMedia(media, startPositionMs)
 
-        // One presentation rule for every entry point (Home/Search/Library/etc):
+        // Decide presentation before playback resolve starts so VIDEO/Movie/local video
+        // responds to the tap immediately. AUDIO mode intentionally stays in context
+        // and surfaces the same immediate selection through MiniPlayer.
         // YouTube in VIDEO mode opens the full Now Playing screen immediately.
         // YouTube in AUDIO mode keeps the user in context and uses MiniPlayer.
         // Movie/local video are video-first and therefore open Now Playing.
@@ -632,6 +638,8 @@ fun EzTubeApp(
             isLocalVideo = isLocalVideo,
             videoMode = videoMode
         )
+
+        playMedia(media, startPositionMs)
     }
 
     LaunchedEffect(externalMedia?.id, controller) {
