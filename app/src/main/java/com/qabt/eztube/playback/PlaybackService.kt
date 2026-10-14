@@ -175,11 +175,13 @@ class PlaybackService : MediaSessionService() {
                         .setAvailableSessionCommands(sessionCommands)
                         .setAvailablePlayerCommands(playerCommands)
 
-                    // Keep lockscreen / notification transport buttons independent
-                    // from ExoPlayer's currently resolved one-item timeline. The logical queue
-                    // may already contain a next item while Media3 has not preloaded it yet.
-                    // Session commands stay available to the system UI and are routed to the
-                    // single queue owner below.
+                    // Historical lockscreen fix (30d1fd6) kept Next visible by ensuring
+                    // a real next Media3 timeline item. That worked while queue-next was always
+                    // preloaded, but it becomes incorrect once users can disable autoplay/preload
+                    // or mobile-data prefetch: manual Next must remain available even when no
+                    // native next item is intentionally resolved. Keep system transport buttons
+                    // independent from the resolved timeline and route them to the logical queue
+                    // owner instead.
                     val previousButton = CommandButton.Builder(CommandButton.ICON_PREVIOUS)
                         .setDisplayName("Previous")
                         .setSessionCommand(
