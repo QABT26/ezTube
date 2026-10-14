@@ -596,6 +596,39 @@ fun EzTubeApp() {
         }
     }
 
+    fun openMovieFromFavorite(entry: FavoriteEntry) {
+        if (!entry.mediaId.startsWith("movie:") || movieDetailLoading) return
+        val providerId = entry.mediaId.split(':').getOrNull(1).orEmpty()
+        val lookupTitle = movieLookupTitle(entry.title)
+        if (providerId.isBlank() || lookupTitle.isBlank()) return
+
+        scope.launch {
+            movieDetailLoading = true
+            movieDetailError = null
+            val titleMedia = runCatching {
+                withContext(Dispatchers.IO) {
+                    val results = movieProviders.search(lookupTitle)
+                    results.firstOrNull {
+                        it.id.startsWith("movie-title:$providerId:")
+                    } ?: results.firstOrNull()
+                }
+            }.getOrNull()
+
+            movieDetailLoading = false
+            if (titleMedia == null) {
+                movieDetailError = "Unable to reopen movie detail"
+                return@launch
+            }
+
+            openMovie(
+                media = titleMedia,
+                focusEpisodeId = entry.mediaId
+            ) { single, items ->
+                startQueue(single, items)
+            }
+        }
+    }
+
     fun playNext(media: MediaSummary) {
         if (queue.isEmpty() || queueIndex !in queue.indices) {
             startQueue(media, listOf(media))
@@ -1234,12 +1267,22 @@ fun EzTubeApp() {
                             )
                         },
                         onOpenMovie = { entry -> openMovieFromHistory(entry) },
+                        onOpenFavoriteMovie = { entry -> openMovieFromFavorite(entry) },
                         onPlayFavorite = { entry ->
-                            val items = favorites.map { it.toMediaSummary() }
-                            startQueue(entry.toMediaSummary(), items)
+                            val media = entry.toMediaSummary()
+                            val items = if (entry.mediaId.startsWith("movie:")) {
+                                listOf(media)
+                            } else {
+                                favorites
+                                    .filterNot { isMovieLibraryItem(it.mediaId, it.channel) }
+                                    .map { it.toMediaSummary() }
+                            }
+                            startQueue(media, items)
                         },
                         onPlayAllFavorites = {
-                            val items = favorites.map { it.toMediaSummary() }
+                            val items = favorites
+                                .filterNot { isMovieLibraryItem(it.mediaId, it.channel) }
+                                .map { it.toMediaSummary() }
                             if (items.isNotEmpty()) {
                                 startQueue(items.first(), items)
                             }
@@ -2635,15 +2678,25 @@ private fun LibraryScreen(
     resolvingId: String?,
     onPlay: (HistoryEntry) -> Unit,
     onOpenMovie: (HistoryEntry) -> Unit,
+    onOpenFavoriteMovie: (FavoriteEntry) -> Unit,
     onPlayFavorite: (FavoriteEntry) -> Unit,
     onPlayAllFavorites: () -> Unit,
     onRemoveFavorite: (FavoriteEntry) -> Unit,
     onDelete: (HistoryEntry) -> Unit,
     onClear: () -> Unit
 ) {
-    var showAllFavorites by remember { mutableStateOf(false) }
-    var showAllRecent by remember { mutableStateOf(false) }
     var showAllHistory by remember { mutableStateOf(false) }
+    val youtubeFavorites = remember(favorites) {
+        favorites.filterNot { isMovieLibraryItem(it.mediaId, it.channel) }
+    }
+    val movieFavorites = remember(favorites) {
+        favorites.filter { isMovieLibraryItem(it.mediaId, it.channel) }
+    }
+    val continueRecent = remember(recent) {
+        recent.filter { entry ->
+            entry.durationMs <= 0L || entry.progress < 0.95f
+        }.take(3)
+    }
 
     LazyColumn(
         modifier = modifier.padding(horizontal = 14.dp),
@@ -2652,76 +2705,213 @@ private fun LibraryScreen(
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         stickyHeader {
-            Surface(tonalElevation = if (showAllFavorites) 2.dp else 0.dp) {
-            Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Favorites", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f))
-                if (favorites.size > 3) {
-                    TextButton(onClick = { showAllFavorites = !showAllFavorites }) {
-                        Text(if (showAllFavorites) "Show less" else "View all")
-                    }
-                }
-                if (favorites.isNotEmpty()) {
-                    FilledTonalButton(
-                        onClick = onPlayAllFavorites,
-                        enabled = resolvingId == null,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Icon(Icons.Outlined.PlayArrow, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Play all")
-                    }
-                }
-            }
-            }
-        }
-        if (favorites.isEmpty()) {
-            item { Text("Favorite tracks will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
-        } else {
-            items(if (showAllFavorites) favorites else favorites.take(3), key = { "fav-" + it.mediaId }) { entry ->
+            Surface(tonalElevation = 0.dp) {
                 Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                        .clickable(enabled = resolvingId == null) { onPlayFavorite(entry) }.padding(7.dp),
+                    Modifier.fillMaxWidth().padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    LibraryThumbnail(
-                        mediaId = entry.mediaId,
-                        title = entry.title,
-                        channel = entry.channel,
-                        thumbnailUrl = entry.thumbnailUrl,
-                        movieProviders = movieProviders,
-                        modifier = Modifier.size(52.dp),
-                        cornerRadius = 8
+                    Text(
+                        "Favorites",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
                     )
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(entry.channel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    if (youtubeFavorites.isNotEmpty()) {
+                        FilledTonalButton(
+                            onClick = onPlayAllFavorites,
+                            enabled = resolvingId == null,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Play YouTube")
+                        }
                     }
-                    IconButton(onClick = { onRemoveFavorite(entry) }) { Icon(Icons.Outlined.Favorite, "Remove favorite") }
+                }
+            }
+        }
+
+        if (favorites.isEmpty()) {
+            item {
+                Text(
+                    "Favorite videos and movies will appear here.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        } else {
+            if (youtubeFavorites.isNotEmpty()) {
+                item(key = "favorites-youtube-heading") {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Outlined.PlayCircle, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "YouTube",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "${youtubeFavorites.size}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                items(
+                    youtubeFavorites,
+                    key = { "fav-yt-" + it.mediaId }
+                ) { entry ->
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable(enabled = resolvingId == null) {
+                                onPlayFavorite(entry)
+                            }
+                            .padding(7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        LibraryThumbnail(
+                            mediaId = entry.mediaId,
+                            title = entry.title,
+                            channel = entry.channel,
+                            thumbnailUrl = entry.thumbnailUrl,
+                            movieProviders = movieProviders,
+                            modifier = Modifier.size(52.dp),
+                            cornerRadius = 8
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                entry.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                entry.channel,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
+                        IconButton(onClick = { onRemoveFavorite(entry) }) {
+                            Icon(Icons.Outlined.Favorite, "Remove favorite")
+                        }
+                    }
+                }
+            }
+
+            if (movieFavorites.isNotEmpty()) {
+                item(key = "favorites-movie-heading") {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Outlined.LocalMovies, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "Movie",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "${movieFavorites.size}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                items(
+                    movieFavorites,
+                    key = { "fav-movie-" + it.mediaId }
+                ) { entry ->
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable(enabled = resolvingId == null) {
+                                onOpenFavoriteMovie(entry)
+                            }
+                            .padding(7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        LibraryThumbnail(
+                            mediaId = entry.mediaId,
+                            title = entry.title,
+                            channel = entry.channel,
+                            thumbnailUrl = entry.thumbnailUrl,
+                            movieProviders = movieProviders,
+                            modifier = Modifier.size(52.dp),
+                            cornerRadius = 8
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                entry.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                entry.channel,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
+                        IconButton(
+                            onClick = { onPlayFavorite(entry) },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.PlayArrow,
+                                "Play movie",
+                                Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(onClick = { onRemoveFavorite(entry) }) {
+                            Icon(Icons.Outlined.Favorite, "Remove favorite")
+                        }
+                    }
                 }
             }
         }
 
         stickyHeader {
-            Surface(tonalElevation = if (showAllRecent) 2.dp else 0.dp) {
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Recent", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Jump back into your latest listening", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (recent.size > 3) {
-                    TextButton(onClick = { showAllRecent = !showAllRecent }) {
-                        Text(if (showAllRecent) "Show less" else "View all")
+            Surface(tonalElevation = 0.dp) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Recent",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Continue your latest unfinished items",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
-            }
         }
-        if (recent.isEmpty()) {
-            item { Text("Nothing played yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+        if (continueRecent.isEmpty()) {
+            item {
+                Text(
+                    if (recent.isEmpty()) "Nothing played yet." else "No unfinished items.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         } else {
-            items(if (showAllRecent) recent else recent.take(3), key = { "recent-" + it.mediaId }) { entry ->
+            items(continueRecent, key = { "recent-" + it.mediaId }) { entry ->
                 ProgressMediaRow(
                     entry = entry,
                     movieProviders = movieProviders,
