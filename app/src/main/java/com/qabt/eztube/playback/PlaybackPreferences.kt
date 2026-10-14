@@ -4,7 +4,8 @@ import android.content.Context
 import com.qabt.eztube.youtube.MediaSummary
 
 class PlaybackPreferences(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences("playback_state", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences("playback_state", Context.MODE_PRIVATE)
 
     fun save(media: MediaSummary, positionMs: Long) {
         prefs.edit()
@@ -230,4 +231,108 @@ class PlaybackPreferences(context: Context) {
 
     fun saveTrendingLanguage(language: String) { prefs.edit().putString("trending_language", language).apply() }
     fun loadTrendingLanguage(): String = prefs.getString("trending_language", "Vietnamese") ?: "Vietnamese"
+
+    fun saveMobilePlaybackAllowed(enabled: Boolean) {
+        prefs.edit().putBoolean("mobile_playback_allowed", enabled).apply()
+    }
+
+    fun loadMobilePlaybackAllowed(): Boolean =
+        prefs.getBoolean("mobile_playback_allowed", true)
+
+    fun saveDataSaverEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("data_saver_enabled", enabled).apply()
+    }
+
+    fun loadDataSaverEnabled(): Boolean =
+        prefs.getBoolean("data_saver_enabled", false)
+
+    fun saveMobileDataPriority(priority: MobileDataPriority) {
+        prefs.edit().putString("mobile_data_priority", priority.name).apply()
+    }
+
+    fun loadMobileDataPriority(): MobileDataPriority =
+        runCatching {
+            MobileDataPriority.valueOf(
+                prefs.getString("mobile_data_priority", MobileDataPriority.BALANCED.name).orEmpty()
+            )
+        }.getOrDefault(MobileDataPriority.BALANCED)
+
+    fun saveMobileDataLimitMb(limitMb: Long) {
+        prefs.edit().putLong("mobile_data_limit_mb", limitMb.coerceAtLeast(0L)).apply()
+    }
+
+    fun loadMobileDataLimitMb(): Long =
+        prefs.getLong("mobile_data_limit_mb", 0L).coerceAtLeast(0L)
+
+    fun savePreloadWifi(enabled: Boolean) {
+        prefs.edit().putBoolean("preload_wifi", enabled).apply()
+    }
+
+    fun loadPreloadWifi(): Boolean = prefs.getBoolean("preload_wifi", true)
+
+    fun savePreloadMobile(enabled: Boolean) {
+        prefs.edit().putBoolean("preload_mobile", enabled).apply()
+    }
+
+    fun loadPreloadMobile(): Boolean = prefs.getBoolean("preload_mobile", false)
+
+    fun saveWarnMobileVideo(enabled: Boolean) {
+        prefs.edit().putBoolean("warn_mobile_video", enabled).apply()
+    }
+
+    fun loadWarnMobileVideo(): Boolean = prefs.getBoolean("warn_mobile_video", true)
+
+    fun currentNetworkType(): NetworkType = NetworkEnvironment.type(appContext)
+
+    fun isPlaybackAllowedOnCurrentNetwork(): Boolean {
+        val type = currentNetworkType()
+        if (type == NetworkType.OFFLINE) return false
+        if (type != NetworkType.CELLULAR) return true
+        if (!loadMobilePlaybackAllowed()) return false
+        val limitMb = loadMobileDataLimitMb()
+        if (limitMb <= 0L) return true
+        val usedBytes = NetworkUsageTracker(appContext).mobileBytesSinceReset()
+        return usedBytes < limitMb * 1024L * 1024L
+    }
+
+    fun networkPolicyBlockReason(): String? {
+        return when {
+            currentNetworkType() == NetworkType.OFFLINE -> "No network connection"
+            currentNetworkType() == NetworkType.CELLULAR && !loadMobilePlaybackAllowed() ->
+                "Mobile-data playback is disabled in Settings"
+            currentNetworkType() == NetworkType.CELLULAR &&
+                loadMobileDataLimitMb() > 0L &&
+                NetworkUsageTracker(appContext).mobileBytesSinceReset() >=
+                    loadMobileDataLimitMb() * 1024L * 1024L ->
+                "Mobile-data limit reached"
+            else -> null
+        }
+    }
+
+    fun effectiveAudioQuality(): AudioQuality {
+        if (loadDataSaverEnabled()) return AudioQuality.DATA_SAVER
+        if (currentNetworkType() != NetworkType.CELLULAR) return loadQuality()
+        return when (loadMobileDataPriority()) {
+            MobileDataPriority.DATA_SAVER -> AudioQuality.DATA_SAVER
+            MobileDataPriority.BALANCED -> AudioQuality.STANDARD
+            MobileDataPriority.QUALITY -> loadQuality()
+        }
+    }
+
+    fun effectiveVideoQuality(): VideoQuality {
+        if (loadDataSaverEnabled()) return VideoQuality.P360
+        if (currentNetworkType() != NetworkType.CELLULAR) return loadVideoQuality()
+        return when (loadMobileDataPriority()) {
+            MobileDataPriority.DATA_SAVER -> VideoQuality.P360
+            MobileDataPriority.BALANCED -> VideoQuality.P480
+            MobileDataPriority.QUALITY -> loadVideoQuality()
+        }
+    }
+
+    fun shouldPreloadOnCurrentNetwork(): Boolean = when (currentNetworkType()) {
+        NetworkType.WIFI -> loadPreloadWifi()
+        NetworkType.CELLULAR -> loadPreloadMobile() && isPlaybackAllowedOnCurrentNetwork()
+        NetworkType.OTHER -> loadPreloadWifi()
+        NetworkType.OFFLINE -> false
+    }
 }
