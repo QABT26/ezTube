@@ -59,6 +59,7 @@ class PlaybackQueueManager(
     @Volatile private var recoveryMediaId: String? = null
     @Volatile private var recoveryAttempts = 0
     @Volatile private var recoveryHealthyGeneration = 0L
+    @Volatile private var pendingManualDelta = 0
     @Volatile private var activePlaybackEngine: String = PlaybackService.ENGINE_DIRECT
     @Volatile private var activeSabrQualityController: SabrMediaSourceFactory.QualityController? = null
     @Volatile private var sabrQualityWarmGeneration = 0L
@@ -727,7 +728,14 @@ class PlaybackQueueManager(
     }
 
     fun move(delta: Int) {
-        if (busy || delta == 0) return
+        if (delta == 0) return
+        if (busy) {
+            // Do not drop transport taps while a source is resolving. Coalesce rapid
+            // presses into one logical delta and drain it as soon as the current
+            // resolve completes. This keeps Next/Previous responsive on slow sources.
+            pendingManualDelta = (pendingManualDelta + delta).coerceIn(-10, 10)
+            return
+        }
         val saved = preferences.loadQueue() ?: return
         val items = saved.first
         if (items.isEmpty()) return
@@ -854,7 +862,15 @@ class PlaybackQueueManager(
                 onComplete?.invoke(Result.failure(error))
             }
             busy = false
+            drainPendingManualMove()
         }
+    }
+
+    private fun drainPendingManualMove() {
+        val delta = pendingManualDelta
+        if (delta == 0) return
+        pendingManualDelta = 0
+        move(delta)
     }
 
     private fun scheduleVideoUpgrade(
