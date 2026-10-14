@@ -7,10 +7,11 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [HistoryEntry::class, FavoriteEntry::class], version = 5, exportSchema = false)
+@Database(entities = [HistoryEntry::class, FavoriteEntry::class, WatchLaterEntry::class], version = 6, exportSchema = false)
 abstract class EzTubeDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
     abstract fun favoriteDao(): FavoriteDao
+    abstract fun watchLaterDao(): WatchLaterDao
 
     companion object {
         @Volatile private var instance: EzTubeDatabase? = null
@@ -56,6 +57,23 @@ abstract class EzTubeDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS watch_later (
+                        mediaId TEXT NOT NULL PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        channel TEXT NOT NULL,
+                        thumbnailUrl TEXT,
+                        channelUrl TEXT,
+                        addedAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL DEFAULT 0,
+                        syncState TEXT NOT NULL DEFAULT 'LOCAL'
+                    )"""
+                )
+            }
+        }
+
         fun get(context: Context): EzTubeDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -63,7 +81,7 @@ abstract class EzTubeDatabase : RoomDatabase() {
                     EzTubeDatabase::class.java,
                     "eztube.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .build()
                     .also { instance = it }
             }
