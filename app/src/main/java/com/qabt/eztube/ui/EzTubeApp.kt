@@ -160,6 +160,7 @@ fun EzTubeApp(
     }
     var preloadWifi by remember { mutableStateOf(playbackPrefs.loadPreloadWifi()) }
     var preloadMobile by remember { mutableStateOf(playbackPrefs.loadPreloadMobile()) }
+    var warnMobileVideo by remember { mutableStateOf(playbackPrefs.loadWarnMobileVideo()) }
     val personalPlaylistStore = remember { PersonalPlaylistStore(context) }
     var personalPlaylists by remember { mutableStateOf(personalPlaylistStore.load()) }
     var queue by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
@@ -614,6 +615,18 @@ fun EzTubeApp(
         if (active == null) {
             errorMessage = "Playback service is not ready yet"
             return
+        }
+
+        if (
+            warnMobileVideo &&
+            networkType == NetworkType.CELLULAR &&
+            videoMode
+        ) {
+            Toast.makeText(
+                context,
+                "Playing video over mobile data",
+                Toast.LENGTH_SHORT
+            ).show()
         }
 
         resolvingId = media.id
@@ -1612,6 +1625,11 @@ fun EzTubeApp(
                     playbackPrefs.savePreloadMobile(enabled)
                     notifyQueueChanged()
                 },
+                warnMobileVideo = warnMobileVideo,
+                onWarnMobileVideo = { enabled ->
+                    warnMobileVideo = enabled
+                    playbackPrefs.saveWarnMobileVideo(enabled)
+                },
                 onResetDataUsage = {
                     dataUsage = networkUsageTracker.reset()
                 },
@@ -1966,6 +1984,8 @@ private fun SettingsScreen(
     onPreloadWifi: (Boolean) -> Unit,
     preloadMobile: Boolean,
     onPreloadMobile: (Boolean) -> Unit,
+    warnMobileVideo: Boolean,
+    onWarnMobileVideo: (Boolean) -> Unit,
     onResetDataUsage: () -> Unit,
     onClearCache: () -> Unit,
     developerUnlocked: Boolean,
@@ -2198,6 +2218,21 @@ private fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Warn for video on mobile", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Shows a warning when a video starts while mobile data is active.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = warnMobileVideo,
+                    onCheckedChange = onWarnMobileVideo
+                )
             }
 
             Column {
