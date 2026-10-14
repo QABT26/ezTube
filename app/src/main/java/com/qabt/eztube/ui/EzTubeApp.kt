@@ -1153,8 +1153,10 @@ fun EzTubeApp(
             Scaffold(bottomBar = {
                 nowPlaying?.let { media -> MiniPlayer(
                     media = media,
+                    controller = controller,
                     isPlaying = isPlaying,
                     isFavorite = favorites.any { it.mediaId == media.id },
+                    isWatchLater = watchLater.any { it.mediaId == media.id },
                     onOpen = {
                         movieDetail = null
                         movieDetailError = null
@@ -1167,6 +1169,7 @@ fun EzTubeApp(
                             else favoritesRepo.add(media)
                         }
                     },
+                    onWatchLater = { toggleWatchLater(media) },
                     onToggle = {
                         if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs)
                         else togglePlayback()
@@ -1205,10 +1208,13 @@ fun EzTubeApp(
             Scaffold(bottomBar = {
                 nowPlaying?.let { media -> MiniPlayer(
                     media = media,
+                    controller = controller,
                     isPlaying = isPlaying,
                     isFavorite = favorites.any { it.mediaId == media.id },
+                    isWatchLater = watchLater.any { it.mediaId == media.id },
                     onOpen = { channelDetail = null; playlistDetail = null; showPlayer = true },
                     onFavorite = { scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } },
+                    onWatchLater = { toggleWatchLater(media) },
                     onToggle = { if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs) else togglePlayback() }
                 ) }
             }) { detailPadding ->
@@ -1240,10 +1246,13 @@ fun EzTubeApp(
             Scaffold(bottomBar = {
                 nowPlaying?.let { media -> MiniPlayer(
                     media = media,
+                    controller = controller,
                     isPlaying = isPlaying,
                     isFavorite = favorites.any { it.mediaId == media.id },
+                    isWatchLater = watchLater.any { it.mediaId == media.id },
                     onOpen = { channelDetail = null; channelError = null; channelLoading = false; showPlayer = true },
                     onFavorite = { scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } },
+                    onWatchLater = { toggleWatchLater(media) },
                     onToggle = { if (controller?.currentMediaItem == null) playMedia(media, resumePositionMs) else togglePlayback() }
                 ) }
             }) { detailPadding ->
@@ -2901,19 +2910,38 @@ private fun TouchMarqueeTitle(
 @Composable
 private fun MiniPlayer(
     media: MediaSummary,
+    controller: MediaController?,
     isPlaying: Boolean,
     isFavorite: Boolean,
+    isWatchLater: Boolean,
     onOpen: () -> Unit,
     onFavorite: () -> Unit,
+    onWatchLater: () -> Unit,
     onToggle: () -> Unit
 ) {
+    var positionMs by remember(media.id) { mutableLongStateOf(0L) }
+    var durationMs by remember(media.id) { mutableLongStateOf(0L) }
+
+    LaunchedEffect(controller, media.id) {
+        while (true) {
+            val active = controller
+            positionMs = active?.currentPosition?.coerceAtLeast(0L) ?: 0L
+            durationMs = active?.duration?.takeIf { it > 0L } ?: 0L
+            delay(500L)
+        }
+    }
+
     Surface(tonalElevation = 4.dp) {
         Row(
-            Modifier.fillMaxWidth().height(66.dp).clickable(onClick = onOpen).padding(horizontal = 10.dp),
+            Modifier.fillMaxWidth().height(70.dp).clickable(onClick = onOpen).padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AsyncImage(media.thumbnailUrl, null, Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
-                contentScale = ContentScale.Crop)
+            AsyncImage(
+                media.thumbnailUrl,
+                null,
+                Modifier.size(50.dp).clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop
+            )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -2929,18 +2957,62 @@ private fun MiniPlayer(
                         spacing = MarqueeSpacing(32.dp)
                     )
                 )
-                Text(media.channel, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            }
-            IconButton(onClick = onFavorite) {
-                Icon(
-                    if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
-                    if (isFavorite) "Remove from favorites" else "Add to favorites"
+                Text(
+                    media.channel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Outlined.AccessTime,
+                        null,
+                        Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(3.dp))
+                    Text(
+                        formatDuration(positionMs / 1000L) + " / " +
+                            if (durationMs > 0L) formatDuration(durationMs / 1000L) else "--:--",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+            }
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                IconButton(
+                    onClick = onWatchLater,
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    Icon(
+                        if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                        if (isWatchLater) "Remove from Watch later" else "Watch later",
+                        Modifier.size(20.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onFavorite,
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    Icon(
+                        if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                        if (isFavorite) "Remove from favorites" else "Add to favorites",
+                        Modifier.size(20.dp)
+                    )
+                }
             }
             IconButton(onClick = onToggle) {
-                Icon(if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                    if (isPlaying) "Pause" else "Play")
+                Icon(
+                    if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                    if (isPlaying) "Pause" else "Play"
+                )
             }
         }
     }
@@ -3165,7 +3237,8 @@ private fun HomeScreen(
                         media = media,
                         resolving = resolvingId == media.id,
                         isWatchLater = media.id in watchLaterIds,
-                        onToggleWatchLater = { onToggleWatchLater(media) }
+                        onToggleWatchLater = { onToggleWatchLater(media) },
+                        durationInThumbnail = true
                     ) { onPlay(media, trending) }
                 }
             }
@@ -3224,6 +3297,7 @@ private fun CompactMediaRow(
     resolving: Boolean,
     isWatchLater: Boolean = false,
     onToggleWatchLater: (() -> Unit)? = null,
+    durationInThumbnail: Boolean = false,
     onClick: () -> Unit
 ) {
     Row(
@@ -3238,20 +3312,23 @@ private fun CompactMediaRow(
                 Modifier.fillMaxSize().clip(RoundedCornerShape(9.dp)),
                 contentScale = ContentScale.Crop
             )
-            media.durationSeconds.takeIf { it >= 0 }?.let { seconds ->
-                Text(
-                    formatDuration(seconds),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = androidx.compose.ui.graphics.Color.White,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(3.dp)
-                        .background(
-                            MaterialTheme.colorScheme.scrim.copy(alpha = 0.78f),
-                            RoundedCornerShape(4.dp)
-                        )
-                        .padding(horizontal = 3.dp, vertical = 1.dp)
-                )
+            if (durationInThumbnail) {
+                media.durationSeconds.takeIf { it >= 0 }?.let { seconds ->
+                    Text(
+                        formatDuration(seconds),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = androidx.compose.ui.graphics.Color.White,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(2.dp)
+                            .background(
+                                MaterialTheme.colorScheme.scrim.copy(alpha = 0.80f),
+                                RoundedCornerShape(3.dp)
+                            )
+                            .padding(horizontal = 2.dp)
+                    )
+                }
             }
         }
         Spacer(Modifier.width(10.dp))
@@ -3259,7 +3336,7 @@ private fun CompactMediaRow(
             TouchMarqueeTitle(text = media.title)
             Text(media.channel, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            val meta = mediaMeta(media)
+            val meta = mediaMeta(media, includeDuration = !durationInThumbnail)
             if (meta.isNotBlank()) {
                 Text(meta, style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
