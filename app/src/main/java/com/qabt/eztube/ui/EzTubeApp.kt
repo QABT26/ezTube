@@ -1339,15 +1339,6 @@ private fun AppHeader(onSettings: () -> Unit, onDoubleTapCenter: () -> Unit) {
                 color = MaterialTheme.colorScheme.primary)
             Text("Tube", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f).fillMaxHeight().pointerInput(Unit) { detectTapGestures(onDoubleTap = { onDoubleTapCenter() }) })
-            Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surfaceVariant) {
-                Text(
-                    "AUDIO ONLY",
-                    Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-            Spacer(Modifier.width(2.dp))
             IconButton(onClick = onSettings) {
                 Icon(Icons.Outlined.Settings, "Settings")
             }
