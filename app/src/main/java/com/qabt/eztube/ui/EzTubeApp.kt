@@ -3786,7 +3786,8 @@ private fun LibraryScreen(
                         FilledTonalButton(
                             onClick = onPlayAllYouTubeFavorites,
                             enabled = resolvingId == null,
-                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp)
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
+                            modifier = Modifier.height(34.dp)
                         ) {
                             Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
                             Spacer(Modifier.width(3.dp))
@@ -3880,7 +3881,8 @@ private fun LibraryScreen(
                         FilledTonalButton(
                             onClick = onPlayAllMovieFavorites,
                             enabled = resolvingId == null,
-                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp)
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
+                            modifier = Modifier.height(34.dp)
                         ) {
                             Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
                             Spacer(Modifier.width(3.dp))
@@ -3970,28 +3972,24 @@ private fun LibraryScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                if (watchLater.size > 3) {
+                    TextButton(
+                        onClick = { showAllWatchLater = !showAllWatchLater },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                    ) {
+                        Text(if (showAllWatchLater) "Show less" else "View all")
+                    }
+                }
                 if (watchLater.isNotEmpty()) {
-                    AssistChip(
+                    FilledTonalButton(
                         onClick = onPlayAllWatchLater,
                         enabled = resolvingId == null,
-                        label = { Text("All", maxLines = 1) },
-                        leadingIcon = {
-                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(15.dp))
-                        },
-                        modifier = Modifier.height(32.dp)
-                    )
-                    if (watchLater.size > 3) {
-                        Spacer(Modifier.width(5.dp))
-                        AssistChip(
-                            onClick = { showAllWatchLater = !showAllWatchLater },
-                            label = {
-                                Text(
-                                    if (showAllWatchLater) "Less" else "View all",
-                                    maxLines = 1
-                                )
-                            },
-                            modifier = Modifier.height(32.dp)
-                        )
+                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Icon(Icons.Outlined.PlayArrow, null, Modifier.size(15.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text("All")
                     }
                 }
             }
@@ -4105,7 +4103,8 @@ private fun LibraryScreen(
                         playlistNameDraft = ""
                         showCreatePlaylist = true
                     },
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    modifier = Modifier.height(34.dp)
                 ) {
                     Icon(Icons.Outlined.Add, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
