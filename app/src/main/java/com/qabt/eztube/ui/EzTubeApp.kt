@@ -74,6 +74,7 @@ import com.qabt.eztube.playback.PlaybackPreferences
 import com.qabt.eztube.playback.PlaybackSource
 import com.qabt.eztube.playback.PlaybackSourceResolver
 import com.qabt.eztube.playback.PlaybackRuntimePolicy
+import com.qabt.eztube.playback.PlayerPresentationPolicy
 import com.qabt.eztube.movie.MovieProviderRegistry
 import com.qabt.eztube.movie.MovieDetail
 import com.qabt.eztube.youtube.MediaSummary
@@ -601,7 +602,11 @@ fun EzTubeApp(
         // Movie/local video are video-first and therefore open Now Playing.
         val isMovie = media.id.startsWith("movie:")
         val isLocalVideo = media.channel == "Local video"
-        showPlayer = isMovie || isLocalVideo || videoMode
+        showPlayer = PlayerPresentationPolicy.shouldOpenFullPlayer(
+            isMovie = isMovie,
+            isLocalVideo = isLocalVideo,
+            videoMode = videoMode
+        )
     }
 
     LaunchedEffect(externalMedia?.id, controller) {
