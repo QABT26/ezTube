@@ -65,6 +65,12 @@ class PlaybackService : MediaSessionService() {
         serviceScope.launch {
             while (true) {
                 networkUsageTracker.sample()
+                if (
+                    preferences.networkPolicyBlockReason() != null &&
+                    player?.isPlaying == true
+                ) {
+                    player?.pause()
+                }
                 delay(5_000L)
             }
         }
