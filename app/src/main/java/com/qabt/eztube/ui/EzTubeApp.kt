@@ -78,6 +78,13 @@ import com.qabt.eztube.playback.PlaybackSourceResolver
 import com.qabt.eztube.playback.PlaybackRuntimePolicy
 import com.qabt.eztube.playback.PlayerPresentationPolicy
 import com.qabt.eztube.playback.QueueLimitPolicy
+import com.qabt.eztube.playback.NetworkType
+import com.qabt.eztube.playback.NetworkEnvironment
+import com.qabt.eztube.playback.NetworkUsageTracker
+import com.qabt.eztube.playback.DataUsageSnapshot
+import com.qabt.eztube.playback.StorageSnapshot
+import com.qabt.eztube.playback.StorageUsage
+import com.qabt.eztube.playback.MobileDataPriority
 import com.qabt.eztube.movie.MovieProviderRegistry
 import com.qabt.eztube.movie.MovieDetail
 import com.qabt.eztube.youtube.MediaSummary
@@ -89,6 +96,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 private enum class Tab(val label: String) { HOME("Home"), SEARCH("Search"), LIBRARY("Library") }
 private enum class SearchSourceMode { YOUTUBE, MOVIE }
@@ -134,6 +142,24 @@ fun EzTubeApp(
     }
 
     val playbackPrefs = remember { PlaybackPreferences(context) }
+    val networkUsageTracker = remember { NetworkUsageTracker(context) }
+    var networkType by remember { mutableStateOf(NetworkEnvironment.type(context)) }
+    var dataUsage by remember { mutableStateOf(networkUsageTracker.sample()) }
+    var storageSnapshot by remember { mutableStateOf(StorageUsage.snapshot(context)) }
+    var mobilePlaybackAllowed by remember {
+        mutableStateOf(playbackPrefs.loadMobilePlaybackAllowed())
+    }
+    var dataSaverEnabled by remember {
+        mutableStateOf(playbackPrefs.loadDataSaverEnabled())
+    }
+    var mobileDataPriority by remember {
+        mutableStateOf(playbackPrefs.loadMobileDataPriority())
+    }
+    var mobileDataLimitMb by remember {
+        mutableLongStateOf(playbackPrefs.loadMobileDataLimitMb())
+    }
+    var preloadWifi by remember { mutableStateOf(playbackPrefs.loadPreloadWifi()) }
+    var preloadMobile by remember { mutableStateOf(playbackPrefs.loadPreloadMobile()) }
     val personalPlaylistStore = remember { PersonalPlaylistStore(context) }
     var personalPlaylists by remember { mutableStateOf(personalPlaylistStore.load()) }
     var queue by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
@@ -188,6 +214,21 @@ fun EzTubeApp(
         mutableStateOf(RepeatMode.entries.getOrElse(playbackPrefs.loadRepeatMode()) { RepeatMode.OFF })
     }
     var showSettings by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            networkType = NetworkEnvironment.type(context)
+            dataUsage = networkUsageTracker.sample()
+            delay(2_000L)
+        }
+    }
+    LaunchedEffect(showSettings) {
+        if (showSettings) {
+            dataUsage = networkUsageTracker.sample()
+            storageSnapshot = withContext(Dispatchers.IO) { StorageUsage.snapshot(context) }
+        }
+    }
+
     var resolvingId by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showPlayer by remember { mutableStateOf(false) }
@@ -1173,6 +1214,7 @@ fun EzTubeApp(
                     isPlaying = isPlaying,
                     isFavorite = favorites.any { it.mediaId == media.id },
                     isWatchLater = watchLater.any { it.mediaId == media.id },
+                    networkType = networkType,
                     onOpen = {
                         movieDetail = null
                         movieDetailError = null
@@ -1228,6 +1270,7 @@ fun EzTubeApp(
                     isPlaying = isPlaying,
                     isFavorite = favorites.any { it.mediaId == media.id },
                     isWatchLater = watchLater.any { it.mediaId == media.id },
+                    networkType = networkType,
                     onOpen = { channelDetail = null; playlistDetail = null; showPlayer = true },
                     onFavorite = { scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } },
                     onWatchLater = { toggleWatchLater(media) },
@@ -1266,6 +1309,7 @@ fun EzTubeApp(
                     isPlaying = isPlaying,
                     isFavorite = favorites.any { it.mediaId == media.id },
                     isWatchLater = watchLater.any { it.mediaId == media.id },
+                    networkType = networkType,
                     onOpen = { channelDetail = null; channelError = null; channelLoading = false; showPlayer = true },
                     onFavorite = { scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } },
                     onWatchLater = { toggleWatchLater(media) },
@@ -1321,7 +1365,8 @@ fun EzTubeApp(
                     hasNext = (queueIndex >= 0 && queueIndex < queue.lastIndex) ||
                         (repeatMode == RepeatMode.ALL && queue.size > 1),
                     isFavorite = favorites.any { it.mediaId == nowPlaying?.id },
-                    isWatchLater = watchLater.any { it.mediaId == nowPlaying?.id }
+                    isWatchLater = watchLater.any { it.mediaId == nowPlaying?.id },
+                    networkType = networkType
                 ),
                 actions = FullPlayerActions(
                     onSubtitle = { selectMovieSubtitle(it) },
@@ -1527,6 +1572,60 @@ fun EzTubeApp(
                     )
                     homeRefreshToken += 1
                 },
+                networkType = networkType,
+                dataUsage = dataUsage,
+                storageSnapshot = storageSnapshot,
+                mobilePlaybackAllowed = mobilePlaybackAllowed,
+                onMobilePlaybackAllowed = { enabled ->
+                    mobilePlaybackAllowed = enabled
+                    playbackPrefs.saveMobilePlaybackAllowed(enabled)
+                    if (!enabled && networkType == NetworkType.CELLULAR) {
+                        controller?.pause()
+                    }
+                    notifyQueueChanged()
+                },
+                dataSaverEnabled = dataSaverEnabled,
+                onDataSaverEnabled = { enabled ->
+                    dataSaverEnabled = enabled
+                    playbackPrefs.saveDataSaverEnabled(enabled)
+                },
+                mobileDataPriority = mobileDataPriority,
+                onMobileDataPriority = { priority ->
+                    mobileDataPriority = priority
+                    playbackPrefs.saveMobileDataPriority(priority)
+                },
+                mobileDataLimitMb = mobileDataLimitMb,
+                onMobileDataLimitMb = { limit ->
+                    mobileDataLimitMb = limit
+                    playbackPrefs.saveMobileDataLimitMb(limit)
+                    notifyQueueChanged()
+                },
+                preloadWifi = preloadWifi,
+                onPreloadWifi = { enabled ->
+                    preloadWifi = enabled
+                    playbackPrefs.savePreloadWifi(enabled)
+                    notifyQueueChanged()
+                },
+                preloadMobile = preloadMobile,
+                onPreloadMobile = { enabled ->
+                    preloadMobile = enabled
+                    playbackPrefs.savePreloadMobile(enabled)
+                    notifyQueueChanged()
+                },
+                onResetDataUsage = {
+                    dataUsage = networkUsageTracker.reset()
+                },
+                onClearCache = {
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            StorageUsage.clearCache(context)
+                        }
+                        storageSnapshot = withContext(Dispatchers.IO) {
+                            StorageUsage.snapshot(context)
+                        }
+                        Toast.makeText(context, "Cache cleared", Toast.LENGTH_SHORT).show()
+                    }
+                },
                 developerUnlocked = developerUnlocked,
                 developerMode = developerMode,
                 onDeveloperMode = {
@@ -1557,6 +1656,7 @@ fun EzTubeApp(
                                 isPlaying = isPlaying,
                                 isFavorite = favorites.any { it.mediaId == media.id },
                                 isWatchLater = watchLater.any { it.mediaId == media.id },
+                                networkType = networkType,
                                 onOpen = { channelDetail = null; playlistDetail = null; showPlayer = true },
                                 onFavorite = { scope.launch(Dispatchers.IO) { if (favorites.any { it.mediaId == media.id }) favoritesRepo.remove(media.id) else favoritesRepo.add(media) } },
                                 onWatchLater = { toggleWatchLater(media) },
@@ -1851,6 +1951,23 @@ private fun SettingsScreen(
     onMetadataLanguage: (String) -> Unit,
     contentRegion: String,
     onContentRegion: (String) -> Unit,
+    networkType: NetworkType,
+    dataUsage: DataUsageSnapshot,
+    storageSnapshot: StorageSnapshot,
+    mobilePlaybackAllowed: Boolean,
+    onMobilePlaybackAllowed: (Boolean) -> Unit,
+    dataSaverEnabled: Boolean,
+    onDataSaverEnabled: (Boolean) -> Unit,
+    mobileDataPriority: MobileDataPriority,
+    onMobileDataPriority: (MobileDataPriority) -> Unit,
+    mobileDataLimitMb: Long,
+    onMobileDataLimitMb: (Long) -> Unit,
+    preloadWifi: Boolean,
+    onPreloadWifi: (Boolean) -> Unit,
+    preloadMobile: Boolean,
+    onPreloadMobile: (Boolean) -> Unit,
+    onResetDataUsage: () -> Unit,
+    onClearCache: () -> Unit,
     developerUnlocked: Boolean,
     developerMode: Boolean,
     onDeveloperMode: (Boolean) -> Unit,
@@ -1929,6 +2046,223 @@ private fun SettingsScreen(
                     )
                 }
                 Switch(checked = shuffleEnabled, onCheckedChange = onShuffle)
+            }
+
+            HorizontalDivider()
+            Text(
+                "Network & data",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        NetworkStatusIcon(networkType, 17.dp)
+                        Spacer(Modifier.width(7.dp))
+                        Text(
+                            NetworkEnvironment.label(networkType),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            formatBytes(dataUsage.last30Days.totalBytes) + " / 30 days",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Today", style = MaterialTheme.typography.bodySmall)
+                        Text(formatBytes(dataUsage.today.totalBytes), style = MaterialTheme.typography.bodySmall)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Last 7 days", style = MaterialTheme.typography.bodySmall)
+                        Text(formatBytes(dataUsage.last7Days.totalBytes), style = MaterialTheme.typography.bodySmall)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Wi-Fi", style = MaterialTheme.typography.bodySmall)
+                        Text(formatBytes(dataUsage.last30Days.wifiBytes), style = MaterialTheme.typography.bodySmall)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Mobile", style = MaterialTheme.typography.bodySmall)
+                        Text(formatBytes(dataUsage.last30Days.mobileBytes), style = MaterialTheme.typography.bodySmall)
+                    }
+                    TextButton(
+                        onClick = onResetDataUsage,
+                        modifier = Modifier.align(Alignment.End),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                    ) {
+                        Text("Reset statistics")
+                    }
+                }
+            }
+
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Allow mobile-data playback", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Turn off to play only on Wi-Fi or other non-mobile networks.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = mobilePlaybackAllowed,
+                    onCheckedChange = onMobilePlaybackAllowed
+                )
+            }
+
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Data saver", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Uses saver audio and caps video around 360p for new items.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = dataSaverEnabled,
+                    onCheckedChange = onDataSaverEnabled
+                )
+            }
+
+            Column {
+                Text("Mobile-data priority", fontWeight = FontWeight.SemiBold)
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    MobileDataPriority.entries.forEach { option ->
+                        FilterChip(
+                            selected = mobileDataPriority == option,
+                            onClick = { onMobileDataPriority(option) },
+                            label = {
+                                Text(
+                                    when (option) {
+                                        MobileDataPriority.DATA_SAVER -> "Saver"
+                                        MobileDataPriority.BALANCED -> "Balanced"
+                                        MobileDataPriority.QUALITY -> "Quality"
+                                    },
+                                    maxLines = 1
+                                )
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Column {
+                Text("Mobile-data limit", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Stops new playback on mobile data after the selected amount since statistics were reset.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    listOf(
+                        0L to "No limit",
+                        250L to "250 MB",
+                        500L to "500 MB",
+                        1024L to "1 GB",
+                        2048L to "2 GB"
+                    ).forEach { (limit, label) ->
+                        FilterChip(
+                            selected = mobileDataLimitMb == limit,
+                            onClick = { onMobileDataLimitMb(limit) },
+                            label = { Text(label, maxLines = 1) },
+                            modifier = Modifier.height(32.dp)
+                        )
+                    }
+                }
+                if (mobileDataLimitMb > 0L) {
+                    val used = dataUsage.sinceReset.mobileBytes
+                    val limitBytes = mobileDataLimitMb * 1024L * 1024L
+                    val fraction = (used.toFloat() / limitBytes.toFloat()).coerceIn(0f, 1f)
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                    )
+                    Text(
+                        formatBytes(used) + " / " + formatBytes(limitBytes),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Column {
+                Text("Preload next item", fontWeight = FontWeight.SemiBold)
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Wi-Fi", modifier = Modifier.weight(1f))
+                    Switch(checked = preloadWifi, onCheckedChange = onPreloadWifi)
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Mobile data", modifier = Modifier.weight(1f))
+                    Switch(checked = preloadMobile, onCheckedChange = onPreloadMobile)
+                }
+            }
+
+            HorizontalDivider()
+            Text(
+                "Storage",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("App")
+                        Text(formatBytes(storageSnapshot.apkBytes))
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("App data")
+                        Text(formatBytes(storageSnapshot.appDataBytes))
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Cache")
+                        Text(formatBytes(storageSnapshot.cacheBytes))
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Total " + formatBytes(storageSnapshot.totalBytes),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilledTonalButton(
+                            onClick = onClearCache,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(Icons.Outlined.CleaningServices, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Clear cache")
+                        }
+                    }
+                }
             }
 
             HorizontalDivider()
@@ -2956,12 +3290,47 @@ private fun TouchMarqueeTitle(
 }
 
 @Composable
+private fun NetworkStatusIcon(
+    networkType: NetworkType,
+    size: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier
+) {
+    Icon(
+        imageVector = when (networkType) {
+            NetworkType.WIFI -> Icons.Outlined.Wifi
+            NetworkType.CELLULAR -> Icons.Outlined.SignalCellularAlt
+            NetworkType.OTHER -> Icons.Outlined.Public
+            NetworkType.OFFLINE -> Icons.Outlined.CloudOff
+        },
+        contentDescription = NetworkEnvironment.label(networkType),
+        modifier = modifier.size(size),
+        tint = if (networkType == NetworkType.OFFLINE) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
+    )
+}
+
+private fun formatBytes(bytes: Long): String {
+    val value = bytes.coerceAtLeast(0L)
+    if (value < 1024L) return "${value} B"
+    val kb = value / 1024.0
+    if (kb < 1024.0) return String.format(Locale.US, "%.1f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024.0) return String.format(Locale.US, "%.1f MB", mb)
+    val gb = mb / 1024.0
+    return String.format(Locale.US, "%.2f GB", gb)
+}
+
+@Composable
 private fun MiniPlayer(
     media: MediaSummary,
     controller: MediaController?,
     isPlaying: Boolean,
     isFavorite: Boolean,
     isWatchLater: Boolean,
+    networkType: NetworkType,
     onOpen: () -> Unit,
     onFavorite: () -> Unit,
     onWatchLater: () -> Unit,
@@ -2989,6 +3358,7 @@ private fun MiniPlayer(
     }
 
     Surface(tonalElevation = 4.dp) {
+        Box(Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().height(70.dp).clickable(onClick = onOpen).padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -3074,6 +3444,12 @@ private fun MiniPlayer(
                     if (isPlaying) "Pause" else "Play"
                 )
             }
+        }
+        NetworkStatusIcon(
+            networkType,
+            10.dp,
+            Modifier.align(Alignment.TopEnd).padding(top = 3.dp, end = 43.dp)
+        )
         }
     }
 }
@@ -4713,7 +5089,8 @@ private data class FullPlayerState(
     val hasPrevious: Boolean,
     val hasNext: Boolean,
     val isFavorite: Boolean,
-    val isWatchLater: Boolean
+    val isWatchLater: Boolean,
+    val networkType: NetworkType
 )
 
 private class FullPlayerActions(
@@ -4774,6 +5151,7 @@ private fun FullPlayer(
     val hasNext = state.hasNext
     val isFavorite = state.isFavorite
     val isWatchLater = state.isWatchLater
+    val networkType = state.networkType
     val movieEpisodePosition =
         if (isMovie && queue.size > 1 && queueIndex in queue.indices) {
             "${queueIndex + 1} / ${queue.size}"
@@ -5553,7 +5931,9 @@ private fun FullPlayer(
                 )
             }
             Spacer(Modifier.weight(1f))
-            Spacer(Modifier.size(48.dp))
+            Box(Modifier.size(48.dp), contentAlignment = Alignment.CenterEnd) {
+                NetworkStatusIcon(networkType, 14.dp)
+            }
         }
 
         Column(
@@ -6045,7 +6425,10 @@ private fun FullPlayer(
             }
             if (showQueue) {
                 Surface(
-                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false).padding(bottom = 2.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 180.dp, max = 360.dp)
+                        .padding(bottom = 2.dp),
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                 ) {
