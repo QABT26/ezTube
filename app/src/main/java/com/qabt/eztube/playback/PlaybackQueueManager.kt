@@ -746,6 +746,10 @@ class PlaybackQueueManager(
             val nativeNext = player.getMediaItemAt(player.currentMediaItemIndex + 1)
             if (nativeNext.mediaId == items[target].id) {
                 player.seekToNextMediaItem()
+                // Manual Next is an explicit play action. If the player was paused,
+                // moving to a preloaded native item must resume immediately instead
+                // of preserving the old paused playWhenReady state.
+                player.play()
                 return
             }
         }
@@ -753,6 +757,7 @@ class PlaybackQueueManager(
             val nativePrevious = player.getMediaItemAt(player.currentMediaItemIndex - 1)
             if (nativePrevious.mediaId == items[target].id) {
                 player.seekToPreviousMediaItem()
+                player.play()
                 return
             }
         }
