@@ -1255,33 +1255,62 @@ fun EzTubeApp() {
                         listState = libraryListState,
                         resolvingId = resolvingId,
                         onPlay = { entry ->
-                            val items = if (entry.mediaId.startsWith("movie:")) {
+                            val isMovie = isMovieLibraryItem(entry.mediaId, entry.channel)
+                            val items = if (isMovie) {
                                 listOf(entry.toMediaSummary())
                             } else {
-                                recent.map { it.toMediaSummary() }
+                                recent
+                                    .filterNot {
+                                        isMovieLibraryItem(it.mediaId, it.channel)
+                                    }
+                                    .map { it.toMediaSummary() }
                             }
                             startQueue(
                                 entry.toMediaSummary(),
                                 items,
                                 startPositionMs = entry.positionMs.coerceAtLeast(0L)
                             )
+                            if (!isMovie && videoMode) {
+                                showPlayer = true
+                            }
                         },
                         onOpenMovie = { entry -> openMovieFromHistory(entry) },
                         onOpenFavoriteMovie = { entry -> openMovieFromFavorite(entry) },
                         onPlayFavorite = { entry ->
                             val media = entry.toMediaSummary()
-                            val items = if (entry.mediaId.startsWith("movie:")) {
+                            val isMovie = isMovieLibraryItem(entry.mediaId, entry.channel)
+                            val items = if (isMovie) {
                                 listOf(media)
                             } else {
                                 favorites
-                                    .filterNot { isMovieLibraryItem(it.mediaId, it.channel) }
+                                    .filterNot {
+                                        isMovieLibraryItem(it.mediaId, it.channel)
+                                    }
                                     .map { it.toMediaSummary() }
                             }
                             startQueue(media, items)
+                            if (!isMovie && videoMode) {
+                                showPlayer = true
+                            }
                         },
-                        onPlayAllFavorites = {
+                        onPlayAllYouTubeFavorites = {
                             val items = favorites
-                                .filterNot { isMovieLibraryItem(it.mediaId, it.channel) }
+                                .filterNot {
+                                    isMovieLibraryItem(it.mediaId, it.channel)
+                                }
+                                .map { it.toMediaSummary() }
+                            if (items.isNotEmpty()) {
+                                startQueue(items.first(), items)
+                                if (videoMode) {
+                                    showPlayer = true
+                                }
+                            }
+                        },
+                        onPlayAllMovieFavorites = {
+                            val items = favorites
+                                .filter {
+                                    isMovieLibraryItem(it.mediaId, it.channel)
+                                }
                                 .map { it.toMediaSummary() }
                             if (items.isNotEmpty()) {
                                 startQueue(items.first(), items)
@@ -1311,10 +1340,14 @@ private fun AppHeader(onSettings: () -> Unit, onDoubleTapCenter: () -> Unit) {
             Text("Tube", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f).fillMaxHeight().pointerInput(Unit) { detectTapGestures(onDoubleTap = { onDoubleTapCenter() }) })
             Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surfaceVariant) {
-                Text("AUDIO ONLY", Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "AUDIO ONLY",
+                    Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(2.dp))
             IconButton(onClick = onSettings) {
                 Icon(Icons.Outlined.Settings, "Settings")
             }
@@ -2680,12 +2713,15 @@ private fun LibraryScreen(
     onOpenMovie: (HistoryEntry) -> Unit,
     onOpenFavoriteMovie: (FavoriteEntry) -> Unit,
     onPlayFavorite: (FavoriteEntry) -> Unit,
-    onPlayAllFavorites: () -> Unit,
+    onPlayAllYouTubeFavorites: () -> Unit,
+    onPlayAllMovieFavorites: () -> Unit,
     onRemoveFavorite: (FavoriteEntry) -> Unit,
     onDelete: (HistoryEntry) -> Unit,
     onClear: () -> Unit
 ) {
     var showAllHistory by remember { mutableStateOf(false) }
+    var showAllYouTubeFavorites by remember { mutableStateOf(false) }
+    var showAllMovieFavorites by remember { mutableStateOf(false) }
     val youtubeFavorites = remember(favorites) {
         favorites.filterNot { isMovieLibraryItem(it.mediaId, it.channel) }
     }
@@ -2716,17 +2752,6 @@ private fun LibraryScreen(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f)
                     )
-                    if (youtubeFavorites.isNotEmpty()) {
-                        FilledTonalButton(
-                            onClick = onPlayAllFavorites,
-                            enabled = resolvingId == null,
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Play YouTube")
-                        }
-                    }
                 }
             }
         }
@@ -2754,15 +2779,31 @@ private fun LibraryScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(Modifier.weight(1f))
-                        Text(
-                            "${youtubeFavorites.size}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (youtubeFavorites.size > 3) {
+                            TextButton(
+                                onClick = {
+                                    showAllYouTubeFavorites = !showAllYouTubeFavorites
+                                },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) {
+                                Text(
+                                    if (showAllYouTubeFavorites) "Show less" else "View all"
+                                )
+                            }
+                        }
+                        FilledTonalButton(
+                            onClick = onPlayAllYouTubeFavorites,
+                            enabled = resolvingId == null,
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text("Play all")
+                        }
                     }
                 }
                 items(
-                    youtubeFavorites,
+                    if (showAllYouTubeFavorites) youtubeFavorites else youtubeFavorites.take(3),
                     key = { "fav-yt-" + it.mediaId }
                 ) { entry ->
                     Row(
@@ -2819,15 +2860,31 @@ private fun LibraryScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(Modifier.weight(1f))
-                        Text(
-                            "${movieFavorites.size}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (movieFavorites.size > 3) {
+                            TextButton(
+                                onClick = {
+                                    showAllMovieFavorites = !showAllMovieFavorites
+                                },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) {
+                                Text(
+                                    if (showAllMovieFavorites) "Show less" else "View all"
+                                )
+                            }
+                        }
+                        FilledTonalButton(
+                            onClick = onPlayAllMovieFavorites,
+                            enabled = resolvingId == null,
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text("Play all")
+                        }
                     }
                 }
                 items(
-                    movieFavorites,
+                    if (showAllMovieFavorites) movieFavorites else movieFavorites.take(3),
                     key = { "fav-movie-" + it.mediaId }
                 ) { entry ->
                     Row(
