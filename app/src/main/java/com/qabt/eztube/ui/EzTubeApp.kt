@@ -191,7 +191,7 @@ fun EzTubeApp(
     var trending by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var trendingLoading by remember { mutableStateOf(false) }
     var homeRefreshToken by remember { mutableIntStateOf(0) }
-    var trendingTopic by remember { mutableStateOf(playbackPrefs.loadTrendingTopic()) }
+    var trendingTopics by remember { mutableStateOf(playbackPrefs.loadTrendingTopics()) }
     var trendingLanguage by remember { mutableStateOf(playbackPrefs.loadTrendingLanguage()) }
     var metadataLanguage by remember { mutableStateOf(playbackPrefs.loadMetadataLanguage()) }
     var contentRegion by remember { mutableStateOf(playbackPrefs.loadContentRegion()) }
@@ -891,52 +891,38 @@ fun EzTubeApp(
         sleepMinutes = null
     }
 
-    LaunchedEffect(homeRefreshToken, trendingTopic, trendingLanguage) {
+    LaunchedEffect(homeRefreshToken, trendingTopics, trendingLanguage) {
         trendingLoading = true
-        var loaded: List<MediaSummary> = emptyList()
+        val topicOrder = listOf("Music", "Podcasts", "Gaming", "Movies", "Live")
+        val selectedTopics = topicOrder.filter { it in trendingTopics }.ifEmpty { listOf("Music") }
 
-        for (attempt in 0 until 3) {
-            loaded = runCatching {
-                withContext(Dispatchers.IO) {
-                    source.trending(trendingTopic, trendingLanguage)
-                }
-            }.getOrDefault(emptyList())
-
-            if (loaded.isNotEmpty()) break
-            if (attempt < 2) delay((attempt + 1) * 750L)
-        }
-
-        if (loaded.isEmpty()) {
-            val languagePrefix = when (trendingLanguage) {
-                "Vietnamese" -> "Việt Nam "
-                "English" -> "English "
-                "Korean" -> "Korean "
-                "Japanese" -> "Japanese "
-                else -> ""
-            }
-            val topicQuery = when (trendingTopic) {
-                "Podcasts" -> "podcast"
-                "Gaming" -> "gaming"
-                "Movies" -> "movie trailer"
-                "Live" -> "live"
-                else -> "music"
-            }
-
-            val fallbackQueries = listOf(
-                "$languagePrefix$topicQuery".trim(),
-                topicQuery,
-                if (trendingTopic == "Music") "nhạc" else topicQuery
-            ).distinct()
-
-            for (query in fallbackQueries) {
-                loaded = runCatching {
-                    withContext(Dispatchers.IO) { source.search(query) }
+        val topicResults = withContext(Dispatchers.IO) {
+            selectedTopics.map { topic ->
+                topic to runCatching {
+                    source.trending(topic, trendingLanguage)
                 }.getOrDefault(emptyList())
-                if (loaded.isNotEmpty()) break
             }
         }
 
-        trending = loaded
+        // Interleave topics instead of concatenating them so one large category
+        // cannot push the other selected categories out of the first screen.
+        val merged = mutableListOf<MediaSummary>()
+        var row = 0
+        while (merged.size < 30) {
+            var added = false
+            for ((_, items) in topicResults) {
+                items.getOrNull(row)?.let {
+                    if (merged.none { existing -> existing.id == it.id }) {
+                        merged += it
+                    }
+                    added = true
+                }
+            }
+            if (!added) break
+            row += 1
+        }
+
+        trending = merged.take(30)
         trendingLoading = false
     }
 
@@ -1382,8 +1368,11 @@ fun EzTubeApp(
                 onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it); notifyQueueChanged() },
                 shuffleEnabled = shuffleEnabled,
                 onShuffle = { setShuffleEnabled(it) },
-                trendingTopic = trendingTopic,
-                onTrendingTopic = { trendingTopic = it; playbackPrefs.saveTrendingTopic(it) },
+                trendingTopics = trendingTopics,
+                onTrendingTopics = { topics ->
+                    trendingTopics = topics
+                    playbackPrefs.saveTrendingTopics(topics)
+                },
                 trendingLanguage = trendingLanguage,
                 onTrendingLanguage = { trendingLanguage = it; playbackPrefs.saveTrendingLanguage(it) },
                 metadataLanguage = metadataLanguage,
@@ -1662,6 +1651,7 @@ private fun AppHeader(onSettings: () -> Unit, onDoubleTapCenter: () -> Unit) {
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsScreen(
     quality: AudioQuality,
@@ -1672,8 +1662,8 @@ private fun SettingsScreen(
     onAutoplay: (Boolean) -> Unit,
     shuffleEnabled: Boolean,
     onShuffle: (Boolean) -> Unit,
-    trendingTopic: String,
-    onTrendingTopic: (String) -> Unit,
+    trendingTopics: Set<String>,
+    onTrendingTopics: (Set<String>) -> Unit,
     trendingLanguage: String,
     onTrendingLanguage: (String) -> Unit,
     metadataLanguage: String,
@@ -1810,9 +1800,39 @@ private fun SettingsScreen(
             HorizontalDivider()
             Text("Trending", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("Topic", fontWeight = FontWeight.SemiBold)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(
+                "Select one or more topics.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 listOf("Music", "Podcasts", "Gaming", "Movies", "Live").forEach { option ->
-                    CompactPresetButton(option, trendingTopic == option, { onTrendingTopic(option) }, Modifier.weight(1f))
+                    val selected = option in trendingTopics
+                    FilterChip(
+                        modifier = Modifier.height(32.dp),
+                        selected = selected,
+                        onClick = {
+                            val updated = if (selected) {
+                                trendingTopics - option
+                            } else {
+                                trendingTopics + option
+                            }
+                            // Trending should always have at least one source category.
+                            if (updated.isNotEmpty()) onTrendingTopics(updated)
+                        },
+                        label = {
+                            Text(
+                                option,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    )
                 }
             }
             Text("Language", fontWeight = FontWeight.SemiBold)
@@ -4020,29 +4040,10 @@ private fun formatDuration(seconds: Long): String {
     else "%d:%02d".format(minutes, secs)
 }
 
-private fun displayUploadDate(text: String?): String? {
-    val value = text?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    if (Regex("""^\d{4}$""").matches(value)) return value
-
-    // PipePipe/NewPipe can occasionally return YouTube's relative-date label in an
-    // unexpected locale (for example "9 iminyaka edlule"). Do not leak that raw
-    // extractor locale into ezTube. Keep only English/Vietnamese labels that the UI
-    // currently understands; duration and view count remain available regardless.
-    val normalized = value.lowercase()
-    val supportedDateWords = listOf(
-        "ago", "today", "yesterday",
-        "minute", "minutes", "hour", "hours", "day", "days",
-        "week", "weeks", "month", "months", "year", "years",
-        "trước", "hôm nay", "hôm qua",
-        "phút", "giờ", "ngày", "tuần", "tháng", "năm"
-    )
-    return value.takeIf { supportedDateWords.any(normalized::contains) }
-}
-
 private fun mediaMeta(media: MediaSummary, includeDuration: Boolean = true): String =
     buildList {
         if (media.viewCount >= 0) add(formatViews(media.viewCount))
-        displayUploadDate(media.uploadDateText)?.let(::add)
+        media.uploadDateText?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
         if (includeDuration && media.durationSeconds >= 0) add(formatDuration(media.durationSeconds))
     }.joinToString(" · ")
 
