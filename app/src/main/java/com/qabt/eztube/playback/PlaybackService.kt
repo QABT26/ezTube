@@ -30,6 +30,8 @@ class PlaybackService : MediaSessionService() {
         const val COMMAND_PLAY_CURRENT = "com.qabt.eztube.PLAY_CURRENT"
         const val COMMAND_SET_VIDEO_QUALITY = "com.qabt.eztube.SET_VIDEO_QUALITY"
         const val COMMAND_GET_SABR_DIAGNOSTIC = "com.qabt.eztube.GET_SABR_DIAGNOSTIC"
+        const val COMMAND_SET_SLEEP_END_CURRENT = "com.qabt.eztube.SET_SLEEP_END_CURRENT"
+        const val ARG_ENABLED = "enabled"
         const val ARG_POSITION_MS = "position_ms"
         const val ARG_PLAY_WHEN_READY = "play_when_ready"
         const val ARG_ERROR_MESSAGE = "error_message"
@@ -137,6 +139,7 @@ class PlaybackService : MediaSessionService() {
                         .add(androidx.media3.session.SessionCommand(COMMAND_PLAY_CURRENT, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_SET_VIDEO_QUALITY, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_GET_SABR_DIAGNOSTIC, android.os.Bundle.EMPTY))
+                        .add(androidx.media3.session.SessionCommand(COMMAND_SET_SLEEP_END_CURRENT, android.os.Bundle.EMPTY))
                         .build()
                     val playerCommands = ConnectionResult.DEFAULT_PLAYER_COMMANDS
                         .buildUpon()
@@ -205,6 +208,12 @@ class PlaybackService : MediaSessionService() {
                                     putString(EXTRA_PLAYBACK_ENGINE, engine)
                                 }
                             )
+                        )
+                    }
+                    if (customCommand.customAction == COMMAND_SET_SLEEP_END_CURRENT) {
+                        queueManager.setSleepEndCurrent(args.getBoolean(ARG_ENABLED, false))
+                        return com.google.common.util.concurrent.Futures.immediateFuture(
+                            SessionResult(SessionResult.RESULT_SUCCESS)
                         )
                     }
                     if (customCommand.customAction == COMMAND_GET_SABR_DIAGNOSTIC) {
