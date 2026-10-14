@@ -2674,34 +2674,44 @@ private fun HomeScreen(
             ) {
                 Text(
                     "Recommended",
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Clip,
                     modifier = Modifier.weight(1f)
                 )
-                CompactPresetButton(
+                HomeRecommendationChip(
                     text = "YouTube",
                     selected = recommendationMode == SearchSourceMode.YOUTUBE,
-                    onClick = { onRecommendationModeChange(SearchSourceMode.YOUTUBE) },
-                    modifier = Modifier.width(82.dp)
+                    onClick = { onRecommendationModeChange(SearchSourceMode.YOUTUBE) }
                 )
-                Spacer(Modifier.width(5.dp))
-                CompactPresetButton(
+                Spacer(Modifier.width(4.dp))
+                HomeRecommendationChip(
                     text = "Movie",
                     selected = recommendationMode == SearchSourceMode.MOVIE,
-                    onClick = { onRecommendationModeChange(SearchSourceMode.MOVIE) },
-                    modifier = Modifier.width(68.dp)
+                    onClick = { onRecommendationModeChange(SearchSourceMode.MOVIE) }
                 )
                 if (displayedRecommendations.size > 5) {
                     Spacer(Modifier.width(4.dp))
-                    TextButton(
-                        onClick = { showAllRecommendations = !showAllRecommendations },
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                    Surface(
+                        modifier = Modifier
+                            .height(26.dp)
+                            .clickable { showAllRecommendations = !showAllRecommendations },
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surface
                     ) {
-                        Text(
-                            if (showAllRecommendations) "Less" else "Show all",
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1
-                        )
+                        Box(
+                            Modifier.padding(horizontal = 7.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                if (showAllRecommendations) "Less" else "Show all",
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                 }
             }
@@ -2766,6 +2776,45 @@ private fun HomeScreen(
                 style = MaterialTheme.typography.bodySmall) }
         }
     }
+    }
+}
+
+@Composable
+private fun HomeRecommendationChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .height(26.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(10.dp),
+        color = if (selected) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surface
+        },
+        border = if (selected) {
+            null
+        } else {
+            androidx.compose.foundation.BorderStroke(
+                1.dp,
+                MaterialTheme.colorScheme.outline
+            )
+        }
+    ) {
+        Box(
+            Modifier.padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
     }
 }
 
