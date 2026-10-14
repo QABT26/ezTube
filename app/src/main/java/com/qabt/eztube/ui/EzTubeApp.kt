@@ -1455,6 +1455,7 @@ fun EzTubeApp(
         }
 
         }
+        }
     }
 }
 
@@ -1888,7 +1889,6 @@ private fun SearchScreen(
                     )
                 }
             }
-        }
         }
     }
 }
