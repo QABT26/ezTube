@@ -133,6 +133,18 @@ class PlaybackPreferences(context: Context) {
 
     fun loadRepeatMode(): Int = prefs.getInt("repeat_mode", 0).coerceIn(0, 2)
 
+    fun saveSleepEndCurrent(enabled: Boolean) {
+        prefs.edit().putBoolean("sleep_end_current", enabled).apply()
+    }
+
+    fun loadSleepEndCurrent(): Boolean = prefs.getBoolean("sleep_end_current", false)
+
+    fun saveShuffle(enabled: Boolean) {
+        prefs.edit().putBoolean("shuffle_enabled", enabled).apply()
+    }
+
+    fun loadShuffle(): Boolean = prefs.getBoolean("shuffle_enabled", false)
+
     fun saveSearch(query: String) {
         val normalized = query.trim()
         if (normalized.isEmpty()) return
