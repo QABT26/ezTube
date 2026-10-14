@@ -1011,6 +1011,10 @@ fun EzTubeApp(
                         nowPlaying = media
                         playerError = null
                         errorMessage = null
+                        movieDetailFocusId = null
+                        movieDetail = null
+                        movieDetailError = null
+                        movieDetailLoading = false
                         showPlayer = true
                         startQueue(media, items, startPositionMs)
                     }
@@ -1387,7 +1391,7 @@ fun EzTubeApp(
                         continueWatching = recent.filter { entry ->
                             entry.positionMs > 5_000L &&
                                 (entry.durationMs <= 0L || entry.progress in 0.01f..0.94f)
-                        }.take(6),
+                        }.take(3),
                         movieProviders = movieProviders,
                         suggestions = homeSuggestions,
                         movieSuggestions = movieSuggestions,
@@ -2588,6 +2592,23 @@ private fun HomeScreen(
     }
     val recommendationLoading =
         loading || (recommendationMode == SearchSourceMode.MOVIE && movieSuggestionsLoading)
+    var showAllRecommendations by remember(recommendationMode) { mutableStateOf(false) }
+    val visibleRecommendations =
+        if (showAllRecommendations) displayedRecommendations else displayedRecommendations.take(5)
+    val trendingListIndex = run {
+        var index = 1 // "For you"
+        if (continueWatching.isNotEmpty()) {
+            index += 1 + continueWatching.size // heading + rows
+        }
+        if (recommendationLoading) index += 1
+        index += 1 // Recommended heading
+        if (displayedRecommendations.isNotEmpty()) {
+            index += visibleRecommendations.size + 1 // rows + footer
+        } else if (!recommendationLoading) {
+            index += 1 // empty-state row
+        }
+        index
+    }
     PullToRefreshBox(
         isRefreshing = loading || movieSuggestionsLoading || trendingLoading,
         onRefresh = onRefresh,
@@ -2611,7 +2632,11 @@ private fun HomeScreen(
                     Text("Search YouTube", maxLines = 1)
                 }
                 FilledTonalButton(
-                    onClick = { scope.launch { listState.animateScrollToItem(if (suggestions.isNotEmpty()) suggestions.size + 3 else 2) } }
+                    onClick = {
+                        scope.launch {
+                            listState.animateScrollToItem(trendingListIndex)
+                        }
+                    }
                 ) {
                     Icon(Icons.AutoMirrored.Outlined.TrendingUp, null)
                     Spacer(Modifier.width(5.dp))
@@ -2666,11 +2691,24 @@ private fun HomeScreen(
                     onClick = { onRecommendationModeChange(SearchSourceMode.MOVIE) },
                     modifier = Modifier.width(68.dp)
                 )
+                if (displayedRecommendations.size > 5) {
+                    Spacer(Modifier.width(4.dp))
+                    TextButton(
+                        onClick = { showAllRecommendations = !showAllRecommendations },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            if (showAllRecommendations) "Less" else "Show all",
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1
+                        )
+                    }
+                }
             }
         }
         if (displayedRecommendations.isNotEmpty()) {
             itemsIndexed(
-                displayedRecommendations,
+                visibleRecommendations,
                 key = { index, media ->
                     "home-rec-" + recommendationMode.name + "-" + index + "-" + media.id
                 }
