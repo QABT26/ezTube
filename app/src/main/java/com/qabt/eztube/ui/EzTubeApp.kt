@@ -1180,6 +1180,20 @@ fun EzTubeApp(
                             notifyQueueChanged()
                         }
                     },
+                    onQueueRefresh = {
+                        playbackPrefs.loadQueue()?.let { (savedQueue, savedIndex) ->
+                            val normalizedQueue = savedQueue.map(::normalizeMoviePresentation)
+                            val currentId = controller?.currentMediaItem?.mediaId
+                            val resolvedIndex = normalizedQueue
+                                .indexOfFirst { it.id == currentId }
+                                .takeIf { it >= 0 }
+                                ?: savedIndex.coerceIn(normalizedQueue.indices)
+                            queue = normalizedQueue
+                            queueIndex = resolvedIndex
+                            playbackPrefs.saveQueue(normalizedQueue, resolvedIndex)
+                            notifyQueueChanged()
+                        }
+                    },
                     onPrevious = { controller?.seekToPrevious() },
                     onNext = { controller?.seekToNext() },
                     onChannel = { openChannel(nowPlaying?.channelUrl) },
@@ -3752,6 +3766,7 @@ private class FullPlayerActions(
     val onQueueRemove: (Int) -> Unit,
     val onQueueMove: (Int, Int) -> Unit,
     val onQueueClearUpcoming: () -> Unit,
+    val onQueueRefresh: () -> Unit,
     val onPrevious: () -> Unit,
     val onNext: () -> Unit,
     val onChannel: () -> Unit,
@@ -3820,6 +3835,7 @@ private fun FullPlayer(
     val onQueueRemove = actions.onQueueRemove
     val onQueueMove = actions.onQueueMove
     val onQueueClearUpcoming = actions.onQueueClearUpcoming
+    val onQueueRefresh = actions.onQueueRefresh
     val onPrevious = actions.onPrevious
     val onNext = actions.onNext
     val onChannel = actions.onChannel
@@ -3850,6 +3866,19 @@ private fun FullPlayer(
     val playerScrollState = rememberScrollState()
     val queueScrollState = rememberScrollState()
     val dragScope = rememberCoroutineScope()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    LaunchedEffect(showQueue, queueIndex, queue.size) {
+        if (showQueue && queueIndex in queue.indices) {
+            // Queue rows are intentionally compact and stable (~54dp). Recenter the
+            // currently playing row whenever Up next opens or playback moves.
+            delay(60L)
+            val rowPx = with(density) { 54.dp.toPx() }
+            val target = (queueIndex * rowPx - rowPx).toInt()
+                .coerceIn(0, queueScrollState.maxValue)
+            queueScrollState.animateScrollTo(target)
+        }
+    }
     LaunchedEffect(developerMode) {
         if (!developerMode) showDeveloperDiagnostics = false
     }
@@ -4984,11 +5013,23 @@ private fun FullPlayer(
                     Text(if (showQueue) "Hide queue" else "Up next")
                 }
                 Spacer(Modifier.weight(1f))
-                if (showQueue && queueIndex >= 0 && queueIndex < queue.lastIndex) {
-                    TextButton(
-                        onClick = onQueueClearUpcoming,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                    ) { Text("Clear upcoming", style = MaterialTheme.typography.labelMedium) }
+                if (showQueue && queue.isNotEmpty()) {
+                    IconButton(
+                        onClick = onQueueRefresh,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.Refresh,
+                            "Refresh queue",
+                            Modifier.size(19.dp)
+                        )
+                    }
+                    if (queueIndex >= 0 && queueIndex < queue.lastIndex) {
+                        TextButton(
+                            onClick = onQueueClearUpcoming,
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) { Text("Clear upcoming", style = MaterialTheme.typography.labelMedium) }
+                    }
                 } else if (queue.isNotEmpty()) {
                     Text(
                         "${(queueIndex + 1).coerceAtLeast(1)} / ${queue.size}",
