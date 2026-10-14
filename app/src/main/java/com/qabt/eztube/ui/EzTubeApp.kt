@@ -439,6 +439,20 @@ fun EzTubeApp(
         controller?.let { if (it.isPlaying) it.pause() else it.play() }
     }
 
+    fun moveQueue(delta: Int) {
+        val active = controller ?: return
+        if (delta == 0) return
+        active.sendCustomCommand(
+            androidx.media3.session.SessionCommand(
+                PlaybackService.COMMAND_MOVE_QUEUE,
+                android.os.Bundle.EMPTY
+            ),
+            android.os.Bundle().apply {
+                putInt(PlaybackService.ARG_DELTA, delta)
+            }
+        )
+    }
+
     fun queueForStart(media: MediaSummary, sourceItems: List<MediaSummary>): List<MediaSummary> {
         // Movie episode queues represent an ordered series/server. Never mix or
         // shuffle them with recommendations; Next/Previous must stay episodic.
@@ -1142,10 +1156,15 @@ fun EzTubeApp(
                     onNextMode = { nextMode = it; playbackPrefs.saveNextMode(it.name) },
                     onRepeatMode = { repeatMode = it; playbackPrefs.saveRepeatMode(it.ordinal) },
                     onQueueItem = { index ->
-                        if (index in queue.indices && index != queueIndex) {
-                            queueIndex = index
-                            playbackPrefs.saveQueue(queue, queueIndex)
-                            playMedia(queue[index])
+                        if (index in queue.indices) {
+                            if (index == queueIndex) {
+                                // Tapping the current queue row acts as Resume when paused.
+                                controller?.play()
+                            } else {
+                                queueIndex = index
+                                playbackPrefs.saveQueue(queue, queueIndex)
+                                playMedia(queue[index])
+                            }
                         }
                     },
                     onQueueRemove = { index ->
@@ -1194,8 +1213,8 @@ fun EzTubeApp(
                             notifyQueueChanged()
                         }
                     },
-                    onPrevious = { controller?.seekToPrevious() },
-                    onNext = { controller?.seekToNext() },
+                    onPrevious = { moveQueue(-1) },
+                    onNext = { moveQueue(1) },
                     onChannel = { openChannel(nowPlaying?.channelUrl) },
                     onFavorite = {
                         nowPlaying?.let { media ->
@@ -5024,11 +5043,15 @@ private fun FullPlayer(
                             Modifier.size(19.dp)
                         )
                     }
-                    if (queueIndex >= 0 && queueIndex < queue.lastIndex) {
-                        TextButton(
-                            onClick = onQueueClearUpcoming,
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                        ) { Text("Clear upcoming", style = MaterialTheme.typography.labelMedium) }
+                    TextButton(
+                        onClick = onQueueClearUpcoming,
+                        enabled = queueIndex >= 0 && queueIndex < queue.lastIndex,
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "Clear upcoming",
+                            style = MaterialTheme.typography.labelMedium
+                        )
                     }
                 } else if (queue.isNotEmpty()) {
                     Text(
