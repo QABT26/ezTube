@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                             updatePipParams(
                                 autoEnter = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                                    isInPictureInPictureMode.not()
+                                    canEnterPip()
                             )
                         }
                     }
