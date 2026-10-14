@@ -3283,9 +3283,33 @@ private fun HomeScreen(
         }
         item {
             Spacer(Modifier.height(10.dp))
-            Text("Trending now", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Popular on YouTube right now", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Trending now",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                if (trending.isNotEmpty()) {
+                    AssistChip(
+                        onClick = { onPlay(trending.first(), trending) },
+                        enabled = resolvingId == null,
+                        label = { Text("All", maxLines = 1) },
+                        leadingIcon = {
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(15.dp))
+                        },
+                        modifier = Modifier.height(30.dp)
+                    )
+                }
+            }
+            Text(
+                "Popular on YouTube right now",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         if (trendingLoading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         itemsIndexed(trending, key = { index, media -> "trend-" + index + "-" + media.id }) { index, media ->
@@ -3766,7 +3790,7 @@ private fun LibraryScreen(
                         ) {
                             Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
                             Spacer(Modifier.width(3.dp))
-                            Text("Play all")
+                            Text("All")
                         }
                     }
                 }
@@ -3860,7 +3884,7 @@ private fun LibraryScreen(
                         ) {
                             Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
                             Spacer(Modifier.width(3.dp))
-                            Text("Play all")
+                            Text("All")
                         }
                     }
                 }
@@ -3950,7 +3974,7 @@ private fun LibraryScreen(
                     AssistChip(
                         onClick = onPlayAllWatchLater,
                         enabled = resolvingId == null,
-                        label = { Text("Play all", maxLines = 1) },
+                        label = { Text("All", maxLines = 1) },
                         leadingIcon = {
                             Icon(Icons.Outlined.PlayArrow, null, Modifier.size(15.dp))
                         },
@@ -4494,7 +4518,7 @@ private fun PlaylistDetailScreen(
                         Button(onClick = { onPlayAll(playlist.items) }, enabled = playlist.items.isNotEmpty() && resolvingId == null) {
                             Icon(Icons.Outlined.PlayArrow, null)
                             Spacer(Modifier.width(4.dp))
-                            Text("Play all")
+                            Text("All")
                         }
                     }
                 }
