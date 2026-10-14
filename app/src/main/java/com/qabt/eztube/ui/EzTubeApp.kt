@@ -107,6 +107,8 @@ fun EzTubeApp(
     val recent by history.recent.collectAsState(initial = emptyList())
     val favorites by favoritesRepo.all.collectAsState(initial = emptyList())
     val playbackPrefs = remember { PlaybackPreferences(context) }
+    val personalPlaylistStore = remember { PersonalPlaylistStore(context) }
+    var personalPlaylists by remember { mutableStateOf(personalPlaylistStore.load()) }
     var queue by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var queueIndex by remember { mutableIntStateOf(-1) }
     var playbackSpeed by remember { mutableFloatStateOf(playbackPrefs.loadSpeed()) }
@@ -1314,6 +1316,8 @@ fun EzTubeApp(
                         modifier = Modifier.fillMaxSize().padding(padding),
                         recent = recent,
                         favorites = favorites,
+                        personalPlaylists = personalPlaylists,
+                        nowPlaying = nowPlaying,
                         movieProviders = movieProviders,
                         listState = libraryListState,
                         resolvingId = resolvingId,
@@ -1380,6 +1384,34 @@ fun EzTubeApp(
                             }
                         },
                         onRemoveFavorite = { entry -> scope.launch(Dispatchers.IO) { favoritesRepo.remove(entry.mediaId) } },
+                        onCreatePlaylist = { name ->
+                            personalPlaylists = personalPlaylistStore.create(name)
+                        },
+                        onRenamePlaylist = { id, name ->
+                            personalPlaylists = personalPlaylistStore.rename(id, name)
+                        },
+                        onDeletePlaylist = { id ->
+                            personalPlaylists = personalPlaylistStore.delete(id)
+                        },
+                        onAddCurrentToPlaylist = { id ->
+                            nowPlaying?.let { media ->
+                                personalPlaylists = personalPlaylistStore.add(id, media)
+                            }
+                        },
+                        onRemovePlaylistItem = { id, mediaId ->
+                            personalPlaylists = personalPlaylistStore.remove(id, mediaId)
+                        },
+                        onMovePlaylistItem = { id, from, to ->
+                            personalPlaylists = personalPlaylistStore.move(id, from, to)
+                        },
+                        onPlayPlaylist = { playlist ->
+                            if (playlist.items.isNotEmpty()) {
+                                startQueue(playlist.items.first(), playlist.items)
+                            }
+                        },
+                        onPlayPlaylistItem = { media, items ->
+                            startQueue(media, items)
+                        },
                         onDelete = { entry -> scope.launch(Dispatchers.IO) { history.delete(entry.mediaId) } },
                         onClear = { scope.launch(Dispatchers.IO) { history.clear() } }
                     )
@@ -2799,6 +2831,8 @@ private fun LibraryScreen(
     modifier: Modifier,
     recent: List<HistoryEntry>,
     favorites: List<FavoriteEntry>,
+    personalPlaylists: List<PersonalPlaylist>,
+    nowPlaying: MediaSummary?,
     movieProviders: MovieProviderRegistry,
     listState: androidx.compose.foundation.lazy.LazyListState,
     resolvingId: String?,
@@ -2809,12 +2843,24 @@ private fun LibraryScreen(
     onPlayAllYouTubeFavorites: () -> Unit,
     onPlayAllMovieFavorites: () -> Unit,
     onRemoveFavorite: (FavoriteEntry) -> Unit,
+    onCreatePlaylist: (String) -> Unit,
+    onRenamePlaylist: (String, String) -> Unit,
+    onDeletePlaylist: (String) -> Unit,
+    onAddCurrentToPlaylist: (String) -> Unit,
+    onRemovePlaylistItem: (String, String) -> Unit,
+    onMovePlaylistItem: (String, Int, Int) -> Unit,
+    onPlayPlaylist: (PersonalPlaylist) -> Unit,
+    onPlayPlaylistItem: (MediaSummary, List<MediaSummary>) -> Unit,
     onDelete: (HistoryEntry) -> Unit,
     onClear: () -> Unit
 ) {
     var showAllHistory by remember { mutableStateOf(false) }
     var showAllYouTubeFavorites by remember { mutableStateOf(false) }
     var showAllMovieFavorites by remember { mutableStateOf(false) }
+    var expandedPlaylistId by remember { mutableStateOf<String?>(null) }
+    var showCreatePlaylist by remember { mutableStateOf(false) }
+    var renamePlaylist by remember { mutableStateOf<PersonalPlaylist?>(null) }
+    var playlistNameDraft by remember { mutableStateOf("") }
     val youtubeFavorites = remember(favorites) {
         favorites.filterNot { isMovieLibraryItem(it.mediaId, it.channel) }
     }
@@ -3031,6 +3077,192 @@ private fun LibraryScreen(
             }
         }
 
+        item(key = "personal-playlists-heading") {
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Personal playlists",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "Local playlists · no login required",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                FilledTonalButton(
+                    onClick = {
+                        playlistNameDraft = ""
+                        showCreatePlaylist = true
+                    },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Icon(Icons.Outlined.Add, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("New")
+                }
+            }
+        }
+
+        if (personalPlaylists.isEmpty()) {
+            item(key = "personal-playlists-empty") {
+                Text(
+                    "Create a playlist, then add the current item from Library.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            personalPlaylists.forEach { playlist ->
+                item(key = "personal-playlist-" + playlist.id) {
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                            .padding(8.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    expandedPlaylistId =
+                                        if (expandedPlaylistId == playlist.id) null else playlist.id
+                                },
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(
+                                    if (expandedPlaylistId == playlist.id) Icons.Outlined.ExpandLess
+                                    else Icons.Outlined.ExpandMore,
+                                    "Expand playlist"
+                                )
+                            }
+                            Column(
+                                Modifier.weight(1f).clickable {
+                                    expandedPlaylistId =
+                                        if (expandedPlaylistId == playlist.id) null else playlist.id
+                                }
+                            ) {
+                                Text(
+                                    playlist.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    playlist.items.size.toString() + " items",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = { onAddCurrentToPlaylist(playlist.id) },
+                                enabled = nowPlaying != null,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(Icons.Outlined.PlaylistAdd, "Add current")
+                            }
+                            IconButton(
+                                onClick = { onPlayPlaylist(playlist) },
+                                enabled = playlist.items.isNotEmpty() && resolvingId == null,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(Icons.Outlined.PlayArrow, "Play all")
+                            }
+                            IconButton(
+                                onClick = {
+                                    playlistNameDraft = playlist.name
+                                    renamePlaylist = playlist
+                                },
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(Icons.Outlined.Edit, "Rename")
+                            }
+                            IconButton(
+                                onClick = { onDeletePlaylist(playlist.id) },
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(Icons.Outlined.DeleteOutline, "Delete playlist")
+                            }
+                        }
+
+                        if (expandedPlaylistId == playlist.id) {
+                            playlist.items.forEachIndexed { index, media ->
+                                Row(
+                                    Modifier.fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable(enabled = resolvingId == null) {
+                                            onPlayPlaylistItem(media, playlist.items)
+                                        }
+                                        .padding(horizontal = 6.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AsyncImage(
+                                        model = media.thumbnailUrl,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(42.dp)
+                                            .clip(RoundedCornerShape(7.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            media.title,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            media.channel,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            if (index > 0) {
+                                                onMovePlaylistItem(playlist.id, index, index - 1)
+                                            }
+                                        },
+                                        enabled = index > 0,
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Outlined.KeyboardArrowUp, "Move up", Modifier.size(18.dp))
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            if (index < playlist.items.lastIndex) {
+                                                onMovePlaylistItem(playlist.id, index, index + 1)
+                                            }
+                                        },
+                                        enabled = index < playlist.items.lastIndex,
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Outlined.KeyboardArrowDown, "Move down", Modifier.size(18.dp))
+                                    }
+                                    IconButton(
+                                        onClick = { onRemovePlaylistItem(playlist.id, media.id) },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Outlined.Close, "Remove", Modifier.size(17.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         stickyHeader {
             Surface(tonalElevation = 0.dp) {
                 Row(
@@ -3154,6 +3386,60 @@ private fun LibraryScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
         }
+    }
+
+    if (showCreatePlaylist) {
+        AlertDialog(
+            onDismissRequest = { showCreatePlaylist = false },
+            title = { Text("New playlist") },
+            text = {
+                OutlinedTextField(
+                    value = playlistNameDraft,
+                    onValueChange = { playlistNameDraft = it },
+                    singleLine = true,
+                    label = { Text("Name") }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onCreatePlaylist(playlistNameDraft)
+                        showCreatePlaylist = false
+                        playlistNameDraft = ""
+                    }
+                ) { Text("Create") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreatePlaylist = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    renamePlaylist?.let { playlist ->
+        AlertDialog(
+            onDismissRequest = { renamePlaylist = null },
+            title = { Text("Rename playlist") },
+            text = {
+                OutlinedTextField(
+                    value = playlistNameDraft,
+                    onValueChange = { playlistNameDraft = it },
+                    singleLine = true,
+                    label = { Text("Name") }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRenamePlaylist(playlist.id, playlistNameDraft)
+                        renamePlaylist = null
+                        playlistNameDraft = ""
+                    }
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamePlaylist = null }) { Text("Cancel") }
+            }
+        )
     }
 }
 
