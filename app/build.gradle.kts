@@ -45,6 +45,7 @@ android {
         }
         release {
             buildConfigField("String", "BUILD_ID", "\"$gitBuildId\"")
+            buildConfigField("String", "MOVIE_MILESTONE", "\"V0.3C\"")
         }
     }
 
