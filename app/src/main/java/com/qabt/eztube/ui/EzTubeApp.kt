@@ -4579,7 +4579,8 @@ private fun LibraryScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "Local playlists · no login required",
+                        if (personalPlaylists.isEmpty()) "Local playlists · no login required"
+                        else personalPlaylists.size.toString() + " playlists · local",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4601,148 +4602,132 @@ private fun LibraryScreen(
 
         if (personalPlaylists.isEmpty()) {
             item(key = "personal-playlists-empty") {
-                Text(
-                    "Create a playlist, then add the current item from Library.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.PlaylistPlay,
+                            null,
+                            Modifier.size(26.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text("Build your own queue", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Create a playlist, then add the current item. Playlist V2 keeps custom order and works offline.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         } else {
-            personalPlaylists.forEach { playlist ->
-                item(key = "personal-playlist-" + playlist.id) {
-                    Column(
-                        Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-                            .padding(8.dp)
+            items(
+                personalPlaylists,
+                key = { "personal-playlist-" + it.id }
+            ) { playlist ->
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp)
+                        .clickable { selectedPlaylistId = playlist.id },
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f)
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
+                        Box(
+                            Modifier.size(56.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
                         ) {
-                            IconButton(
-                                onClick = {
-                                    expandedPlaylistId =
-                                        if (expandedPlaylistId == playlist.id) null else playlist.id
-                                },
-                                modifier = Modifier.size(34.dp)
-                            ) {
+                            val cover = playlist.items.firstOrNull()?.thumbnailUrl
+                            if (!cover.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = cover,
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
                                 Icon(
-                                    if (expandedPlaylistId == playlist.id) Icons.Outlined.ExpandLess
-                                    else Icons.Outlined.ExpandMore,
-                                    "Expand playlist"
+                                    Icons.AutoMirrored.Outlined.PlaylistPlay,
+                                    null,
+                                    Modifier.align(Alignment.Center).size(28.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Column(
-                                Modifier.weight(1f).clickable {
-                                    expandedPlaylistId =
-                                        if (expandedPlaylistId == playlist.id) null else playlist.id
+                            if (playlist.pinned) {
+                                Surface(
+                                    modifier = Modifier.align(Alignment.TopEnd).padding(3.dp),
+                                    shape = RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f)
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.PushPin,
+                                        "Pinned",
+                                        Modifier.padding(3.dp).size(12.dp)
+                                    )
                                 }
-                            ) {
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                playlist.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                playlist.items.size.toString() + " items" +
+                                    if (playlist.items.isNotEmpty()) {
+                                        " · " + formatPlaylistDuration(playlist.items)
+                                    } else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                            playlist.items.getOrNull(1)?.let { second ->
                                 Text(
-                                    playlist.name,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
+                                    playlist.items.first().title + " · " + second.title,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Text(
-                                    playlist.items.size.toString() + " items",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = { onAddCurrentToPlaylist(playlist.id) },
-                                enabled = nowPlaying != null,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(Icons.Outlined.PlaylistAdd, "Add current")
-                            }
-                            IconButton(
-                                onClick = { onPlayPlaylist(playlist) },
-                                enabled = playlist.items.isNotEmpty() && resolvingId == null,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(Icons.Outlined.PlayArrow, "Play all")
-                            }
-                            IconButton(
-                                onClick = {
-                                    playlistNameDraft = playlist.name
-                                    renamePlaylist = playlist
-                                },
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(Icons.Outlined.Edit, "Rename")
-                            }
-                            IconButton(
-                                onClick = { onDeletePlaylist(playlist.id) },
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(Icons.Outlined.DeleteOutline, "Delete playlist")
                             }
                         }
-
-                        if (expandedPlaylistId == playlist.id) {
-                            playlist.items.forEachIndexed { index, media ->
-                                Row(
-                                    Modifier.fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable(enabled = resolvingId == null) {
-                                            onPlayPlaylistItem(media, playlist.items)
-                                        }
-                                        .padding(horizontal = 6.dp, vertical = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    AsyncImage(
-                                        model = media.thumbnailUrl,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(42.dp)
-                                            .clip(RoundedCornerShape(7.dp))
-                                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        TouchMarqueeTitle(text = media.title)
-                                        Text(
-                                            media.channel,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            if (index > 0) {
-                                                onMovePlaylistItem(playlist.id, index, index - 1)
-                                            }
-                                        },
-                                        enabled = index > 0,
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(Icons.Outlined.KeyboardArrowUp, "Move up", Modifier.size(18.dp))
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            if (index < playlist.items.lastIndex) {
-                                                onMovePlaylistItem(playlist.id, index, index + 1)
-                                            }
-                                        },
-                                        enabled = index < playlist.items.lastIndex,
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(Icons.Outlined.KeyboardArrowDown, "Move down", Modifier.size(18.dp))
-                                    }
-                                    IconButton(
-                                        onClick = { onRemovePlaylistItem(playlist.id, media.id) },
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(Icons.Outlined.Close, "Remove", Modifier.size(17.dp))
-                                    }
-                                }
-                            }
+                        IconButton(
+                            onClick = { onAddCurrentToPlaylist(playlist.id) },
+                            enabled = nowPlaying != null,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.PlaylistAdd,
+                                "Add current",
+                                Modifier.size(19.dp)
+                            )
                         }
+                        IconButton(
+                            onClick = { onPlayPlaylist(playlist) },
+                            enabled = playlist.items.isNotEmpty() && resolvingId == null,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, "Play all", Modifier.size(20.dp))
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                            "Open playlist",
+                            Modifier.size(22.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
