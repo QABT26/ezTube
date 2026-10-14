@@ -180,6 +180,33 @@ class PlaybackPreferences(context: Context) {
     fun loadRecommendationMode(): String =
         prefs.getString("recommendation_mode", "YOUTUBE") ?: "YOUTUBE"
 
+    fun saveMetadataLanguage(language: String) {
+        val normalized = when (language.lowercase()) {
+            "vi" -> "vi"
+            else -> "en"
+        }
+        prefs.edit().putString("metadata_language", normalized).apply()
+    }
+
+    fun loadMetadataLanguage(): String =
+        when (prefs.getString("metadata_language", "en")?.lowercase()) {
+            "vi" -> "vi"
+            else -> "en"
+        }
+
+    fun saveContentRegion(region: String) {
+        val normalized = region.uppercase().takeIf {
+            it in setOf("VN", "US", "GB", "JP", "KR")
+        } ?: "VN"
+        prefs.edit().putString("content_region", normalized).apply()
+    }
+
+    fun loadContentRegion(): String =
+        prefs.getString("content_region", "VN")
+            ?.uppercase()
+            ?.takeIf { it in setOf("VN", "US", "GB", "JP", "KR") }
+            ?: "VN"
+
     fun saveTrendingTopic(topic: String) { prefs.edit().putString("trending_topic", topic).apply() }
     fun loadTrendingTopic(): String = prefs.getString("trending_topic", "Music") ?: "Music"
     fun saveTrendingLanguage(language: String) { prefs.edit().putString("trending_language", language).apply() }
