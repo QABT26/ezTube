@@ -7,13 +7,17 @@ package com.qabt.eztube.playback
 internal object QueueNavigationPolicy {
     fun manualTarget(current: Int, size: Int, delta: Int, repeatMode: Int): Int? {
         if (size <= 0 || current !in 0 until size || delta == 0) return null
-        val raw = current + delta
-        return when {
-            raw in 0 until size -> raw
-            repeatMode == 2 && raw >= size -> 0
-            repeatMode == 2 && raw < 0 -> size - 1
-            else -> null
+
+        val target = if (repeatMode == 2) {
+            // A coalesced delta represents repeated manual taps. Preserve every tap
+            // across queue boundaries instead of collapsing any overflow to only 0/last.
+            Math.floorMod(current + delta, size)
+        } else {
+            // Without Repeat All, repeated taps stop at the queue edge.
+            (current + delta).coerceIn(0, size - 1)
         }
+
+        return target.takeIf { it != current }
     }
 
     fun endedTarget(current: Int, size: Int, autoplay: Boolean, repeatMode: Int): Int? {
