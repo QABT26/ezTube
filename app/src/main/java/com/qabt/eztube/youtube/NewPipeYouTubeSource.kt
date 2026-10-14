@@ -300,7 +300,7 @@ class NewPipeYouTubeSource : YouTubeSource {
     }
 
     private fun relativeUploadDate(item: StreamInfoItem): String? {
-        val instant = item.uploadDate?.instant ?: return null
+        val instant = item.uploadDate?.offsetDateTime()?.toInstant() ?: return null
         val now = Instant.now()
         val safeInstant = if (instant.isAfter(now)) now else instant
         val seconds = ChronoUnit.SECONDS.between(safeInstant, now).coerceAtLeast(0L)
