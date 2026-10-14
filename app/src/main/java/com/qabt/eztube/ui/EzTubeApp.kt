@@ -1200,17 +1200,48 @@ fun EzTubeApp(
                         }
                     },
                     onQueueRefresh = {
-                        playbackPrefs.loadQueue()?.let { (savedQueue, savedIndex) ->
-                            val normalizedQueue = savedQueue.map(::normalizeMoviePresentation)
-                            val currentId = controller?.currentMediaItem?.mediaId
-                            val resolvedIndex = normalizedQueue
-                                .indexOfFirst { it.id == currentId }
-                                .takeIf { it >= 0 }
-                                ?: savedIndex.coerceIn(normalizedQueue.indices)
-                            queue = normalizedQueue
-                            queueIndex = resolvedIndex
-                            playbackPrefs.saveQueue(normalizedQueue, resolvedIndex)
-                            notifyQueueChanged()
+                        if (queueIndex in queue.indices) {
+                            val current = queue[queueIndex]
+                            if (current.id.startsWith("movie:")) {
+                                // Movie queues are ordered episodes/servers. Do not replace
+                                // them with unrelated search results; just resync the owner.
+                                playbackPrefs.saveQueue(queue, queueIndex)
+                                notifyQueueChanged()
+                            } else {
+                                scope.launch {
+                                    val stablePrefix = queue.take(queueIndex + 1)
+                                    val prefixIds = stablePrefix.mapTo(mutableSetOf()) { it.id }
+                                    val query = when {
+                                        searchQuery.isNotBlank() &&
+                                            searchResults.any { it.id == current.id } -> searchQuery
+                                        current.channel.isNotBlank() -> current.channel
+                                        else -> current.title
+                                    }
+                                    val fresh = runCatching {
+                                        withContext(Dispatchers.IO) { source.search(query) }
+                                    }.getOrDefault(emptyList())
+                                        .map(::normalizeMoviePresentation)
+                                        .distinctBy { it.id }
+                                        .filterNot { it.id in prefixIds }
+
+                                    if (fresh.isNotEmpty()) {
+                                        val upcoming = if (nextMode == NextMode.RECOMMENDED) {
+                                            fresh.shuffled()
+                                        } else {
+                                            fresh
+                                        }
+                                        queue = stablePrefix + upcoming.take(30)
+                                        queueIndex = stablePrefix.lastIndex
+                                        playbackPrefs.saveQueue(queue, queueIndex)
+                                        notifyQueueChanged()
+                                    } else {
+                                        // Even if the network refresh returns nothing, keep
+                                        // the current logical queue and resync the service.
+                                        playbackPrefs.saveQueue(queue, queueIndex)
+                                        notifyQueueChanged()
+                                    }
+                                }
+                            }
                         }
                     },
                     onPrevious = { moveQueue(-1) },
@@ -5078,7 +5109,7 @@ private fun FullPlayer(
                             val current = index == queueIndex
                             Row(
                                 Modifier.fillMaxWidth()
-                                    .clickable(enabled = !current) { onQueueItem(index) }
+                                    .clickable { onQueueItem(index) }
                                     .padding(horizontal = 9.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
