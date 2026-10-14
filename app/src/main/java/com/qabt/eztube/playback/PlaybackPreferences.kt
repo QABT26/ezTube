@@ -207,8 +207,27 @@ class PlaybackPreferences(context: Context) {
             ?.takeIf { it in setOf("VN", "US", "GB", "JP", "KR") }
             ?: "VN"
 
-    fun saveTrendingTopic(topic: String) { prefs.edit().putString("trending_topic", topic).apply() }
-    fun loadTrendingTopic(): String = prefs.getString("trending_topic", "Music") ?: "Music"
+    fun saveTrendingTopics(topics: Set<String>) {
+        val allowed = listOf("Music", "Podcasts", "Gaming", "Movies", "Live")
+        val normalized = allowed.filter { it in topics }.toSet().ifEmpty { setOf("Music") }
+        prefs.edit()
+            .putStringSet("trending_topics_v2", normalized)
+            .remove("trending_topic")
+            .apply()
+    }
+
+    fun loadTrendingTopics(): Set<String> {
+        val allowed = listOf("Music", "Podcasts", "Gaming", "Movies", "Live")
+        val saved = prefs.getStringSet("trending_topics_v2", null)
+        if (!saved.isNullOrEmpty()) {
+            return allowed.filter { it in saved }.toSet().ifEmpty { setOf("Music") }
+        }
+
+        // One-time migration from the original single-select preference.
+        val legacy = prefs.getString("trending_topic", "Music") ?: "Music"
+        return setOf(legacy.takeIf { it in allowed } ?: "Music")
+    }
+
     fun saveTrendingLanguage(language: String) { prefs.edit().putString("trending_language", language).apply() }
     fun loadTrendingLanguage(): String = prefs.getString("trending_language", "Vietnamese") ?: "Vietnamese"
 }
