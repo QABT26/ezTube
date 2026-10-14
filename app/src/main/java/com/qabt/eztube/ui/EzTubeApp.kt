@@ -2160,7 +2160,7 @@ private fun SearchScreen(
     }
 
     Column(modifier.padding(horizontal = 14.dp)) {
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2175,8 +2175,8 @@ private fun SearchScreen(
                         if (query.isNotBlank()) submit(query, SearchSourceMode.YOUTUBE)
                     }
                 },
-                label = { Text("YouTube") },
-                modifier = Modifier.weight(1f)
+                label = { Text("YouTube", maxLines = 1) },
+                modifier = Modifier.weight(1f).height(40.dp)
             )
             FilterChip(
                 selected = sourceMode == SearchSourceMode.MOVIE,
@@ -2188,14 +2188,18 @@ private fun SearchScreen(
                         if (query.isNotBlank()) submit(query, SearchSourceMode.MOVIE)
                     }
                 },
-                label = { Text("Movie") },
-                modifier = Modifier.weight(1f)
+                label = { Text("Movie", maxLines = 1) },
+                modifier = Modifier.weight(1f).height(40.dp)
             )
         }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(8.dp))
         OutlinedTextField(
-            value = query, onValueChange = onQueryChange, modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp, max = 104.dp),
+            singleLine = false,
+            minLines = 1,
+            maxLines = 3,
             placeholder = {
                 Text(
                     if (sourceMode == SearchSourceMode.MOVIE)
@@ -2214,34 +2218,36 @@ private fun SearchScreen(
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                 imeAction = androidx.compose.ui.text.input.ImeAction.Search
             ),
-            shape = RoundedCornerShape(18.dp)
+            shape = RoundedCornerShape(16.dp)
         )
         if (query.isBlank() && recentSearches.isNotEmpty()) {
             androidx.compose.foundation.layout.FlowRow(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 recentSearches.take(5).forEach { recent ->
                     Box(
-                        modifier = Modifier.padding(top = 4.dp, end = 4.dp)
+                        modifier = Modifier.padding(end = 2.dp, top = 1.dp)
                     ) {
                         AssistChip(
                             onClick = { submit(recent) },
+                            modifier = Modifier.height(34.dp),
                             label = {
                                 Text(
                                     recent,
+                                    style = MaterialTheme.typography.bodySmall,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(max = 240.dp)
+                                    modifier = Modifier.widthIn(max = 210.dp)
                                 )
                             }
                         )
                         Surface(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .offset(x = 4.dp, y = (-4).dp)
-                                .size(18.dp)
+                                .offset(x = 2.dp, y = (-2).dp)
+                                .size(14.dp)
                                 .clickable { onRecentSearchDelete(recent) },
                             shape = RoundedCornerShape(50),
                             color = MaterialTheme.colorScheme.surface,
@@ -2254,7 +2260,7 @@ private fun SearchScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.Close,
                                     contentDescription = "Delete search",
-                                    modifier = Modifier.size(11.dp)
+                                    modifier = Modifier.size(8.dp)
                                 )
                             }
                         }
@@ -2298,14 +2304,51 @@ private fun SearchScreen(
                 modifier = Modifier.padding(top = 8.dp))
         }
         if (results.isEmpty() && !loading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    if (sourceMode == SearchSourceMode.MOVIE)
-                        "Search movies by title across installed providers."
-                    else
-                        "Search YouTube.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Box(
+                Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            if (sourceMode == SearchSourceMode.MOVIE) {
+                                Icons.Outlined.LocalMovies
+                            } else {
+                                Icons.Outlined.Search
+                            },
+                            null,
+                            Modifier.size(30.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            if (sourceMode == SearchSourceMode.MOVIE) {
+                                "Find a movie"
+                            } else {
+                                "Find something to watch or listen to"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            if (sourceMode == SearchSourceMode.MOVIE) {
+                                "Search by movie title across available providers."
+                            } else {
+                                "Search videos, music and channels. Recent searches stay above for quick access."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
             }
         } else {
             LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(vertical = 10.dp),
