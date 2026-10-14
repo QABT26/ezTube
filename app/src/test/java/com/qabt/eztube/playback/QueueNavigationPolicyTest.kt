@@ -38,4 +38,26 @@ class QueueNavigationPolicyTest {
         assertNull(QueueNavigationPolicy.manualTarget(3, 4, 1, 0))
         assertNull(QueueNavigationPolicy.manualTarget(0, 4, -1, 0))
     }
+
+    @Test fun coalescedRapidNextTapsCanAdvanceMultipleItems() {
+        assertEquals(3, QueueNavigationPolicy.manualTarget(1, 5, 2, 0))
+        assertEquals(4, QueueNavigationPolicy.manualTarget(1, 5, 3, 0))
+    }
+
+    @Test fun coalescedRapidPreviousTapsCanMoveBackMultipleItems() {
+        assertEquals(1, QueueNavigationPolicy.manualTarget(3, 5, -2, 0))
+        assertEquals(0, QueueNavigationPolicy.manualTarget(3, 5, -3, 0))
+    }
+
+    @Test fun oversizedCoalescedDeltaDoesNotInventAnInvalidTarget() {
+        assertNull(QueueNavigationPolicy.manualTarget(1, 5, 10, 0))
+        assertNull(QueueNavigationPolicy.manualTarget(3, 5, -10, 0))
+    }
+
+    @Test fun invalidCurrentAndEmptyQueueNeverNavigate() {
+        assertNull(QueueNavigationPolicy.manualTarget(-1, 5, 1, 2))
+        assertNull(QueueNavigationPolicy.manualTarget(0, 0, 1, 2))
+        assertNull(QueueNavigationPolicy.endedTarget(-1, 5, true, 2))
+        assertNull(QueueNavigationPolicy.endedTarget(0, 0, true, 2))
+    }
 }
