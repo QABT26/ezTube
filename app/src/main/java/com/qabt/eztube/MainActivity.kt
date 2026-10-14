@@ -110,8 +110,11 @@ class MainActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 updatePipParams(true)
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                updatePipParams(false)
-                enterPictureInPictureMode(pictureInPictureParams)
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                setPictureInPictureParams(params)
+                enterPictureInPictureMode(params)
             }
         }
         super.onUserLeaveHint()
