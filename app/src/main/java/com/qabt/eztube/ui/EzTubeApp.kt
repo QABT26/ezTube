@@ -2674,7 +2674,7 @@ private fun HomeScreen(
             ) {
                 Text(
                     "Recommended",
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     softWrap = false,
