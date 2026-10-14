@@ -1984,7 +1984,9 @@ private fun SearchScreen(
     onMovie: (MediaSummary) -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
     onPlayNext: (MediaSummary) -> Unit,
-    onAddToQueue: (MediaSummary) -> Unit
+    onAddToQueue: (MediaSummary) -> Unit,
+    watchLaterIds: Set<String>,
+    onToggleWatchLater: (MediaSummary) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(false) }
@@ -2187,7 +2189,9 @@ private fun SearchScreen(
                             else onPlay(media, displayResults)
                         },
                         onPlayNext = if (movieProviders.isTitle(media.id)) null else { { onPlayNext(media) } },
-                        onAddToQueue = if (movieProviders.isTitle(media.id)) null else { { onAddToQueue(media) } }
+                        onAddToQueue = if (movieProviders.isTitle(media.id)) null else { { onAddToQueue(media) } },
+                        isWatchLater = media.id in watchLaterIds,
+                        onToggleWatchLater = { onToggleWatchLater(media) }
                     )
                 }
             }
@@ -2613,7 +2617,9 @@ private fun SearchResult(
     onChannel: () -> Unit,
     onPlay: () -> Unit,
     onPlayNext: (() -> Unit)? = null,
-    onAddToQueue: (() -> Unit)? = null
+    onAddToQueue: (() -> Unit)? = null,
+    isWatchLater: Boolean = false,
+    onToggleWatchLater: (() -> Unit)? = null
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var titleTouchActive by remember(media.id) { mutableStateOf(false) }
@@ -2702,7 +2708,7 @@ private fun SearchResult(
         }
         Spacer(Modifier.width(2.dp))
         if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-        else if (onPlayNext != null || onAddToQueue != null) {
+        else if (onPlayNext != null || onAddToQueue != null || onToggleWatchLater != null) {
             Box {
                 IconButton(
                     onClick = { showMenu = true },
@@ -2726,6 +2732,21 @@ private fun SearchResult(
                         DropdownMenuItem(
                             text = { Text("Add to queue") },
                             leadingIcon = { Icon(Icons.AutoMirrored.Outlined.PlaylistPlay, null) },
+                            onClick = { showMenu = false; action() }
+                        )
+                    }
+                    onToggleWatchLater?.let { action ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(if (isWatchLater) "Remove from Watch later" else "Watch later")
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    if (isWatchLater) Icons.Outlined.Bookmark
+                                    else Icons.Outlined.BookmarkBorder,
+                                    null
+                                )
+                            },
                             onClick = { showMenu = false; action() }
                         )
                     }
@@ -2803,6 +2824,8 @@ private fun HomeScreen(
     onContinue: (HistoryEntry) -> Unit,
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
     onMovie: (MediaSummary) -> Unit,
+    watchLaterIds: Set<String>,
+    onToggleWatchLater: (MediaSummary) -> Unit,
     onSearch: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -2944,7 +2967,12 @@ private fun HomeScreen(
                     "home-rec-" + recommendationMode.name + "-" + index + "-" + media.id
                 }
             ) { _, media ->
-                CompactMediaRow(media, resolvingId == media.id) {
+                CompactMediaRow(
+                    media = media,
+                    resolving = resolvingId == media.id,
+                    isWatchLater = media.id in watchLaterIds,
+                    onToggleWatchLater = { onToggleWatchLater(media) }
+                ) {
                     if (recommendationMode == SearchSourceMode.MOVIE && movieProvidersTitleId(media.id)) {
                         onMovie(media)
                     } else {
@@ -2987,7 +3015,12 @@ private fun HomeScreen(
                 Text((index + 1).toString(), style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold, modifier = Modifier.width(28.dp))
                 Box(Modifier.weight(1f)) {
-                    CompactMediaRow(media, resolvingId == media.id) { onPlay(media, trending) }
+                    CompactMediaRow(
+                        media = media,
+                        resolving = resolvingId == media.id,
+                        isWatchLater = media.id in watchLaterIds,
+                        onToggleWatchLater = { onToggleWatchLater(media) }
+                    ) { onPlay(media, trending) }
                 }
             }
         }
@@ -3043,6 +3076,8 @@ private fun HomeRecommendationChip(
 private fun CompactMediaRow(
     media: MediaSummary,
     resolving: Boolean,
+    isWatchLater: Boolean = false,
+    onToggleWatchLater: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     Row(
@@ -3068,6 +3103,18 @@ private fun CompactMediaRow(
         if (resolving) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         } else {
+            onToggleWatchLater?.let { action ->
+                IconButton(
+                    onClick = action,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                        if (isWatchLater) "Remove from Watch later" else "Watch later",
+                        Modifier.size(19.dp)
+                    )
+                }
+            }
             Icon(Icons.Outlined.PlayArrow, "Play")
         }
     }
