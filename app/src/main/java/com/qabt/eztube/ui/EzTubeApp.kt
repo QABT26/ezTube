@@ -3957,6 +3957,7 @@ private fun FullPlayer(
     val sleepMinutes = state.sleepMinutes
     val autoplay = state.autoplay
     val nextMode = state.nextMode
+    val effectiveNextMode = if (isMovie) NextMode.LIST else nextMode
     val repeatMode = state.repeatMode
     val queue = state.queue
     val queueIndex = state.queueIndex
@@ -4730,7 +4731,19 @@ private fun FullPlayer(
         ) {
             IconButton(onClick = onClose) { Icon(Icons.Outlined.KeyboardArrowDown, "Close player") }
             Spacer(Modifier.weight(1f))
-            Text("NOW PLAYING", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "NOW PLAYING",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.width(6.dp))
+                LibrarySourceBadge(
+                    mediaId = media.id,
+                    channel = media.channel,
+                    modifier = Modifier
+                )
+            }
             Spacer(Modifier.weight(1f))
             Spacer(Modifier.size(48.dp))
         }
@@ -5061,14 +5074,31 @@ private fun FullPlayer(
                     modifier = Modifier.weight(1f).height(30.dp)
                 )
                 FilterChip(
-                    selected = nextMode == NextMode.RECOMMENDED,
+                    selected = effectiveNextMode == NextMode.RECOMMENDED,
+                    enabled = !isMovie,
                     onClick = {
-                        onNextMode(if (nextMode == NextMode.LIST) NextMode.RECOMMENDED else NextMode.LIST)
+                        if (!isMovie) {
+                            onNextMode(
+                                if (effectiveNextMode == NextMode.LIST) {
+                                    NextMode.RECOMMENDED
+                                } else {
+                                    NextMode.LIST
+                                }
+                            )
+                        }
                     },
                     leadingIcon = {
                         Icon(
-                            if (nextMode == NextMode.LIST) Icons.AutoMirrored.Outlined.PlaylistPlay else Icons.Outlined.Shuffle,
-                            null,
+                            if (effectiveNextMode == NextMode.LIST) {
+                                Icons.Outlined.FormatListNumbered
+                            } else {
+                                Icons.Outlined.Shuffle
+                            },
+                            if (effectiveNextMode == NextMode.LIST) {
+                                "Sequential next"
+                            } else {
+                                "Random next"
+                            },
                             Modifier.size(18.dp)
                         )
                     },
