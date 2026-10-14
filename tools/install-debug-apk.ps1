@@ -32,16 +32,48 @@ if ($LASTEXITCODE -ne 0) {
 
 try {
     Write-Host "[INFO] Installing only for Android user $currentUser..."
-    $installOutput = & $Adb shell pm install -r --user $currentUser $remoteApk 2>&1
-    $installExit = $LASTEXITCODE
-    $installText = $installOutput -join [Environment]::NewLine
-    $installOutput | ForEach-Object { Write-Host $_ }
 
-    if ($installExit -ne 0 -or $installText -notmatch '(?m)^Success\s*$') {
-        throw "APK install failed for user $currentUser"
+    $installSucceeded = $false
+    $lastInstallOutput = @()
+
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        if ($attempt -gt 1) {
+            Write-Host "[WARN] ADB install did not complete. Reconnecting and retrying once..."
+            & $Adb start-server | Out-Null
+            & $Adb wait-for-device
+            Start-Sleep -Milliseconds 500
+        }
+
+        $installOutput = & $Adb shell pm install -r --user $currentUser $remoteApk 2>&1
+        $installExit = $LASTEXITCODE
+        $installText = $installOutput -join [Environment]::NewLine
+        $lastInstallOutput = $installOutput
+
+        $installOutput | ForEach-Object { Write-Host $_ }
+
+        if ($installExit -eq 0 -and $installText -match '(?m)^Success\s*$') {
+            $installSucceeded = $true
+            break
+        }
+
+        $transportRestarted =
+            $installText -match 'daemon not running|daemon started successfully|device offline|device not found|no devices/emulators found|closed'
+
+        if (-not $transportRestarted -or $attempt -ge 2) {
+            break
+        }
+    }
+
+    if (-not $installSucceeded) {
+        $detail = ($lastInstallOutput -join [Environment]::NewLine).Trim()
+        if ([string]::IsNullOrWhiteSpace($detail)) {
+            $detail = "No package-manager output was returned."
+        }
+        throw "APK install failed for user $currentUser. Detail: $detail"
     }
 }
 finally {
+    & $Adb wait-for-device 2>$null
     & $Adb shell rm -f $remoteApk | Out-Null
 }
 
