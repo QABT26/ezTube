@@ -3213,19 +3213,28 @@ private fun CompactMediaRow(
         if (resolving) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         } else {
-            onToggleWatchLater?.let { action ->
-                IconButton(
-                    onClick = action,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
-                        if (isWatchLater) "Remove from Watch later" else "Watch later",
-                        Modifier.size(19.dp)
-                    )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                onToggleWatchLater?.let { action ->
+                    IconButton(
+                        onClick = action,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                            if (isWatchLater) "Remove from Watch later" else "Watch later",
+                            Modifier.size(19.dp)
+                        )
+                    }
                 }
+                Icon(
+                    Icons.Outlined.PlayArrow,
+                    "Play",
+                    Modifier.size(22.dp)
+                )
             }
-            Icon(Icons.Outlined.PlayArrow, "Play")
         }
     }
 }
