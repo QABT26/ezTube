@@ -4710,7 +4710,7 @@ private fun LibraryScreen(
                             modifier = Modifier.size(32.dp)
                         ) {
                             Icon(
-                                Icons.AutoMirrored.Outlined.PlaylistAdd,
+                                Icons.Outlined.PlaylistAdd,
                                 "Add current",
                                 Modifier.size(19.dp)
                             )
@@ -4723,7 +4723,7 @@ private fun LibraryScreen(
                             Icon(Icons.Outlined.PlayArrow, "Play all", Modifier.size(20.dp))
                         }
                         Icon(
-                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                            Icons.Outlined.KeyboardArrowRight,
                             "Open playlist",
                             Modifier.size(22.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
@@ -4923,6 +4923,444 @@ private fun LibraryScreen(
             },
             dismissButton = {
                 TextButton(onClick = { renamePlaylist = null }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+private fun formatPlaylistDuration(items: List<MediaSummary>): String {
+    val seconds = items.map { it.durationSeconds }.filter { it > 0L }.sum()
+    if (seconds <= 0L) return "duration unknown"
+    val hours = seconds / 3600L
+    val minutes = (seconds % 3600L) / 60L
+    return if (hours > 0L) "${hours}h ${minutes}m" else "${minutes}m"
+}
+
+@Composable
+private fun PersonalPlaylistDetailScreen(
+    modifier: Modifier,
+    playlist: PersonalPlaylist,
+    nowPlaying: MediaSummary?,
+    resolvingId: String?,
+    onBack: () -> Unit,
+    onPlayAll: () -> Unit,
+    onShuffle: () -> Unit,
+    onAddCurrent: () -> Unit,
+    onRename: () -> Unit,
+    onPin: () -> Unit,
+    onDuplicate: () -> Unit,
+    onClear: () -> Unit,
+    onDelete: () -> Unit,
+    onPlayItem: (MediaSummary, List<MediaSummary>) -> Unit,
+    onRemoveItem: (String) -> Unit,
+    onMoveItem: (Int, Int) -> Unit
+) {
+    var query by remember(playlist.id) { mutableStateOf("") }
+    var sortMode by remember(playlist.id) { mutableStateOf("Custom") }
+    var showMenu by remember(playlist.id) { mutableStateOf(false) }
+    var confirmClear by remember(playlist.id) { mutableStateOf(false) }
+    var confirmDelete by remember(playlist.id) { mutableStateOf(false) }
+
+    val displayedItems = remember(playlist.items, query, sortMode) {
+        val filtered = if (query.isBlank()) {
+            playlist.items
+        } else {
+            val needle = query.trim().lowercase()
+            playlist.items.filter {
+                it.title.lowercase().contains(needle) ||
+                    it.channel.lowercase().contains(needle)
+            }
+        }
+        when (sortMode) {
+            "A-Z" -> filtered.sortedBy { it.title.lowercase() }
+            "Z-A" -> filtered.sortedByDescending { it.title.lowercase() }
+            else -> filtered
+        }
+    }
+    val canReorder = query.isBlank() && sortMode == "Custom"
+    val listState = rememberLazyListState()
+
+    Column(modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    playlist.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    playlist.items.size.toString() + " items · " + formatPlaylistDuration(playlist.items),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (playlist.pinned) {
+                Icon(
+                    Icons.Outlined.PushPin,
+                    "Pinned",
+                    Modifier.size(17.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(2.dp))
+            }
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(Icons.Outlined.MoreVert, "Playlist menu")
+                }
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (playlist.pinned) "Unpin" else "Pin") },
+                        leadingIcon = { Icon(Icons.Outlined.PushPin, null) },
+                        onClick = { showMenu = false; onPin() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Rename") },
+                        leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                        onClick = { showMenu = false; onRename() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Duplicate") },
+                        leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
+                        onClick = { showMenu = false; onDuplicate() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Clear items") },
+                        leadingIcon = { Icon(Icons.Outlined.DeleteSweep, null) },
+                        enabled = playlist.items.isNotEmpty(),
+                        onClick = { showMenu = false; confirmClear = true }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete playlist") },
+                        leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null) },
+                        onClick = { showMenu = false; confirmDelete = true }
+                    )
+                }
+            }
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f)
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(74.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    val cover = playlist.items.firstOrNull()?.thumbnailUrl
+                    if (!cover.isNullOrBlank()) {
+                        AsyncImage(
+                            model = cover,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.PlaylistPlay,
+                            null,
+                            Modifier.align(Alignment.Center).size(34.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        playlist.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "Local playlist · custom order",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        Modifier.padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = onPlayAll,
+                            enabled = playlist.items.isNotEmpty() && resolvingId == null,
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text("All")
+                        }
+                        FilledTonalButton(
+                            onClick = onShuffle,
+                            enabled = playlist.items.size > 1 && resolvingId == null,
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(Icons.Outlined.Shuffle, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text("Shuffle")
+                        }
+                        IconButton(
+                            onClick = onAddCurrent,
+                            enabled = nowPlaying != null,
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlaylistAdd, "Add current", Modifier.size(20.dp))
+                        }
+                    }
+                }
+            }
+        }
+
+        if (playlist.items.size >= 4) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(19.dp)) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Outlined.Close, "Clear search")
+                        }
+                    }
+                },
+                placeholder = { Text("Search in playlist") },
+                shape = RoundedCornerShape(14.dp)
+            )
+        }
+
+        Row(
+            Modifier.fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf("Custom", "A-Z", "Z-A").forEach { option ->
+                FilterChip(
+                    selected = sortMode == option,
+                    onClick = { sortMode = option },
+                    label = { Text(option) },
+                    modifier = Modifier.height(32.dp)
+                )
+            }
+            if (!canReorder && playlist.items.size > 1) {
+                Text(
+                    "Reorder in Custom view",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.CenterVertically)
+                )
+            }
+        }
+
+        if (playlist.items.isEmpty()) {
+            Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.PlaylistPlay,
+                        null,
+                        Modifier.size(38.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("Playlist is empty", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Play something, then use Add current.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else if (displayedItems.isEmpty()) {
+            Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    "No items match “$query”.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                state = listState,
+                contentPadding = PaddingValues(top = 4.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                items(displayedItems, key = { "local-pl-" + it.id }) { media ->
+                    val originalIndex = playlist.items.indexOfFirst { it.id == media.id }
+                    val isCurrent = nowPlaying?.id == media.id
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isCurrent) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        }
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clickable(enabled = resolvingId == null) {
+                                    onPlayItem(media, displayedItems)
+                                }
+                                .padding(horizontal = 5.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box {
+                                AsyncImage(
+                                    model = media.thumbnailUrl,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                    contentScale = ContentScale.Crop
+                                )
+                                if (isCurrent) {
+                                    Surface(
+                                        modifier = Modifier.align(Alignment.BottomEnd).padding(2.dp),
+                                        shape = RoundedCornerShape(50),
+                                        color = MaterialTheme.colorScheme.primaryContainer
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.GraphicEq,
+                                            "Playing",
+                                            Modifier.padding(2.dp).size(12.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.width(9.dp))
+                            Column(Modifier.weight(1f)) {
+                                TouchMarqueeTitle(
+                                    text = media.title,
+                                    fontWeight = if (isCurrent) FontWeight.SemiBold else null
+                                )
+                                Text(
+                                    media.channel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (media.durationSeconds > 0L) {
+                                    Text(
+                                        formatDuration(media.durationSeconds),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (resolvingId == media.id) {
+                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                if (canReorder) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy((-3).dp)
+                                    ) {
+                                        IconButton(
+                                            onClick = {
+                                                if (originalIndex > 0) {
+                                                    onMoveItem(originalIndex, originalIndex - 1)
+                                                }
+                                            },
+                                            enabled = originalIndex > 0,
+                                            modifier = Modifier.size(25.dp)
+                                        ) {
+                                            Icon(Icons.Outlined.KeyboardArrowUp, "Move up", Modifier.size(17.dp))
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                if (originalIndex in 0 until playlist.items.lastIndex) {
+                                                    onMoveItem(originalIndex, originalIndex + 1)
+                                                }
+                                            },
+                                            enabled = originalIndex in 0 until playlist.items.lastIndex,
+                                            modifier = Modifier.size(25.dp)
+                                        ) {
+                                            Icon(Icons.Outlined.KeyboardArrowDown, "Move down", Modifier.size(17.dp))
+                                        }
+                                    }
+                                }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy((-3).dp)
+                                ) {
+                                    IconButton(
+                                        onClick = { onRemoveItem(media.id) },
+                                        modifier = Modifier.size(25.dp)
+                                    ) {
+                                        Icon(Icons.Outlined.Close, "Remove", Modifier.size(16.dp))
+                                    }
+                                    IconButton(
+                                        onClick = { onPlayItem(media, displayedItems) },
+                                        modifier = Modifier.size(25.dp)
+                                    ) {
+                                        Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Clear playlist?") },
+            text = { Text("Remove all items from “${playlist.name}”? The playlist itself stays.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmClear = false
+                        onClear()
+                    }
+                ) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete playlist?") },
+            text = { Text("Delete “${playlist.name}” and its local item list?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        onDelete()
+                    }
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
             }
         )
     }
