@@ -714,10 +714,14 @@ fun EzTubeApp(
         notifyQueueChanged()
     }
 
-    LaunchedEffect(controller, repeatMode) {
-        // Repeat ONE is safe natively. Repeat ALL is owned by PlaybackQueueManager so it
-        // wraps the complete persisted logical queue, not only Media3's small resolved window.
-        controller?.repeatMode = if (repeatMode == RepeatMode.ONE) {
+    LaunchedEffect(controller, repeatMode, sleepMinutes) {
+        // End-of-current is a hard stop override. Keep native Repeat ONE disabled while
+        // it is armed even if the user changes Repeat after arming Sleep End. Once End
+        // fires (or is turned off), the user's saved repeat choice becomes active again.
+        controller?.repeatMode = if (
+            sleepMinutes != -1 &&
+            repeatMode == RepeatMode.ONE
+        ) {
             Player.REPEAT_MODE_ONE
         } else {
             Player.REPEAT_MODE_OFF
