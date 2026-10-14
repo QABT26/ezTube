@@ -1897,6 +1897,15 @@ fun EzTubeApp(
                         onDeletePlaylist = { id ->
                             personalPlaylists = personalPlaylistStore.delete(id)
                         },
+                        onPinPlaylist = { id, pinned ->
+                            personalPlaylists = personalPlaylistStore.setPinned(id, pinned)
+                        },
+                        onDuplicatePlaylist = { id ->
+                            personalPlaylists = personalPlaylistStore.duplicate(id)
+                        },
+                        onClearPlaylist = { id ->
+                            personalPlaylists = personalPlaylistStore.clearItems(id)
+                        },
                         onAddCurrentToPlaylist = { id ->
                             nowPlaying?.let { media ->
                                 personalPlaylists = personalPlaylistStore.add(id, media)
@@ -4108,6 +4117,9 @@ private fun LibraryScreen(
     onCreatePlaylist: (String) -> Unit,
     onRenamePlaylist: (String, String) -> Unit,
     onDeletePlaylist: (String) -> Unit,
+    onPinPlaylist: (String, Boolean) -> Unit,
+    onDuplicatePlaylist: (String) -> Unit,
+    onClearPlaylist: (String) -> Unit,
     onAddCurrentToPlaylist: (String) -> Unit,
     onRemovePlaylistItem: (String, String) -> Unit,
     onMovePlaylistItem: (String, Int, Int) -> Unit,
@@ -4120,7 +4132,7 @@ private fun LibraryScreen(
     var showAllYouTubeFavorites by remember { mutableStateOf(false) }
     var showAllMovieFavorites by remember { mutableStateOf(false) }
     var showAllWatchLater by remember { mutableStateOf(false) }
-    var expandedPlaylistId by remember { mutableStateOf<String?>(null) }
+    var selectedPlaylistId by remember { mutableStateOf<String?>(null) }
     var showCreatePlaylist by remember { mutableStateOf(false) }
     var renamePlaylist by remember { mutableStateOf<PersonalPlaylist?>(null) }
     var playlistNameDraft by remember { mutableStateOf("") }
@@ -4136,6 +4148,69 @@ private fun LibraryScreen(
         }.take(3)
     }
     val historyByMediaId = remember(recent) { recent.associateBy { it.mediaId } }
+
+    val selectedPlaylist = selectedPlaylistId?.let { id ->
+        personalPlaylists.firstOrNull { it.id == id }
+    }
+    if (selectedPlaylist != null) {
+        PersonalPlaylistDetailScreen(
+            modifier = modifier,
+            playlist = selectedPlaylist,
+            nowPlaying = nowPlaying,
+            resolvingId = resolvingId,
+            onBack = { selectedPlaylistId = null },
+            onPlayAll = { onPlayPlaylist(selectedPlaylist) },
+            onShuffle = {
+                if (selectedPlaylist.items.isNotEmpty()) {
+                    val shuffled = selectedPlaylist.items.shuffled()
+                    onPlayPlaylistItem(shuffled.first(), shuffled)
+                }
+            },
+            onAddCurrent = { onAddCurrentToPlaylist(selectedPlaylist.id) },
+            onRename = {
+                playlistNameDraft = selectedPlaylist.name
+                renamePlaylist = selectedPlaylist
+            },
+            onPin = { onPinPlaylist(selectedPlaylist.id, !selectedPlaylist.pinned) },
+            onDuplicate = { onDuplicatePlaylist(selectedPlaylist.id) },
+            onClear = { onClearPlaylist(selectedPlaylist.id) },
+            onDelete = {
+                onDeletePlaylist(selectedPlaylist.id)
+                selectedPlaylistId = null
+            },
+            onPlayItem = { media, items -> onPlayPlaylistItem(media, items) },
+            onRemoveItem = { mediaId -> onRemovePlaylistItem(selectedPlaylist.id, mediaId) },
+            onMoveItem = { from, to -> onMovePlaylistItem(selectedPlaylist.id, from, to) }
+        )
+
+        renamePlaylist?.let { playlist ->
+            AlertDialog(
+                onDismissRequest = { renamePlaylist = null },
+                title = { Text("Rename playlist") },
+                text = {
+                    OutlinedTextField(
+                        value = playlistNameDraft,
+                        onValueChange = { playlistNameDraft = it },
+                        singleLine = true,
+                        label = { Text("Name") }
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            onRenamePlaylist(playlist.id, playlistNameDraft)
+                            renamePlaylist = null
+                            playlistNameDraft = ""
+                        }
+                    ) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { renamePlaylist = null }) { Text("Cancel") }
+                }
+            )
+        }
+        return
+    }
 
     LazyColumn(
         modifier = modifier.padding(horizontal = 14.dp),
