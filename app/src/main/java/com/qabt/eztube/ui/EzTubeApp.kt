@@ -60,6 +60,8 @@ import com.qabt.eztube.history.HistoryEntry
 import com.qabt.eztube.history.FavoriteEntry
 import com.qabt.eztube.history.FavoriteRepository
 import com.qabt.eztube.history.HistoryRepository
+import com.qabt.eztube.history.PersonalPlaylist
+import com.qabt.eztube.history.PersonalPlaylistStore
 import com.qabt.eztube.history.toMediaSummary
 import com.qabt.eztube.history.progress
 import com.qabt.eztube.playback.AudioQuality
@@ -112,6 +114,7 @@ fun EzTubeApp(
     var playerError by remember { mutableStateOf<String?>(null) }
     var isBuffering by remember { mutableStateOf(false) }
     var sleepMinutes by remember { mutableStateOf<Int?>(null) }
+    var shuffleEnabled by remember { mutableStateOf(playbackPrefs.loadShuffle()) }
     var resumePositionMs by remember { mutableLongStateOf(0L) }
     var controller by remember { mutableStateOf<MediaController?>(null) }
     var nowPlaying by remember { mutableStateOf<MediaSummary?>(null) }
@@ -674,6 +677,17 @@ fun EzTubeApp(
         }
     }
 
+    fun setShuffleEnabled(enabled: Boolean) {
+        shuffleEnabled = enabled
+        playbackPrefs.saveShuffle(enabled)
+        if (!enabled || queueIndex !in queue.indices || queueIndex >= queue.lastIndex) return
+        val stablePrefix = queue.take(queueIndex + 1)
+        val shuffledUpcoming = queue.drop(queueIndex + 1).shuffled()
+        queue = stablePrefix + shuffledUpcoming
+        playbackPrefs.saveQueue(queue, queueIndex)
+        notifyQueueChanged()
+    }
+
     LaunchedEffect(controller, repeatMode) {
         // Repeat ONE is safe natively. Repeat ALL is owned by PlaybackQueueManager so it
         // wraps the complete persisted logical queue, not only Media3's small resolved window.
@@ -1156,6 +1170,8 @@ fun EzTubeApp(
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 autoplay = autoplay,
                 onAutoplay = { autoplay = it; playbackPrefs.saveAutoplay(it); notifyQueueChanged() },
+                shuffleEnabled = shuffleEnabled,
+                onShuffle = { setShuffleEnabled(it) },
                 trendingTopic = trendingTopic,
                 onTrendingTopic = { trendingTopic = it; playbackPrefs.saveTrendingTopic(it) },
                 trendingLanguage = trendingLanguage,
@@ -1401,6 +1417,8 @@ private fun SettingsScreen(
     onSpeed: (Float) -> Unit,
     autoplay: Boolean,
     onAutoplay: (Boolean) -> Unit,
+    shuffleEnabled: Boolean,
+    onShuffle: (Boolean) -> Unit,
     trendingTopic: String,
     onTrendingTopic: (String) -> Unit,
     trendingLanguage: String,
@@ -1471,6 +1489,18 @@ private fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = autoplay, onCheckedChange = onAutoplay)
+            }
+
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Shuffle upcoming", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Shuffle only items after the current item; current playback and resume stay unchanged.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = shuffleEnabled, onCheckedChange = onShuffle)
             }
 
             HorizontalDivider()
