@@ -773,8 +773,12 @@ class PlaybackQueueManager(
     }
 
     fun ensureNext(items: List<MediaSummary>, index: Int) {
-        if (preferences.loadSleepEndCurrent()) return
-        if (!preferences.loadAutoplay()) return
+        if (
+            !PlaybackRuntimePolicy.allowPreload(
+                autoplay = preferences.loadAutoplay(),
+                sleepEndCurrent = preferences.loadSleepEndCurrent()
+            )
+        ) return
         val next = items.getOrNull(index + 1) ?: return
         val current = player.currentMediaItemIndex
         val loadedNext = if (current >= 0 && current + 1 < player.mediaItemCount) {
