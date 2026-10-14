@@ -94,7 +94,8 @@ private enum class SearchSort(val label: String) {
 @Composable
 fun EzTubeApp(
     externalMedia: MediaSummary? = null,
-    onExternalMediaConsumed: () -> Unit = {}
+    onExternalMediaConsumed: () -> Unit = {},
+    isInPictureInPictureMode: Boolean = false
 ) {
     var selected by remember { mutableStateOf(Tab.SEARCH) }
     val context = LocalContext.current
@@ -115,7 +116,9 @@ fun EzTubeApp(
     var compatibilityFallback by remember { mutableStateOf(false) }
     var playerError by remember { mutableStateOf<String?>(null) }
     var isBuffering by remember { mutableStateOf(false) }
-    var sleepMinutes by remember { mutableStateOf<Int?>(null) }
+    var sleepMinutes by remember {
+        mutableStateOf<Int?>(if (playbackPrefs.loadSleepEndCurrent()) -1 else null)
+    }
     var shuffleEnabled by remember { mutableStateOf(playbackPrefs.loadShuffle()) }
     var resumePositionMs by remember { mutableLongStateOf(0L) }
     var controller by remember { mutableStateOf<MediaController?>(null) }
@@ -297,6 +300,13 @@ fun EzTubeApp(
                         if (state == Player.STATE_READY) {
                             playerError = null
                             errorMessage = null
+                        }
+                        if (state == Player.STATE_ENDED && sleepMinutes == -1) {
+                            // PlaybackQueueManager clears the persisted flag when the
+                            // armed "end of current item" condition fires. Mirror that
+                            // completion immediately in Compose so the sleep UI does not
+                            // stay highlighted after playback has stopped.
+                            sleepMinutes = null
                         }
                     }
                     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -918,6 +928,31 @@ fun EzTubeApp(
     }
 
     MaterialTheme {
+        if (isInPictureInPictureMode && videoMode && controller != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(androidx.compose.ui.graphics.Color.Black)
+            ) {
+                AndroidView(
+                    factory = { pipContext ->
+                        androidx.media3.ui.PlayerView(pipContext).apply {
+                            useController = false
+                            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            setKeepContentOnPlayerReset(true)
+                            setShutterBackgroundColor(android.graphics.Color.BLACK)
+                            player = controller
+                        }
+                    },
+                    update = { view ->
+                        view.player = controller
+                        view.useController = false
+                        view.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        } else {
         Box(Modifier.fillMaxSize()) {
         if (movieDetail != null || movieDetailLoading || movieDetailError != null) {
             Scaffold(bottomBar = {
@@ -1853,6 +1888,7 @@ private fun SearchScreen(
                     )
                 }
             }
+        }
         }
     }
 }
@@ -4811,9 +4847,13 @@ private fun FullPlayer(
                 Modifier.fillMaxWidth().padding(top = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                listOf(null, 15, 30, 60, 120).forEach { minutes ->
+                listOf<Int?>(null, -1, 15, 30, 60, 120).forEach { minutes ->
                     CompactPresetButton(
-                        text = minutes?.let { "${it}m" } ?: "Off",
+                        text = when (minutes) {
+                            null -> "Off"
+                            -1 -> "End"
+                            else -> "${minutes}m"
+                        },
                         selected = sleepMinutes == minutes,
                         onClick = { onSleep(minutes) },
                         modifier = Modifier.weight(1f)
