@@ -2969,23 +2969,26 @@ private fun MiniPlayer(
                         spacing = MarqueeSpacing(32.dp)
                     )
                 )
-                Text(
-                    media.channel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
                 Row(
+                    Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Text(
+                        media.channel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Icon(
                         Icons.Outlined.AccessTime,
                         null,
-                        Modifier.size(12.dp),
+                        Modifier.size(11.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.width(3.dp))
+                    Spacer(Modifier.width(2.dp))
                     Text(
                         formatDuration(positionMs / 1000L) + " / " +
                             if (durationMs > 0L) formatDuration(durationMs / 1000L) else "--:--",
@@ -2997,26 +3000,26 @@ private fun MiniPlayer(
             }
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(0.dp)
+                verticalArrangement = Arrangement.spacedBy((-2).dp)
             ) {
                 IconButton(
                     onClick = onWatchLater,
-                    modifier = Modifier.size(30.dp)
+                    modifier = Modifier.size(25.dp)
                 ) {
                     Icon(
                         if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
                         if (isWatchLater) "Remove from Watch later" else "Watch later",
-                        Modifier.size(20.dp)
+                        Modifier.size(17.dp)
                     )
                 }
                 IconButton(
                     onClick = onFavorite,
-                    modifier = Modifier.size(30.dp)
+                    modifier = Modifier.size(25.dp)
                 ) {
                     Icon(
                         if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
                         if (isFavorite) "Remove from favorites" else "Add to favorites",
-                        Modifier.size(20.dp)
+                        Modifier.size(17.dp)
                     )
                 }
             }
@@ -3328,12 +3331,14 @@ private fun CompactMediaRow(
                 media.durationSeconds.takeIf { it >= 0 }?.let { seconds ->
                     Text(
                         formatDuration(seconds),
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.82f
+                        ),
                         color = androidx.compose.ui.graphics.Color.White,
                         maxLines = 1,
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(2.dp)
+                            .padding(1.dp)
                             .background(
                                 MaterialTheme.colorScheme.scrim.copy(alpha = 0.80f),
                                 RoundedCornerShape(3.dp)
