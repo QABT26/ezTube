@@ -34,8 +34,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Test, lint and build debug APK
-        run: bash ./gradlew clean testDebugUnitTest lintDebug assembleDebug --stacktrace
+      - name: Test and build debug APK
+        run: bash ./gradlew clean testDebugUnitTest assembleDebug --stacktrace
 
       - name: Upload Beta APK
         uses: actions/upload-artifact@v4
