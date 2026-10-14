@@ -358,44 +358,6 @@ fun EzTubeApp() {
         }
     }
 
-    fun openMovieFromHistory(entry: HistoryEntry) {
-        if (!entry.mediaId.startsWith("movie:") || movieDetailLoading) return
-        val providerId = entry.mediaId.split(':').getOrNull(1).orEmpty()
-        val lookupTitle = movieLookupTitle(entry.title)
-        if (providerId.isBlank() || lookupTitle.isBlank()) return
-
-        scope.launch {
-            movieDetailLoading = true
-            movieDetailError = null
-            val titleMedia = runCatching {
-                withContext(Dispatchers.IO) {
-                    movieProviders.search(lookupTitle)
-                        .firstOrNull {
-                            it.id.startsWith("movie-title:$providerId:")
-                        }
-                        ?: movieProviders.search(lookupTitle).firstOrNull()
-                }
-            }.getOrNull()
-
-            movieDetailLoading = false
-            if (titleMedia == null) {
-                movieDetailError = "Unable to reopen movie detail"
-                return@launch
-            }
-
-            openMovie(
-                media = titleMedia,
-                focusEpisodeId = entry.mediaId
-            ) { single, items ->
-                startQueue(
-                    single,
-                    items,
-                    startPositionMs = entry.positionMs.coerceAtLeast(0L)
-                )
-            }
-        }
-    }
-
     fun selectMovieSubtitle(option: SubtitleOption?) {
         val active = controller ?: return
         val builder = active.trackSelectionParameters.buildUpon()
@@ -594,6 +556,44 @@ fun EzTubeApp() {
         queueIndex = queue.indexOfFirst { it.id == media.id }.coerceAtLeast(0)
         playbackPrefs.saveQueue(queue, queueIndex)
         playMedia(media, startPositionMs)
+    }
+
+    fun openMovieFromHistory(entry: HistoryEntry) {
+        if (!entry.mediaId.startsWith("movie:") || movieDetailLoading) return
+        val providerId = entry.mediaId.split(':').getOrNull(1).orEmpty()
+        val lookupTitle = movieLookupTitle(entry.title)
+        if (providerId.isBlank() || lookupTitle.isBlank()) return
+
+        scope.launch {
+            movieDetailLoading = true
+            movieDetailError = null
+            val titleMedia = runCatching {
+                withContext(Dispatchers.IO) {
+                    movieProviders.search(lookupTitle)
+                        .firstOrNull {
+                            it.id.startsWith("movie-title:$providerId:")
+                        }
+                        ?: movieProviders.search(lookupTitle).firstOrNull()
+                }
+            }.getOrNull()
+
+            movieDetailLoading = false
+            if (titleMedia == null) {
+                movieDetailError = "Unable to reopen movie detail"
+                return@launch
+            }
+
+            openMovie(
+                media = titleMedia,
+                focusEpisodeId = entry.mediaId
+            ) { single, items ->
+                startQueue(
+                    single,
+                    items,
+                    startPositionMs = entry.positionMs.coerceAtLeast(0L)
+                )
+            }
+        }
     }
 
     fun playNext(media: MediaSummary) {
@@ -2446,12 +2446,7 @@ private fun CompactMediaRow(
         if (resolving) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         } else {
-            IconButton(
-                onClick = onPlay,
-                modifier = Modifier.size(30.dp)
-            ) {
-                Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(20.dp))
-            }
+            Icon(Icons.Outlined.PlayArrow, "Play")
         }
     }
 }
@@ -2616,8 +2611,16 @@ private fun ProgressMediaRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             SearchPlaybackProgress(entry.progress)
         }
-        if (resolving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-        else Icon(Icons.Outlined.PlayArrow, "Play")
+        if (resolving) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        } else {
+            IconButton(
+                onClick = onPlay,
+                modifier = Modifier.size(30.dp)
+            ) {
+                Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(20.dp))
+            }
+        }
     }
 }
 
