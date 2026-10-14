@@ -4201,13 +4201,10 @@ private fun FullPlayer(
 
     LaunchedEffect(showQueue, queueIndex, queue.size) {
         if (showQueue && queueIndex in queue.indices) {
-            // Queue rows are intentionally compact and stable (~54dp). Recenter the
-            // currently playing row whenever Up next opens or playback moves.
+            // Up next is a bounded window that starts at the current item. Reset to
+            // the top whenever playback advances so the current row stays visible.
             delay(60L)
-            val rowPx = with(density) { 54.dp.toPx() }
-            val target = (queueIndex * rowPx - rowPx).toInt()
-                .coerceIn(0, queueScrollState.maxValue)
-            queueScrollState.animateScrollTo(target)
+            queueScrollState.animateScrollTo(0)
         }
     }
     LaunchedEffect(developerMode) {
@@ -5414,7 +5411,14 @@ private fun FullPlayer(
                             .verticalScroll(queueScrollState)
                             .padding(vertical = 5.dp)
                     ) {
-                        queue.forEachIndexed { index, item ->
+                        val visibleStart = queueIndex.coerceIn(0, queue.lastIndex.coerceAtLeast(0))
+                        val visibleEndExclusive = (visibleStart + 1 + MAX_UP_NEXT_VISIBLE)
+                            .coerceAtMost(queue.size)
+                        val visibleEntries = queue
+                            .subList(visibleStart, visibleEndExclusive)
+                            .mapIndexed { offset, item -> (visibleStart + offset) to item }
+
+                        visibleEntries.forEach { (index, item) ->
                             key(item.id) {
                             val current = index == queueIndex
                             Row(
@@ -5482,7 +5486,10 @@ private fun FullPlayer(
                                                         val rowHeight = 54.dp.toPx()
                                                         val deltaRows = (dragQueueY / rowHeight).toInt()
                                                         val target = (draggedQueueStartIndex + deltaRows)
-                                                            .coerceIn(0, queue.lastIndex)
+                                                            .coerceIn(
+                                                                visibleStart,
+                                                                (visibleEndExclusive - 1).coerceAtLeast(visibleStart)
+                                                            )
                                                         if (draggedQueueIndex >= 0 && target != draggedQueueIndex) {
                                                             onQueueMove(draggedQueueIndex, target)
                                                             draggedQueueIndex = target
@@ -5516,6 +5523,18 @@ private fun FullPlayer(
                                 }
                             }
                             }
+                        }
+
+                        val hiddenUpcoming = (queue.size - visibleEndExclusive).coerceAtLeast(0)
+                        if (hiddenUpcoming > 0) {
+                            Text(
+                                "+$hiddenUpcoming more in queue",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
@@ -5643,6 +5662,8 @@ private fun FullPlayer(
         }
     }
 }
+
+private const val MAX_UP_NEXT_VISIBLE = 12
 
 private fun formatTime(ms: Long): String {
     val total = (ms / 1000).coerceAtLeast(0)
