@@ -6460,10 +6460,7 @@ private fun FullPlayer(
             }
             if (showQueue) {
                 Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 180.dp, max = 360.dp)
-                        .padding(bottom = 2.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false).padding(bottom = 2.dp),
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                 ) {
