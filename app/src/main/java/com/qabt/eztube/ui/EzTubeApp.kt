@@ -62,6 +62,8 @@ import com.qabt.eztube.history.EzTubeDatabase
 import com.qabt.eztube.history.HistoryEntry
 import com.qabt.eztube.history.FavoriteEntry
 import com.qabt.eztube.history.FavoriteRepository
+import com.qabt.eztube.history.WatchLaterEntry
+import com.qabt.eztube.history.WatchLaterRepository
 import com.qabt.eztube.history.HistoryRepository
 import com.qabt.eztube.history.PersonalPlaylist
 import com.qabt.eztube.history.PersonalPlaylistStore
@@ -111,8 +113,10 @@ fun EzTubeApp(
     val database = remember { EzTubeDatabase.get(context) }
     val history = remember { HistoryRepository(database.historyDao()) }
     val favoritesRepo = remember { FavoriteRepository(database.favoriteDao()) }
+    val watchLaterRepo = remember { WatchLaterRepository(database.watchLaterDao()) }
     val recent by history.recent.collectAsState(initial = emptyList())
     val favorites by favoritesRepo.all.collectAsState(initial = emptyList())
+    val watchLater by watchLaterRepo.all.collectAsState(initial = emptyList())
     val playbackPrefs = remember { PlaybackPreferences(context) }
     val personalPlaylistStore = remember { PersonalPlaylistStore(context) }
     var personalPlaylists by remember { mutableStateOf(personalPlaylistStore.load()) }
