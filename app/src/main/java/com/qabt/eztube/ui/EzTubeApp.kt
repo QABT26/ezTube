@@ -1740,6 +1740,9 @@ fun EzTubeApp(
                                 watchLaterRepo.remove(entry.mediaId)
                             }
                         },
+                        onToggleWatchLaterMedia = { media ->
+                            toggleWatchLater(media)
+                        },
                         onClearWatchedLater = {
                             val progressById = recent.associateBy { it.mediaId }
                             val watchedIds = watchLater.mapNotNull { entry ->
@@ -3044,6 +3047,10 @@ private fun HomeScreen(
                     entry = entry,
                     movieProviders = movieProviders,
                     resolving = resolvingId == entry.mediaId,
+                    isWatchLater = entry.mediaId in watchLaterIds,
+                    onToggleWatchLater = {
+                        onToggleWatchLater(entry.toMediaSummary())
+                    },
                     onClick = { onContinue(entry) },
                     onPlay = { onContinue(entry) }
                 )
@@ -3518,6 +3525,7 @@ private fun LibraryScreen(
     onPlayWatchLater: (WatchLaterEntry) -> Unit,
     onPlayAllWatchLater: (Boolean) -> Unit,
     onRemoveWatchLater: (WatchLaterEntry) -> Unit,
+    onToggleWatchLaterMedia: (MediaSummary) -> Unit,
     onClearWatchedLater: () -> Unit,
     onCreatePlaylist: (String) -> Unit,
     onRenamePlaylist: (String, String) -> Unit,
@@ -3649,12 +3657,7 @@ private fun LibraryScreen(
                         )
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(
-                                entry.title,
-                                style = MaterialTheme.typography.titleSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            TouchMarqueeTitle(text = entry.title)
                             Text(
                                 entry.channel,
                                 style = MaterialTheme.typography.bodySmall,
@@ -3730,12 +3733,7 @@ private fun LibraryScreen(
                         )
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(
-                                entry.title,
-                                style = MaterialTheme.typography.titleSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            TouchMarqueeTitle(text = entry.title)
                             Text(
                                 entry.channel,
                                 style = MaterialTheme.typography.bodySmall,
@@ -3860,12 +3858,10 @@ private fun LibraryScreen(
                     )
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(
-                            entry.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
+                        TouchMarqueeTitle(
+                            text = entry.title,
+                            maxLines = 1,
+                            fontWeight = FontWeight.SemiBold
                         )
                         Text(
                             entry.channel,
@@ -4041,12 +4037,7 @@ private fun LibraryScreen(
                                     )
                                     Spacer(Modifier.width(8.dp))
                                     Column(Modifier.weight(1f)) {
-                                        Text(
-                                            media.title,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                        TouchMarqueeTitle(text = media.title)
                                         Text(
                                             media.channel,
                                             style = MaterialTheme.typography.bodySmall,
@@ -4125,6 +4116,10 @@ private fun LibraryScreen(
                     entry = entry,
                     movieProviders = movieProviders,
                     resolving = resolvingId == entry.mediaId,
+                    isWatchLater = watchLater.any { it.mediaId == entry.mediaId },
+                    onToggleWatchLater = {
+                        onToggleWatchLaterMedia(entry.toMediaSummary())
+                    },
                     onClick = {
                         if (isMovieLibraryItem(entry.mediaId, entry.channel)) {
                             onOpenMovie(entry)
@@ -4178,11 +4173,17 @@ private fun LibraryScreen(
                 )
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(entry.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    TouchMarqueeTitle(
+                        text = entry.title,
+                        maxLines = 1,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Text(entry.channel, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    SearchPlaybackProgress(progress = entry.progress)
+                    SearchPlaybackProgress(
+                        progress = entry.progress,
+                        durationMs = entry.durationMs
+                    )
                 }
                 if (resolvingId == entry.mediaId) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
