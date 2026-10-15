@@ -3366,9 +3366,9 @@ private fun SearchResult(
                         Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .height(5.dp)
+                            .height(2.dp)
                             .background(
-                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.30f),
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f),
                                 RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp)
                             )
                     ) {
@@ -3377,7 +3377,7 @@ private fun SearchResult(
                                 .fillMaxHeight()
                                 .fillMaxWidth(progress.coerceIn(0f, 1f))
                                 .background(
-                                    MaterialTheme.colorScheme.primary,
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 1f),
                                     RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp)
                                 )
                         )
