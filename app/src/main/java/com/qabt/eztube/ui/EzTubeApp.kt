@@ -7501,13 +7501,7 @@ private fun FullPlayer(
             }
         }
     }
-}
 
-private const val MAX_UP_NEXT_VISIBLE = 12
-
-private fun formatTime(ms: Long): String {
-    val total = (ms / 1000).coerceAtLeast(0)
-    return "%d:%02d".format(total / 60, total % 60)
     if (showAddToPlaylist) {
         AddToPlaylistDialog(
             media = media,
@@ -7523,7 +7517,13 @@ private fun formatTime(ms: Long): String {
             }
         )
     }
+}
 
+private const val MAX_UP_NEXT_VISIBLE = 12
+
+private fun formatTime(ms: Long): String {
+    val total = (ms / 1000).coerceAtLeast(0)
+    return "%d:%02d".format(total / 60, total % 60)
 }
 
 @Composable
