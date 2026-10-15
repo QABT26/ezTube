@@ -4673,7 +4673,7 @@ private fun LocalMediaScreen(
                             "Allow ezTube to read audio stored on this device."
                         }
                     )
-                    FilledButton(onClick = { launcher.launch(permission) }) {
+                    Button(onClick = { launcher.launch(permission) }) {
                         Text("Allow access")
                     }
                 }
