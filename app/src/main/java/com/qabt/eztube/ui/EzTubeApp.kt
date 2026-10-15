@@ -72,6 +72,7 @@ import com.qabt.eztube.history.PersonalPlaylistStore
 import com.qabt.eztube.history.toMediaSummary
 import com.qabt.eztube.history.progress
 import com.qabt.eztube.playback.AudioQuality
+import com.qabt.eztube.playback.AudioBalanceMode
 import com.qabt.eztube.playback.VideoQuality
 import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
@@ -243,6 +244,7 @@ fun EzTubeApp(
     var queue by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var queueIndex by remember { mutableIntStateOf(-1) }
     var playbackSpeed by remember { mutableFloatStateOf(playbackPrefs.loadSpeed()) }
+    var audioBalanceMode by remember { mutableStateOf(playbackPrefs.loadAudioBalanceMode()) }
     var compatibilityFallback by remember { mutableStateOf(false) }
     var playerError by remember { mutableStateOf<String?>(null) }
     var isBuffering by remember { mutableStateOf(false) }
@@ -1660,6 +1662,20 @@ fun EzTubeApp(
                 },
                 quality = quality,
                 onQuality = { quality = it; playbackPrefs.saveQuality(it) },
+                audioBalanceMode = audioBalanceMode,
+                onAudioBalanceMode = { mode ->
+                    audioBalanceMode = mode
+                    playbackPrefs.saveAudioBalanceMode(mode)
+                    controller?.sendCustomCommand(
+                        androidx.media3.session.SessionCommand(
+                            PlaybackService.COMMAND_SET_AUDIO_BALANCE,
+                            android.os.Bundle.EMPTY
+                        ),
+                        android.os.Bundle().apply {
+                            putString(PlaybackService.ARG_AUDIO_BALANCE_MODE, mode.name)
+                        }
+                    )
+                },
                 speed = playbackSpeed,
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 autoplay = autoplay,
@@ -2113,6 +2129,8 @@ private fun SettingsScreen(
     onThemeMode: (ThemeMode) -> Unit,
     quality: AudioQuality,
     onQuality: (AudioQuality) -> Unit,
+    audioBalanceMode: AudioBalanceMode,
+    onAudioBalanceMode: (AudioBalanceMode) -> Unit,
     speed: Float,
     onSpeed: (Float) -> Unit,
     autoplay: Boolean,
@@ -2236,6 +2254,28 @@ private fun SettingsScreen(
                                 AudioQuality.STANDARD -> "Std 128"
                                 AudioQuality.HIGH -> "High 160+"
                             }) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Column {
+                Text("Volume balance", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Smooths large volume differences during playback. Strong uses heavier compression.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    AudioBalanceMode.entries.forEach { option ->
+                        FilterChip(
+                            selected = audioBalanceMode == option,
+                            onClick = { onAudioBalanceMode(option) },
+                            label = { Text(option.label) },
                             modifier = Modifier.weight(1f)
                         )
                     }
