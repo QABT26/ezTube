@@ -116,8 +116,14 @@ private enum class AppAccent(val label: String) {
     RED("Red")
 }
 
+private enum class ThemeMode(val label: String) {
+    AUTO("Auto"),
+    LIGHT("Light"),
+    DARK("Dark")
+}
+
 @Composable
-private fun appColorScheme(accent: AppAccent): ColorScheme {
+private fun appColorScheme(accent: AppAccent, darkTheme: Boolean): ColorScheme {
     val primary = when (accent) {
         AppAccent.PURPLE -> androidx.compose.ui.graphics.Color(0xFF6750A4)
         AppAccent.BLUE -> androidx.compose.ui.graphics.Color(0xFF3F51B5)
@@ -134,11 +140,31 @@ private fun appColorScheme(accent: AppAccent): ColorScheme {
         AppAccent.ORANGE -> androidx.compose.ui.graphics.Color(0xFFFFE0B2)
         AppAccent.RED -> androidx.compose.ui.graphics.Color(0xFFFFDAD6)
     }
-    return lightColorScheme(
-        primary = primary,
-        primaryContainer = primaryContainer,
-        secondaryContainer = primaryContainer.copy(alpha = 0.82f)
-    )
+    return if (darkTheme) {
+        darkColorScheme(
+            primary = androidx.compose.ui.graphics.lerp(
+                primary,
+                androidx.compose.ui.graphics.Color.White,
+                0.28f
+            ),
+            primaryContainer = androidx.compose.ui.graphics.lerp(
+                primary,
+                androidx.compose.ui.graphics.Color.Black,
+                0.42f
+            ),
+            secondaryContainer = androidx.compose.ui.graphics.lerp(
+                primaryContainer,
+                androidx.compose.ui.graphics.Color.Black,
+                0.62f
+            )
+        )
+    } else {
+        lightColorScheme(
+            primary = primary,
+            primaryContainer = primaryContainer,
+            secondaryContainer = primaryContainer.copy(alpha = 0.82f)
+        )
+    }
 }
 
 private val MediaActionButtonSize = 24.dp
@@ -183,6 +209,12 @@ fun EzTubeApp(
         mutableStateOf(
             runCatching { AppAccent.valueOf(playbackPrefs.loadAppAccent()) }
                 .getOrDefault(AppAccent.PURPLE)
+        )
+    }
+    var themeMode by remember {
+        mutableStateOf(
+            runCatching { ThemeMode.valueOf(playbackPrefs.loadThemeMode()) }
+                .getOrDefault(ThemeMode.AUTO)
         )
     }
     val networkUsageTracker = remember { NetworkUsageTracker(context) }
@@ -1235,7 +1267,14 @@ fun EzTubeApp(
         }
     }
 
-    MaterialTheme(colorScheme = appColorScheme(appAccent)) {
+    val systemDarkTheme = isSystemInDarkTheme()
+    val useDarkTheme = when (themeMode) {
+        ThemeMode.AUTO -> systemDarkTheme
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+
+    MaterialTheme(colorScheme = appColorScheme(appAccent, useDarkTheme)) {
         if (isInPictureInPictureMode && videoMode && controller != null) {
             Box(
                 Modifier
@@ -1611,6 +1650,11 @@ fun EzTubeApp(
                 onAppAccent = { accent ->
                     appAccent = accent
                     playbackPrefs.saveAppAccent(accent.name)
+                },
+                themeMode = themeMode,
+                onThemeMode = { mode ->
+                    themeMode = mode
+                    playbackPrefs.saveThemeMode(mode.name)
                 },
                 quality = quality,
                 onQuality = { quality = it; playbackPrefs.saveQuality(it) },
@@ -2063,6 +2107,8 @@ private fun AppHeader(onSettings: () -> Unit, onDoubleTapCenter: () -> Unit) {
 private fun SettingsScreen(
     appAccent: AppAccent,
     onAppAccent: (AppAccent) -> Unit,
+    themeMode: ThemeMode,
+    onThemeMode: (ThemeMode) -> Unit,
     quality: AudioQuality,
     onQuality: (AudioQuality) -> Unit,
     speed: Float,
@@ -2121,6 +2167,28 @@ private fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Column {
+                Text("Theme", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Auto follows the phone's light/dark setting.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    ThemeMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = themeMode == mode,
+                            onClick = { onThemeMode(mode) },
+                            label = { Text(mode.label) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
             Column {
                 Text("App color", fontWeight = FontWeight.SemiBold)
                 Text(
@@ -3368,27 +3436,38 @@ private fun SearchResult(
                 ?.progress
                 ?.takeIf { it > 0f }
                 ?.let { progress ->
-                    Box(
-                        Modifier
+                    Column(
+                        modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .height(3.dp)
-                            .background(
-                                androidx.compose.ui.graphics.Color.White.copy(alpha = 0.30f)
-                            )
                     ) {
                         Box(
                             Modifier
-                                .fillMaxHeight()
-                                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                                .fillMaxWidth()
+                                .height(0.5.dp)
                                 .background(
-                                    androidx.compose.ui.graphics.lerp(
-                                        MaterialTheme.colorScheme.primary,
-                                        androidx.compose.ui.graphics.Color.White,
-                                        0.18f
-                                    )
+                                    if (isSystemInDarkTheme()) {
+                                        androidx.compose.ui.graphics.Color.White.copy(alpha = 0.55f)
+                                    } else {
+                                        androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.28f)
+                                    }
                                 )
                         )
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(2.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f)
+                                )
+                        ) {
+                            Box(
+                                Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(progress.coerceIn(0f, 1f))
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                        }
                     }
                 }
         }
