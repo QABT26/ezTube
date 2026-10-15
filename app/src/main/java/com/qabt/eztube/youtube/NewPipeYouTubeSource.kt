@@ -450,7 +450,9 @@ class NewPipeYouTubeSource : YouTubeSource {
             CommentSummary(
                 id = item.commentId.orEmpty().ifBlank { item.url },
                 author = item.uploaderName.orEmpty().ifBlank { "YouTube" },
-                authorAvatarUrl = item.uploaderAvatars.firstOrNull()?.url,
+                // PipePipeExtractor v5.4.0 exposes the legacy comment API here;
+                // avatar collections are not available through this compatibility layer.
+                authorAvatarUrl = null,
                 text = item.commentText.content,
                 uploadDateText = item.textualUploadDate,
                 likeCount = item.likeCount,
@@ -461,7 +463,9 @@ class NewPipeYouTubeSource : YouTubeSource {
 
         return CommentsPage(
             comments = comments,
-            totalCount = info.commentsCount,
+            // The legacy compatibility API does not expose the aggregate count.
+            // Use the loaded first-page size for the chip until pagination/count is wired.
+            totalCount = comments.size,
             disabled = info.isCommentsDisabled
         )
     }
