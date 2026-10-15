@@ -18,6 +18,14 @@ if (-not (Test-Path $Apk)) {
     throw "APK not found: $Apk"
 }
 
+# Windows PowerShell 5.1 turns native stderr into ErrorRecord objects when
+# stderr is redirected (2>&1). ADB writes normal status/progress messages
+# such as push throughput and daemon startup to stderr, so keeping
+# ErrorActionPreference=Stop here can abort even when ADB exits with code 0.
+# From this point on, native command success is determined explicitly by
+# $LASTEXITCODE and parsed output.
+$ErrorActionPreference = "Continue"
+
 function Wait-AdbDevice {
     param(
         [int]$TimeoutSeconds = 20
