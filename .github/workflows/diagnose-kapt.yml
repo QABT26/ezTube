@@ -2,11 +2,6 @@ name: Diagnose KAPT
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/diagnose-kapt.yml"
-      - "app/build.gradle.kts"
-      - "app/src/main/java/**"
 
 jobs:
   diagnose:
