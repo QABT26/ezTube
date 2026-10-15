@@ -677,10 +677,16 @@ fun EzTubeApp(
         if (resolvingId != null) return
 
         when {
-            media.id.startsWith("movie:") -> {
+            media.id.startsWith("movie:") || media.channel == "Local video" -> {
                 if (!videoMode) {
                     videoMode = true
                     playbackPrefs.saveVideoMode(true)
+                }
+            }
+            media.channel == "Local audio" -> {
+                if (videoMode) {
+                    videoMode = false
+                    playbackPrefs.saveVideoMode(false)
                 }
             }
             PlaybackSourceResolver.resolve(media.id) is PlaybackSource.Hls ||
