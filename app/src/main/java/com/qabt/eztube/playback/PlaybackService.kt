@@ -370,6 +370,7 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         if (::queueManager.isInitialized) queueManager.checkpointSession()
         SystemTransportBridge.clear()
+        audioBalanceController.release()
         serviceScope.cancel()
         session?.release()
         session = null
