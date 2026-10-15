@@ -39,6 +39,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -3446,11 +3447,11 @@ private fun SearchResult(
                                 .fillMaxWidth()
                                 .height(0.5.dp)
                                 .background(
-                                    if (isSystemInDarkTheme()) {
-                                        androidx.compose.ui.graphics.Color.White.copy(alpha = 0.55f)
-                                    } else {
-                                        androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.28f)
-                                    }
+                                    MaterialTheme.colorScheme.onSurface.copy(
+                                        alpha = if (
+                                            MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                                        ) 0.55f else 0.28f
+                                    )
                                 )
                         )
                         Box(
