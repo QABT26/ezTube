@@ -4094,22 +4094,6 @@ private fun CompactMediaRow(
             }
         }
     }
-    if (showAddToPlaylist) {
-        AddToPlaylistDialog(
-            media = media,
-            playlists = personalPlaylists,
-            onDismiss = { showAddToPlaylist = false },
-            onSelect = { playlistId ->
-                onAddToPlaylist(playlistId, media)
-                showAddToPlaylist = false
-            },
-            onCreate = { name ->
-                onCreatePlaylistWithMedia(name, media)
-                showAddToPlaylist = false
-            }
-        )
-    }
-
 }
 
 @Composable
@@ -7524,6 +7508,22 @@ private const val MAX_UP_NEXT_VISIBLE = 12
 private fun formatTime(ms: Long): String {
     val total = (ms / 1000).coerceAtLeast(0)
     return "%d:%02d".format(total / 60, total % 60)
+    if (showAddToPlaylist) {
+        AddToPlaylistDialog(
+            media = media,
+            playlists = personalPlaylists,
+            onDismiss = { showAddToPlaylist = false },
+            onSelect = { playlistId ->
+                onAddToPlaylist(playlistId, media)
+                showAddToPlaylist = false
+            },
+            onCreate = { name ->
+                onCreatePlaylistWithMedia(name, media)
+                showAddToPlaylist = false
+            }
+        )
+    }
+
 }
 
 @Composable
