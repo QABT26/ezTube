@@ -3333,7 +3333,11 @@ private fun SearchResult(
             .clickable(enabled = enabled, onClick = onPlay)
             .padding(7.dp), verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(width = 116.dp, height = 66.dp)) {
+        Box(
+            Modifier
+                .size(width = 116.dp, height = 66.dp)
+                .clip(RoundedCornerShape(10.dp))
+        ) {
             AsyncImage(
                 media.thumbnailUrl,
                 null,
@@ -3366,10 +3370,9 @@ private fun SearchResult(
                         Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .height(2.dp)
+                            .height(3.dp)
                             .background(
-                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f),
-                                RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp)
+                                androidx.compose.ui.graphics.Color.White.copy(alpha = 0.30f)
                             )
                     ) {
                         Box(
@@ -3377,8 +3380,11 @@ private fun SearchResult(
                                 .fillMaxHeight()
                                 .fillMaxWidth(progress.coerceIn(0f, 1f))
                                 .background(
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 1f),
-                                    RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp)
+                                    androidx.compose.ui.graphics.lerp(
+                                        MaterialTheme.colorScheme.primary,
+                                        androidx.compose.ui.graphics.Color.White,
+                                        0.42f
+                                    )
                                 )
                         )
                     }
