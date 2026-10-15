@@ -4713,7 +4713,7 @@ private fun LibraryScreen(
                             modifier = Modifier.size(32.dp)
                         ) {
                             Icon(
-                                Icons.AutoMirrored.Outlined.PlaylistAdd,
+                                Icons.Outlined.PlaylistAdd,
                                 "Add current",
                                 Modifier.size(19.dp)
                             )
@@ -5135,7 +5135,7 @@ private fun PersonalPlaylistDetailScreen(
                             enabled = nowPlaying != null,
                             modifier = Modifier.size(34.dp)
                         ) {
-                            Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, "Add current", Modifier.size(20.dp))
+                            Icon(Icons.Outlined.PlaylistAdd, "Add current", Modifier.size(20.dp))
                         }
                     }
                 }
