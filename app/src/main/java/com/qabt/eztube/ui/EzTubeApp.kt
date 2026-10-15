@@ -1379,6 +1379,7 @@ fun EzTubeApp(
                         (repeatMode == RepeatMode.ALL && queue.size > 1),
                     isFavorite = favorites.any { it.mediaId == nowPlaying?.id },
                     isWatchLater = watchLater.any { it.mediaId == nowPlaying?.id },
+                    personalPlaylists = personalPlaylists,
                     networkType = networkType
                 ),
                 actions = FullPlayerActions(
@@ -1539,6 +1540,19 @@ fun EzTubeApp(
                     },
                     onWatchLater = {
                         nowPlaying?.let { toggleWatchLater(it) }
+                    },
+                    onAddToPlaylist = { playlistId, media ->
+                        personalPlaylists = personalPlaylistStore.add(playlistId, media)
+                    },
+                    onCreatePlaylistWithMedia = { name, media ->
+                        val existingIds = personalPlaylists.mapTo(mutableSetOf()) { it.id }
+                        val created = personalPlaylistStore.create(name)
+                        val createdPlaylist = created.firstOrNull { it.id !in existingIds }
+                        personalPlaylists = if (createdPlaylist != null) {
+                            personalPlaylistStore.add(createdPlaylist.id, media)
+                        } else {
+                            created
+                        }
                     },
                     onToggle = {
                         if (controller?.currentMediaItem == null) {
@@ -1799,6 +1813,16 @@ fun EzTubeApp(
                         },
                         watchLaterIds = watchLater.mapTo(mutableSetOf()) { it.mediaId },
                         onToggleWatchLater = { toggleWatchLater(it) },
+                        favoriteIds = favorites.mapTo(mutableSetOf()) { it.mediaId },
+                        onToggleFavorite = { media ->
+                            scope.launch(Dispatchers.IO) {
+                                if (favorites.any { it.mediaId == media.id }) {
+                                    favoritesRepo.remove(media.id)
+                                } else {
+                                    favoritesRepo.add(media)
+                                }
+                            }
+                        },
                         onSearch = { selected = Tab.SEARCH }
                     )
                     Tab.LIBRARY -> LibraryScreen(
@@ -3689,6 +3713,8 @@ private fun HomeScreen(
     onMovie: (MediaSummary) -> Unit,
     watchLaterIds: Set<String>,
     onToggleWatchLater: (MediaSummary) -> Unit,
+    favoriteIds: Set<String>,
+    onToggleFavorite: (MediaSummary) -> Unit,
     onSearch: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -3772,6 +3798,11 @@ private fun HomeScreen(
                     onToggleWatchLater = {
                         onToggleWatchLater(entry.toMediaSummary())
                     },
+                    isFavorite = entry.mediaId in favoriteIds,
+                    onToggleFavorite = {
+                        onToggleFavorite(entry.toMediaSummary())
+                    },
+                    showPlayAction = false,
                     onClick = { onContinue(entry) },
                     onPlay = { onContinue(entry) }
                 )
@@ -3838,7 +3869,9 @@ private fun HomeScreen(
                     media = media,
                     resolving = resolvingId == media.id,
                     isWatchLater = media.id in watchLaterIds,
-                    onToggleWatchLater = { onToggleWatchLater(media) }
+                    onToggleWatchLater = { onToggleWatchLater(media) },
+                    isFavorite = media.id in favoriteIds,
+                    onToggleFavorite = { onToggleFavorite(media) }
                 ) {
                     if (recommendationMode == SearchSourceMode.MOVIE && movieProvidersTitleId(media.id)) {
                         onMovie(media)
@@ -3916,6 +3949,8 @@ private fun HomeScreen(
                         resolving = resolvingId == media.id,
                         isWatchLater = media.id in watchLaterIds,
                         onToggleWatchLater = { onToggleWatchLater(media) },
+                        isFavorite = media.id in favoriteIds,
+                        onToggleFavorite = { onToggleFavorite(media) },
                         durationInThumbnail = true
                     ) { onPlay(media, trending) }
                 }
@@ -3975,6 +4010,8 @@ private fun CompactMediaRow(
     resolving: Boolean,
     isWatchLater: Boolean = false,
     onToggleWatchLater: (() -> Unit)? = null,
+    isFavorite: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null,
     durationInThumbnail: Boolean = false,
     onClick: () -> Unit
 ) {
@@ -4042,14 +4079,37 @@ private fun CompactMediaRow(
                         )
                     }
                 }
-                Icon(
-                    Icons.Outlined.PlayArrow,
-                    "Play",
-                    Modifier.size(22.dp)
-                )
+                onToggleFavorite?.let { action ->
+                    IconButton(
+                        onClick = action,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                            if (isFavorite) "Remove favorite" else "Add favorite",
+                            Modifier.size(19.dp)
+                        )
+                    }
+                }
             }
         }
     }
+    if (showAddToPlaylist) {
+        AddToPlaylistDialog(
+            media = media,
+            playlists = personalPlaylists,
+            onDismiss = { showAddToPlaylist = false },
+            onSelect = { playlistId ->
+                onAddToPlaylist(playlistId, media)
+                showAddToPlaylist = false
+            },
+            onCreate = { name ->
+                onCreatePlaylistWithMedia(name, media)
+                showAddToPlaylist = false
+            }
+        )
+    }
+
 }
 
 @Composable
@@ -4201,6 +4261,9 @@ private fun ProgressMediaRow(
     isWatchLater: Boolean = false,
     onToggleWatchLater: (() -> Unit)? = null,
     onAddToPlaylist: (() -> Unit)? = null,
+    isFavorite: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null,
+    showPlayAction: Boolean = true,
     onClick: () -> Unit,
     onPlay: () -> Unit
 ) {
@@ -4255,11 +4318,25 @@ private fun ProgressMediaRow(
                         Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(16.dp))
                     }
                 }
-                IconButton(
-                    onClick = onPlay,
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(20.dp))
+                onToggleFavorite?.let { action ->
+                    IconButton(
+                        onClick = action,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                            if (isFavorite) "Remove favorite" else "Add favorite",
+                            Modifier.size(16.dp)
+                        )
+                    }
+                }
+                if (showPlayAction) {
+                    IconButton(
+                        onClick = onPlay,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(20.dp))
+                    }
                 }
             }
         }
@@ -4510,10 +4587,10 @@ private fun LibraryScreen(
                                 )
                             }
                             IconButton(
-                                onClick = { onPlayFavorite(entry) },
+                                onClick = { playlistTarget = entry.toMediaSummary() },
                                 modifier = Modifier.size(26.dp)
                             ) {
-                                Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
+                                Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(18.dp))
                             }
                         }
                     }
@@ -4605,12 +4682,12 @@ private fun LibraryScreen(
                                 )
                             }
                             IconButton(
-                                onClick = { onPlayFavorite(entry) },
+                                onClick = { playlistTarget = entry.toMediaSummary() },
                                 modifier = Modifier.size(26.dp)
                             ) {
                                 Icon(
-                                    Icons.Outlined.PlayArrow,
-                                    "Play movie",
+                                    Icons.Outlined.PlaylistAdd,
+                                    "Add to playlist",
                                     Modifier.size(18.dp)
                                 )
                             }
@@ -4737,10 +4814,10 @@ private fun LibraryScreen(
                                 )
                             }
                             IconButton(
-                                onClick = { onPlayWatchLater(entry) },
+                                onClick = { playlistTarget = entry.toMediaSummary() },
                                 modifier = Modifier.size(26.dp)
                             ) {
-                                Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
+                                Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(18.dp))
                             }
                         }
                     }
@@ -4957,6 +5034,7 @@ private fun LibraryScreen(
                         onToggleWatchLaterMedia(entry.toMediaSummary())
                     },
                     onAddToPlaylist = { playlistTarget = entry.toMediaSummary() },
+                    showPlayAction = false,
                     onClick = {
                         if (isMovieLibraryItem(entry.mediaId, entry.channel)) {
                             onOpenMovie(entry)
@@ -5041,12 +5119,7 @@ private fun LibraryScreen(
                         ) {
                             Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(16.dp))
                         }
-                        IconButton(
-                            onClick = { onPlay(entry) },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(17.dp))
-                        }
+
                     }
                 }
             }
@@ -5839,6 +5912,7 @@ private data class FullPlayerState(
     val hasNext: Boolean,
     val isFavorite: Boolean,
     val isWatchLater: Boolean,
+    val personalPlaylists: List<PersonalPlaylist>,
     val networkType: NetworkType
 )
 
@@ -5863,6 +5937,8 @@ private class FullPlayerActions(
     val onChannel: () -> Unit,
     val onFavorite: () -> Unit,
     val onWatchLater: () -> Unit,
+    val onAddToPlaylist: (String, MediaSummary) -> Unit,
+    val onCreatePlaylistWithMedia: (String, MediaSummary) -> Unit,
     val onToggle: () -> Unit,
     val onClose: () -> Unit
 )
@@ -5900,6 +5976,7 @@ private fun FullPlayer(
     val hasNext = state.hasNext
     val isFavorite = state.isFavorite
     val isWatchLater = state.isWatchLater
+    val personalPlaylists = state.personalPlaylists
     val networkType = state.networkType
     val movieEpisodePosition =
         if (isMovie && queue.size > 1 && queueIndex in queue.indices) {
@@ -5936,6 +6013,8 @@ private fun FullPlayer(
     val onChannel = actions.onChannel
     val onFavorite = actions.onFavorite
     val onWatchLater = actions.onWatchLater
+    val onAddToPlaylist = actions.onAddToPlaylist
+    val onCreatePlaylistWithMedia = actions.onCreatePlaylistWithMedia
     val onToggle = actions.onToggle
     val onClose = actions.onClose
 
@@ -5943,6 +6022,7 @@ private fun FullPlayer(
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var showQueue by remember { mutableStateOf(false) }
+    var showAddToPlaylist by remember(media.id) { mutableStateOf(false) }
     var draggedQueueId by remember { mutableStateOf<String?>(null) }
     var draggedQueueIndex by remember { mutableIntStateOf(-1) }
     var draggedQueueStartIndex by remember { mutableIntStateOf(-1) }
@@ -6784,6 +6864,9 @@ private fun FullPlayer(
                         if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
                         if (isFavorite) "Remove favorite" else "Add favorite"
                     )
+                }
+                IconButton(onClick = { showAddToPlaylist = true }) {
+                    Icon(Icons.Outlined.PlaylistAdd, "Add to playlist")
                 }
             }
 
