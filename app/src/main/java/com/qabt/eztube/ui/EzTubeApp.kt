@@ -97,6 +97,7 @@ import com.qabt.eztube.youtube.ChannelSummary
 import com.qabt.eztube.youtube.PlaylistSummary
 import com.qabt.eztube.youtube.PlaylistDetail
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
+import com.qabt.eztube.youtube.CommentsPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -105,6 +106,11 @@ import java.util.Locale
 
 private enum class Tab(val label: String) { HOME("Home"), SEARCH("Search"), LIBRARY("Library") }
 private enum class SearchSourceMode { YOUTUBE, MOVIE }
+private enum class YouTubeSearchMode(val label: String) {
+    ALL("All"),
+    LIVE("Live"),
+    SHORTS("Shorts")
+}
 private data class SubtitleOption(val label: String, val language: String?)
 private enum class RepeatMode { OFF, ONE, ALL }
 private enum class NextMode { LIST, RECOMMENDED }
@@ -1474,7 +1480,8 @@ fun EzTubeApp(
                     isFavorite = favorites.any { it.mediaId == nowPlaying?.id },
                     isWatchLater = watchLater.any { it.mediaId == nowPlaying?.id },
                     personalPlaylists = personalPlaylists,
-                    networkType = networkType
+                    networkType = networkType,
+                    youtubeSource = source
                 ),
                 actions = FullPlayerActions(
                     onSubtitle = { selectMovieSubtitle(it) },
@@ -2770,6 +2777,7 @@ private fun SearchScreen(
     var loading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searchSort by remember { mutableStateOf(SearchSort.RELEVANCE) }
+    var youtubeSearchMode by remember { mutableStateOf(YouTubeSearchMode.ALL) }
     var playlistTarget by remember { mutableStateOf<MediaSummary?>(null) }
     val displayResults = remember(results, searchSort) {
         when (searchSort) {
@@ -2782,7 +2790,8 @@ private fun SearchScreen(
 
     fun submit(
         searchText: String = query,
-        mode: SearchSourceMode = sourceMode
+        mode: SearchSourceMode = sourceMode,
+        youtubeMode: YouTubeSearchMode = youtubeSearchMode
     ) {
         val normalized = searchText.trim()
         if (normalized.isBlank() || loading) return
@@ -2795,7 +2804,11 @@ private fun SearchScreen(
                 withContext(Dispatchers.IO) {
                     when (mode) {
                         SearchSourceMode.MOVIE -> movieProviders.search(normalized)
-                        SearchSourceMode.YOUTUBE -> source.search(normalized)
+                        SearchSourceMode.YOUTUBE -> when (youtubeMode) {
+                            YouTubeSearchMode.ALL -> source.search(normalized)
+                            YouTubeSearchMode.LIVE -> source.searchLive(normalized)
+                            YouTubeSearchMode.SHORTS -> source.searchShorts(normalized)
+                        }
                     }
                 }
             }
@@ -2816,9 +2829,16 @@ private fun SearchScreen(
                 onClick = {
                     if (sourceMode != SearchSourceMode.YOUTUBE) {
                         onSourceModeChange(SearchSourceMode.YOUTUBE)
+                        youtubeSearchMode = YouTubeSearchMode.ALL
                         searchError = null
                         onResultsChange(emptyList())
-                        if (query.isNotBlank()) submit(query, SearchSourceMode.YOUTUBE)
+                        if (query.isNotBlank()) {
+                            submit(
+                                query,
+                                SearchSourceMode.YOUTUBE,
+                                YouTubeSearchMode.ALL
+                            )
+                        }
                     }
                 },
                 label = { Text("YouTube", maxLines = 1) },
@@ -2866,6 +2886,35 @@ private fun SearchScreen(
             ),
             shape = RoundedCornerShape(16.dp)
         )
+        if (sourceMode == SearchSourceMode.YOUTUBE) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                YouTubeSearchMode.entries.forEach { option ->
+                    FilterChip(
+                        selected = youtubeSearchMode == option,
+                        onClick = {
+                            if (youtubeSearchMode != option) {
+                                youtubeSearchMode = option
+                                searchSort = SearchSort.RELEVANCE
+                                onResultsChange(emptyList())
+                                if (query.isNotBlank()) {
+                                    submit(
+                                        query,
+                                        SearchSourceMode.YOUTUBE,
+                                        option
+                                    )
+                                }
+                            }
+                        },
+                        label = { Text(option.label) },
+                        modifier = Modifier.weight(1f).height(34.dp)
+                    )
+                }
+            }
+        }
+
         if (query.isBlank() && recentSearches.isNotEmpty()) {
             androidx.compose.foundation.layout.FlowRow(
                 modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
@@ -6393,7 +6442,8 @@ private data class FullPlayerState(
     val isFavorite: Boolean,
     val isWatchLater: Boolean,
     val personalPlaylists: List<PersonalPlaylist>,
-    val networkType: NetworkType
+    val networkType: NetworkType,
+    val youtubeSource: NewPipeYouTubeSource
 )
 
 private class FullPlayerActions(
@@ -6423,6 +6473,7 @@ private class FullPlayerActions(
     val onClose: () -> Unit
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FullPlayer(
     state: FullPlayerState,
@@ -6470,6 +6521,8 @@ private fun FullPlayer(
         }
     }
     val networkType = state.networkType
+    val youtubeSource = state.youtubeSource
+    val isYouTubeMedia = PlaybackSourceResolver.resolve(media.id) is PlaybackSource.YouTube
     val movieEpisodePosition =
         if (isMovie && queue.size > 1 && queueIndex in queue.indices) {
             "${queueIndex + 1} / ${queue.size}"
@@ -6515,6 +6568,10 @@ private fun FullPlayer(
     var duration by remember { mutableLongStateOf(0L) }
     var showQueue by remember { mutableStateOf(false) }
     var showAddToPlaylist by remember(media.id) { mutableStateOf(false) }
+    var showComments by remember(media.id) { mutableStateOf(false) }
+    var commentsLoading by remember(media.id) { mutableStateOf(false) }
+    var commentsPage by remember(media.id) { mutableStateOf<CommentsPage?>(null) }
+    var commentsError by remember(media.id) { mutableStateOf<String?>(null) }
     var draggedQueueId by remember { mutableStateOf<String?>(null) }
     var draggedQueueIndex by remember { mutableIntStateOf(-1) }
     var draggedQueueStartIndex by remember { mutableIntStateOf(-1) }
@@ -7538,6 +7595,84 @@ private fun FullPlayer(
                 }
             }
 
+            if (isYouTubeMedia) {
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    AssistChip(
+                        modifier = Modifier.height(32.dp),
+                        onClick = {
+                            showComments = true
+                            if (commentsPage == null && !commentsLoading) {
+                                commentsLoading = true
+                                commentsError = null
+                                dragScope.launch {
+                                    runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            youtubeSource.comments(media.id)
+                                        }
+                                    }.onSuccess {
+                                        commentsPage = it
+                                    }.onFailure {
+                                        commentsError = it.message ?: "Unable to load comments"
+                                    }
+                                    commentsLoading = false
+                                }
+                            }
+                        },
+                        label = {
+                            Text(
+                                commentsPage?.totalCount
+                                    ?.takeIf { it > 0 }
+                                    ?.let { "Comments · $it" }
+                                    ?: "Comments"
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.Comment,
+                                null,
+                                Modifier.size(MediaActionIconSize)
+                            )
+                        }
+                    )
+                    AssistChip(
+                        modifier = Modifier.height(32.dp),
+                        onClick = {
+                            val shareIntent = android.content.Intent(
+                                android.content.Intent.ACTION_SEND
+                            ).apply {
+                                type = "text/plain"
+                                putExtra(
+                                    android.content.Intent.EXTRA_TEXT,
+                                    media.id
+                                )
+                                putExtra(
+                                    android.content.Intent.EXTRA_SUBJECT,
+                                    media.title
+                                )
+                            }
+                            context.startActivity(
+                                android.content.Intent.createChooser(
+                                    shareIntent,
+                                    "Share"
+                                )
+                            )
+                        },
+                        label = { Text("Share") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.Share,
+                                null,
+                                Modifier.size(MediaActionIconSize)
+                            )
+                        }
+                    )
+                }
+            }
+
             Spacer(Modifier.height(6.dp))
             if (isMovie) {
                 val subtitleScrollState = rememberScrollState()
@@ -8185,6 +8320,140 @@ private fun FullPlayer(
             }
         }
     }
+    }
+
+    if (showComments) {
+        ModalBottomSheet(
+            onDismissRequest = { showComments = false }
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    .padding(bottom = 20.dp)
+            ) {
+                Text(
+                    "Comments",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(10.dp))
+                when {
+                    commentsLoading -> {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(20.dp))
+                    }
+                    commentsError != null -> {
+                        Text(
+                            commentsError.orEmpty(),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.height(20.dp))
+                    }
+                    commentsPage?.disabled == true -> {
+                        Text(
+                            "Comments are disabled for this video.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(20.dp))
+                    }
+                    commentsPage?.comments.isNullOrEmpty() -> {
+                        Text(
+                            "No comments available.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(20.dp))
+                    }
+                    else -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(
+                                commentsPage?.comments.orEmpty(),
+                                key = { it.id }
+                            ) { comment ->
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    AsyncImage(
+                                        model = comment.authorAvatarUrl,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(36.dp)
+                                            .clip(RoundedCornerShape(50))
+                                            .background(
+                                                MaterialTheme.colorScheme.surfaceVariant
+                                            ),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                comment.author,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            comment.uploadDateText
+                                                ?.takeIf { it.isNotBlank() }
+                                                ?.let {
+                                                    Text(
+                                                        " · $it",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                        }
+                                        Spacer(Modifier.height(3.dp))
+                                        Text(
+                                            comment.text,
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Row(
+                                            Modifier.padding(top = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (comment.pinned) {
+                                                Text(
+                                                    "Pinned",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                                Spacer(Modifier.width(8.dp))
+                                            }
+                                            if (comment.likeCount >= 0) {
+                                                Icon(
+                                                    Icons.Outlined.ThumbUp,
+                                                    null,
+                                                    Modifier.size(14.dp)
+                                                )
+                                                Spacer(Modifier.width(3.dp))
+                                                Text(
+                                                    comment.likeCount.toString(),
+                                                    style = MaterialTheme.typography.labelSmall
+                                                )
+                                            }
+                                            if (comment.heartedByUploader) {
+                                                Spacer(Modifier.width(8.dp))
+                                                Icon(
+                                                    Icons.Outlined.Favorite,
+                                                    "Hearted by creator",
+                                                    Modifier.size(14.dp),
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (showAddToPlaylist) {
