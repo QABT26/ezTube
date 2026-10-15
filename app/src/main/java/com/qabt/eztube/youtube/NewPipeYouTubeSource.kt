@@ -11,6 +11,8 @@ import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.kiosk.KioskInfo
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.ChannelTabInfo
+import org.schabi.newpipe.extractor.comments.CommentsInfo
+import org.schabi.newpipe.extractor.stream.StreamType
 import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.stream.StreamInfo
@@ -370,7 +372,11 @@ class NewPipeYouTubeSource : YouTubeSource {
             durationSeconds = duration
         )
 
-    override suspend fun search(query: String): List<MediaSummary> {
+    private suspend fun searchStreams(
+        query: String,
+        predicate: (StreamInfoItem) -> Boolean,
+        badge: String? = null
+    ): List<MediaSummary> {
         val normalized = query.trim()
         if (normalized.isEmpty()) return emptyList()
 
@@ -393,11 +399,12 @@ class NewPipeYouTubeSource : YouTubeSource {
             listOf(contentFilter),
             null
         )
+
         return SearchInfo.getInfo(service, searchHandler)
             .relatedItems
             .asSequence()
             .filterIsInstance<StreamInfoItem>()
-            .filterNot { it.isShortFormContent }
+            .filter(predicate)
             .map { item ->
                 MediaSummary(
                     id = item.url,
@@ -407,10 +414,56 @@ class NewPipeYouTubeSource : YouTubeSource {
                     channelUrl = item.uploaderUrl,
                     viewCount = item.viewCount,
                     uploadDateText = uploadDateLabel(item),
-                    durationSeconds = item.duration
+                    durationSeconds = item.duration,
+                    thumbnailBadge = badge
                 )
             }
             .toList()
+    }
+
+    override suspend fun search(query: String): List<MediaSummary> =
+        searchStreams(query, predicate = { !it.isShortFormContent })
+
+    override suspend fun searchLive(query: String): List<MediaSummary> =
+        searchStreams(
+            query,
+            predicate = {
+                !it.isShortFormContent &&
+                    (it.streamType == StreamType.LIVE_STREAM ||
+                        it.streamType == StreamType.AUDIO_LIVE_STREAM)
+            },
+            badge = "LIVE"
+        )
+
+    override suspend fun searchShorts(query: String): List<MediaSummary> =
+        searchStreams(
+            query,
+            predicate = { it.isShortFormContent },
+            badge = "SHORT"
+        )
+
+    override suspend fun comments(mediaId: String): CommentsPage {
+        val info = CommentsInfo.getInfo(ServiceList.YouTube, mediaId)
+            ?: return CommentsPage(emptyList(), 0, true)
+
+        val comments = info.relatedItems.map { item ->
+            CommentSummary(
+                id = item.commentId.orEmpty().ifBlank { item.url },
+                author = item.uploaderName.orEmpty().ifBlank { "YouTube" },
+                authorAvatarUrl = item.uploaderAvatars.firstOrNull()?.url,
+                text = item.commentText.content,
+                uploadDateText = item.textualUploadDate,
+                likeCount = item.likeCount,
+                pinned = item.isPinned,
+                heartedByUploader = item.isHeartedByUploader
+            )
+        }
+
+        return CommentsPage(
+            comments = comments,
+            totalCount = info.commentsCount,
+            disabled = info.isCommentsDisabled
+        )
     }
 
     override suspend fun trending(topic: String, language: String): List<MediaSummary> {
