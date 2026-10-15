@@ -107,6 +107,40 @@ private enum class SearchSort(val label: String) {
     RELEVANCE("Relevance"), NEWEST("Newest"), VIEWS("Views"), DURATION("Duration")
 }
 
+private enum class AppAccent(val label: String) {
+    PURPLE("Purple"),
+    BLUE("Blue"),
+    TEAL("Teal"),
+    GREEN("Green"),
+    ORANGE("Orange"),
+    RED("Red")
+}
+
+@Composable
+private fun appColorScheme(accent: AppAccent): ColorScheme {
+    val primary = when (accent) {
+        AppAccent.PURPLE -> androidx.compose.ui.graphics.Color(0xFF6750A4)
+        AppAccent.BLUE -> androidx.compose.ui.graphics.Color(0xFF3F51B5)
+        AppAccent.TEAL -> androidx.compose.ui.graphics.Color(0xFF00796B)
+        AppAccent.GREEN -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+        AppAccent.ORANGE -> androidx.compose.ui.graphics.Color(0xFFEF6C00)
+        AppAccent.RED -> androidx.compose.ui.graphics.Color(0xFFC62828)
+    }
+    val primaryContainer = when (accent) {
+        AppAccent.PURPLE -> androidx.compose.ui.graphics.Color(0xFFEADDFF)
+        AppAccent.BLUE -> androidx.compose.ui.graphics.Color(0xFFDDE3FF)
+        AppAccent.TEAL -> androidx.compose.ui.graphics.Color(0xFFD3F5EE)
+        AppAccent.GREEN -> androidx.compose.ui.graphics.Color(0xFFD9F2D8)
+        AppAccent.ORANGE -> androidx.compose.ui.graphics.Color(0xFFFFE0B2)
+        AppAccent.RED -> androidx.compose.ui.graphics.Color(0xFFFFDAD6)
+    }
+    return lightColorScheme(
+        primary = primary,
+        primaryContainer = primaryContainer,
+        secondaryContainer = primaryContainer.copy(alpha = 0.82f)
+    )
+}
+
 private val MediaActionButtonSize = 24.dp
 private val MediaActionIconSize = 16.dp
 
@@ -145,6 +179,12 @@ fun EzTubeApp(
     }
 
     val playbackPrefs = remember { PlaybackPreferences(context) }
+    var appAccent by remember {
+        mutableStateOf(
+            runCatching { AppAccent.valueOf(playbackPrefs.loadAppAccent()) }
+                .getOrDefault(AppAccent.PURPLE)
+        )
+    }
     val networkUsageTracker = remember { NetworkUsageTracker(context) }
     var networkType by remember { mutableStateOf(NetworkEnvironment.type(context)) }
     var dataUsage by remember { mutableStateOf(networkUsageTracker.sample()) }
@@ -1195,7 +1235,7 @@ fun EzTubeApp(
         }
     }
 
-    MaterialTheme {
+    MaterialTheme(colorScheme = appColorScheme(appAccent)) {
         if (isInPictureInPictureMode && videoMode && controller != null) {
             Box(
                 Modifier
@@ -1567,6 +1607,11 @@ fun EzTubeApp(
             )
         } else if (showSettings) {
             SettingsScreen(
+                appAccent = appAccent,
+                onAppAccent = { accent ->
+                    appAccent = accent
+                    playbackPrefs.saveAppAccent(accent.name)
+                },
                 quality = quality,
                 onQuality = { quality = it; playbackPrefs.saveQuality(it) },
                 speed = playbackSpeed,
@@ -2016,6 +2061,8 @@ private fun AppHeader(onSettings: () -> Unit, onDoubleTapCenter: () -> Unit) {
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsScreen(
+    appAccent: AppAccent,
+    onAppAccent: (AppAccent) -> Unit,
     quality: AudioQuality,
     onQuality: (AudioQuality) -> Unit,
     speed: Float,
@@ -2073,6 +2120,31 @@ private fun SettingsScreen(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
+            Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Column {
+                Text("App color", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Choose the default accent color used across ezTube.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.foundation.layout.FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    AppAccent.entries.forEach { accent ->
+                        FilterChip(
+                            selected = appAccent == accent,
+                            onClick = { onAppAccent(accent) },
+                            label = { Text(accent.label) }
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider()
             Text("Playback", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
             Column {
@@ -3294,16 +3366,20 @@ private fun SearchResult(
                         Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .height(3.dp)
+                            .height(5.dp)
                             .background(
-                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f)
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.30f),
+                                RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp)
                             )
                     ) {
                         Box(
                             Modifier
                                 .fillMaxHeight()
                                 .fillMaxWidth(progress.coerceIn(0f, 1f))
-                                .background(MaterialTheme.colorScheme.primary)
+                                .background(
+                                    MaterialTheme.colorScheme.primary,
+                                    RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp)
+                                )
                         )
                     }
                 }
