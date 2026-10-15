@@ -17,19 +17,24 @@ class AudioBalanceController {
     private var mode: AudioBalanceMode = AudioBalanceMode.OFF
 
     fun apply(audioSessionId: Int, mode: AudioBalanceMode) {
-        this.mode = mode
         if (audioSessionId <= 0 || mode == AudioBalanceMode.OFF) {
             releaseEffects()
             sessionId = audioSessionId
+            this.mode = mode
             return
         }
 
-        if (sessionId == audioSessionId && (dynamics != null || loudness != null)) {
+        if (
+            sessionId == audioSessionId &&
+            this.mode == mode &&
+            (dynamics != null || loudness != null)
+        ) {
             return
         }
 
         releaseEffects()
         sessionId = audioSessionId
+        this.mode = mode
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             runCatching {
