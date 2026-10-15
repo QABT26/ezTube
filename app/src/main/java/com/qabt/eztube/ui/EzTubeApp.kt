@@ -3421,7 +3421,7 @@ private fun AddToPlaylistDialog(
                                 Icon(
                                     Icons.AutoMirrored.Outlined.PlaylistPlay,
                                     null,
-                                    Modifier.size(MediaActionIconSize)
+                                    Modifier.size(19.dp)
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Column(Modifier.weight(1f)) {
@@ -3472,7 +3472,7 @@ private fun AddToPlaylistDialog(
                         onClick = { creating = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Outlined.Add, null, Modifier.size(MediaActionIconSize))
+                        Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("New playlist")
                     }
@@ -3663,7 +3663,7 @@ private fun MiniPlayer(
                     Icon(
                         if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
                         if (isWatchLater) "Remove from Watch later" else "Watch later",
-                        Modifier.size(MediaActionIconSize)
+                        Modifier.size(17.dp)
                     )
                 }
                 IconButton(
@@ -3673,7 +3673,7 @@ private fun MiniPlayer(
                     Icon(
                         if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
                         if (isFavorite) "Remove from favorites" else "Add to favorites",
-                        Modifier.size(MediaActionIconSize)
+                        Modifier.size(17.dp)
                     )
                 }
             }
@@ -4494,7 +4494,7 @@ private fun LibraryScreen(
                         Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Outlined.PlayCircle, null, Modifier.size(MediaActionIconSize))
+                        Icon(Icons.Outlined.PlayCircle, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(
                             "YouTube",
@@ -4589,7 +4589,7 @@ private fun LibraryScreen(
                         Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Outlined.LocalMovies, null, Modifier.size(MediaActionIconSize))
+                        Icon(Icons.Outlined.LocalMovies, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(
                             "Movie",
@@ -4959,7 +4959,7 @@ private fun LibraryScreen(
                             Icon(
                                 Icons.Outlined.PlaylistAdd,
                                 "Add current",
-                                Modifier.size(MediaActionIconSize)
+                                Modifier.size(19.dp)
                             )
                         }
                         IconButton(
@@ -5281,7 +5281,7 @@ private fun PersonalPlaylistDetailScreen(
                 Icon(
                     Icons.Outlined.PushPin,
                     "Pinned",
-                    Modifier.size(MediaActionIconSize),
+                    Modifier.size(17.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Spacer(Modifier.width(2.dp))
@@ -5411,7 +5411,7 @@ private fun PersonalPlaylistDetailScreen(
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
                 singleLine = true,
-                leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(MediaActionIconSize)) },
+                leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(19.dp)) },
                 trailingIcon = {
                     if (query.isNotEmpty()) {
                         IconButton(onClick = { query = "" }) {
@@ -5562,7 +5562,7 @@ private fun PersonalPlaylistDetailScreen(
                                             enabled = originalIndex > 0,
                                             modifier = Modifier.size(25.dp)
                                         ) {
-                                            Icon(Icons.Outlined.KeyboardArrowUp, "Move up", Modifier.size(MediaActionIconSize))
+                                            Icon(Icons.Outlined.KeyboardArrowUp, "Move up", Modifier.size(17.dp))
                                         }
                                         IconButton(
                                             onClick = {
@@ -5573,7 +5573,7 @@ private fun PersonalPlaylistDetailScreen(
                                             enabled = originalIndex in 0 until playlist.items.lastIndex,
                                             modifier = Modifier.size(25.dp)
                                         ) {
-                                            Icon(Icons.Outlined.KeyboardArrowDown, "Move down", Modifier.size(MediaActionIconSize))
+                                            Icon(Icons.Outlined.KeyboardArrowDown, "Move down", Modifier.size(17.dp))
                                         }
                                     }
                                 }
@@ -5591,7 +5591,7 @@ private fun PersonalPlaylistDetailScreen(
                                         onClick = { onPlayItem(media, displayedItems) },
                                         modifier = Modifier.size(25.dp)
                                     ) {
-                                        Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(MediaActionIconSize))
+                                        Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
                                     }
                                 }
                             }
