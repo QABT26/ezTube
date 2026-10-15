@@ -2156,6 +2156,11 @@ private fun SettingsScreen(
     val context = LocalContext.current
     var developerTapCount by remember { mutableIntStateOf(0) }
 
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground
+    ) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(
             Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
@@ -2667,6 +2672,7 @@ private fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
     }
 }
 
