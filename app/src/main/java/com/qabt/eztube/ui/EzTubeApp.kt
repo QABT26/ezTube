@@ -4153,6 +4153,7 @@ private fun LibraryScreen(
         personalPlaylists.firstOrNull { it.id == id }
     }
     if (selectedPlaylist != null) {
+        BackHandler { selectedPlaylistId = null }
         PersonalPlaylistDetailScreen(
             modifier = modifier,
             playlist = selectedPlaylist,
@@ -4694,9 +4695,11 @@ private fun LibraryScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1
                             )
-                            playlist.items.getOrNull(1)?.let { second ->
+                            playlist.items.firstOrNull()?.let { first ->
                                 Text(
-                                    playlist.items.first().title + " · " + second.title,
+                                    playlist.items.getOrNull(1)?.let { second ->
+                                        first.title + " · " + second.title
+                                    } ?: first.title,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -4710,7 +4713,7 @@ private fun LibraryScreen(
                             modifier = Modifier.size(32.dp)
                         ) {
                             Icon(
-                                Icons.Outlined.PlaylistAdd,
+                                Icons.AutoMirrored.Outlined.PlaylistAdd,
                                 "Add current",
                                 Modifier.size(19.dp)
                             )
@@ -4979,6 +4982,15 @@ private fun PersonalPlaylistDetailScreen(
     }
     val canReorder = query.isBlank() && sortMode == "Custom"
     val listState = rememberLazyListState()
+    val currentDisplayedIndex = displayedItems.indexOfFirst { it.id == nowPlaying?.id }
+
+    LaunchedEffect(nowPlaying?.id, playlist.id, sortMode, query) {
+        if (currentDisplayedIndex >= 0 && query.isBlank()) {
+            runCatching {
+                listState.animateScrollToItem(currentDisplayedIndex)
+            }
+        }
+    }
 
     Column(modifier.fillMaxSize()) {
         Row(
@@ -5123,7 +5135,7 @@ private fun PersonalPlaylistDetailScreen(
                             enabled = nowPlaying != null,
                             modifier = Modifier.size(34.dp)
                         ) {
-                            Icon(Icons.Outlined.PlaylistAdd, "Add current", Modifier.size(20.dp))
+                            Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, "Add current", Modifier.size(20.dp))
                         }
                     }
                 }
