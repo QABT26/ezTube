@@ -6921,6 +6921,11 @@ private fun FullPlayer(
         return
     }
 
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground
+    ) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(
             Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 10.dp),
@@ -7722,6 +7727,7 @@ private fun FullPlayer(
                 }
             }
         }
+    }
     }
 
     if (showAddToPlaylist) {
