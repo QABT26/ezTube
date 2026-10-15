@@ -84,6 +84,19 @@ class PlaybackPreferences(context: Context) {
 
     fun loadDeveloperMode(): Boolean = prefs.getBoolean("developer_mode", false)
 
+    fun saveAppAccent(accent: String) {
+        val normalized = accent.uppercase().takeIf {
+            it in setOf("PURPLE", "BLUE", "TEAL", "GREEN", "ORANGE", "RED")
+        } ?: "PURPLE"
+        prefs.edit().putString("app_accent", normalized).apply()
+    }
+
+    fun loadAppAccent(): String =
+        prefs.getString("app_accent", "PURPLE")
+            ?.uppercase()
+            ?.takeIf { it in setOf("PURPLE", "BLUE", "TEAL", "GREEN", "ORANGE", "RED") }
+            ?: "PURPLE"
+
     fun saveDeveloperUnlocked(unlocked: Boolean) {
         prefs.edit().putBoolean("developer_unlocked", unlocked).apply()
     }
