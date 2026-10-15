@@ -1739,6 +1739,10 @@ fun EzTubeApp(
                         onPlay = { media, resultQueue -> startQueue(media, resultQueue) },
                         onPlayNext = { playNext(it) },
                         onAddToQueue = { addToQueue(it) },
+                        personalPlaylists = personalPlaylists,
+                        onAddToPlaylist = { playlistId, media ->
+                            personalPlaylists = personalPlaylistStore.add(playlistId, media)
+                        },
                         watchLaterIds = watchLater.mapTo(mutableSetOf()) { it.mediaId },
                         onToggleWatchLater = { toggleWatchLater(it) }
                     )
@@ -1887,6 +1891,9 @@ fun EzTubeApp(
                         },
                         onToggleWatchLaterMedia = { media ->
                             toggleWatchLater(media)
+                        },
+                        onAddToPlaylist = { playlistId, media ->
+                            personalPlaylists = personalPlaylistStore.add(playlistId, media)
                         },
                         onCreatePlaylist = { name ->
                             personalPlaylists = personalPlaylistStore.create(name)
@@ -2498,6 +2505,8 @@ private fun SearchScreen(
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
     onPlayNext: (MediaSummary) -> Unit,
     onAddToQueue: (MediaSummary) -> Unit,
+    personalPlaylists: List<PersonalPlaylist>,
+    onAddToPlaylist: (String, MediaSummary) -> Unit,
     watchLaterIds: Set<String>,
     onToggleWatchLater: (MediaSummary) -> Unit
 ) {
@@ -2505,6 +2514,7 @@ private fun SearchScreen(
     var loading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searchSort by remember { mutableStateOf(SearchSort.RELEVANCE) }
+    var playlistTarget by remember { mutableStateOf<MediaSummary?>(null) }
     val displayResults = remember(results, searchSort) {
         when (searchSort) {
             SearchSort.RELEVANCE -> results
@@ -2746,12 +2756,25 @@ private fun SearchScreen(
                         },
                         onPlayNext = if (movieProviders.isTitle(media.id)) null else { { onPlayNext(media) } },
                         onAddToQueue = if (movieProviders.isTitle(media.id)) null else { { onAddToQueue(media) } },
+                        onAddToPlaylist = { playlistTarget = media },
                         isWatchLater = media.id in watchLaterIds,
                         onToggleWatchLater = { onToggleWatchLater(media) }
                     )
                 }
             }
         }
+    }
+
+    playlistTarget?.let { target ->
+        AddToPlaylistDialog(
+            media = target,
+            playlists = personalPlaylists,
+            onDismiss = { playlistTarget = null },
+            onSelect = { playlistId ->
+                onAddToPlaylist(playlistId, target)
+                playlistTarget = null
+            }
+        )
     }
 }
 
@@ -3174,6 +3197,7 @@ private fun SearchResult(
     onPlay: () -> Unit,
     onPlayNext: (() -> Unit)? = null,
     onAddToQueue: (() -> Unit)? = null,
+    onAddToPlaylist: (() -> Unit)? = null,
     isWatchLater: Boolean = false,
     onToggleWatchLater: (() -> Unit)? = null
 ) {
@@ -3243,7 +3267,12 @@ private fun SearchResult(
         }
         Spacer(Modifier.width(2.dp))
         if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-        else if (onPlayNext != null || onAddToQueue != null || onToggleWatchLater != null) {
+        else if (
+            onPlayNext != null ||
+            onAddToQueue != null ||
+            onAddToPlaylist != null ||
+            onToggleWatchLater != null
+        ) {
             Box {
                 IconButton(
                     onClick = { showMenu = true },
@@ -3270,6 +3299,13 @@ private fun SearchResult(
                             onClick = { showMenu = false; action() }
                         )
                     }
+                    onAddToPlaylist?.let { action ->
+                        DropdownMenuItem(
+                            text = { Text("Add to playlist") },
+                            leadingIcon = { Icon(Icons.Outlined.PlaylistAdd, null) },
+                            onClick = { showMenu = false; action() }
+                        )
+                    }
                     onToggleWatchLater?.let { action ->
                         DropdownMenuItem(
                             text = {
@@ -3289,6 +3325,73 @@ private fun SearchResult(
             }
         } else Icon(Icons.Outlined.PlayCircle, "Play")
     }
+}
+
+@Composable
+private fun AddToPlaylistDialog(
+    media: MediaSummary,
+    playlists: List<PersonalPlaylist>,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add to playlist") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    media.title,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(4.dp))
+                if (playlists.isEmpty()) {
+                    Text("No personal playlists yet. Create one in Library first.")
+                } else {
+                    playlists.forEach { playlist ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(playlist.id) },
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Outlined.PlaylistPlay,
+                                    null,
+                                    Modifier.size(19.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        playlist.name,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        playlist.items.size.toString() + " items",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable
@@ -3488,12 +3591,12 @@ private fun MiniPlayer(
                     if (isPlaying) "Pause" else "Play"
                 )
             }
+            NetworkStatusIcon(
+                networkType = networkType,
+                size = 14.dp,
+                modifier = Modifier.padding(start = 1.dp, end = 2.dp)
+            )
         }
-        NetworkStatusIcon(
-            networkType,
-            10.dp,
-            Modifier.align(Alignment.TopEnd).padding(top = 3.dp, end = 43.dp)
-        )
         }
     }
 }
@@ -4031,6 +4134,7 @@ private fun ProgressMediaRow(
     resolving: Boolean,
     isWatchLater: Boolean = false,
     onToggleWatchLater: (() -> Unit)? = null,
+    onAddToPlaylist: (() -> Unit)? = null,
     onClick: () -> Unit,
     onPlay: () -> Unit
 ) {
@@ -4068,13 +4172,21 @@ private fun ProgressMediaRow(
                 onToggleWatchLater?.let { action ->
                     IconButton(
                         onClick = action,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(24.dp)
                     ) {
                         Icon(
                             if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
                             if (isWatchLater) "Remove from Watch later" else "Watch later",
-                            Modifier.size(18.dp)
+                            Modifier.size(16.dp)
                         )
+                    }
+                }
+                onAddToPlaylist?.let { action ->
+                    IconButton(
+                        onClick = action,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(16.dp))
                     }
                 }
                 IconButton(
@@ -4114,6 +4226,7 @@ private fun LibraryScreen(
     onPlayAllWatchLater: () -> Unit,
     onRemoveWatchLater: (WatchLaterEntry) -> Unit,
     onToggleWatchLaterMedia: (MediaSummary) -> Unit,
+    onAddToPlaylist: (String, MediaSummary) -> Unit,
     onCreatePlaylist: (String) -> Unit,
     onRenamePlaylist: (String, String) -> Unit,
     onDeletePlaylist: (String) -> Unit,
@@ -4136,6 +4249,7 @@ private fun LibraryScreen(
     var showCreatePlaylist by remember { mutableStateOf(false) }
     var renamePlaylist by remember { mutableStateOf<PersonalPlaylist?>(null) }
     var playlistNameDraft by remember { mutableStateOf("") }
+    var playlistTarget by remember { mutableStateOf<MediaSummary?>(null) }
     val youtubeFavorites = remember(favorites) {
         favorites.filterNot { isMovieLibraryItem(it.mediaId, it.channel) }
     }
@@ -4775,6 +4889,7 @@ private fun LibraryScreen(
                     onToggleWatchLater = {
                         onToggleWatchLaterMedia(entry.toMediaSummary())
                     },
+                    onAddToPlaylist = { playlistTarget = entry.toMediaSummary() },
                     onClick = {
                         if (isMovieLibraryItem(entry.mediaId, entry.channel)) {
                             onOpenMovie(entry)
@@ -4849,15 +4964,21 @@ private fun LibraryScreen(
                     ) {
                         IconButton(
                             onClick = { onDelete(entry) },
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier.size(24.dp)
                         ) {
-                            Icon(Icons.Outlined.Close, "Remove from history", Modifier.size(16.dp))
+                            Icon(Icons.Outlined.Close, "Remove from history", Modifier.size(15.dp))
+                        }
+                        IconButton(
+                            onClick = { playlistTarget = entry.toMediaSummary() },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(16.dp))
                         }
                         IconButton(
                             onClick = { onPlay(entry) },
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier.size(24.dp)
                         ) {
-                            Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(18.dp))
+                            Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(17.dp))
                         }
                     }
                 }
@@ -4874,6 +4995,18 @@ private fun LibraryScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
         }
+    }
+
+    playlistTarget?.let { target ->
+        AddToPlaylistDialog(
+            media = target,
+            playlists = personalPlaylists,
+            onDismiss = { playlistTarget = null },
+            onSelect = { playlistId ->
+                onAddToPlaylist(playlistId, target)
+                playlistTarget = null
+            }
+        )
     }
 
     if (showCreatePlaylist) {
