@@ -6521,8 +6521,11 @@ private fun FullPlayer(
                                     "brightness" -> {
                                         val delta = -dy / size.height.toFloat()
                                         val value = (startBrightness + delta).coerceIn(0.01f, 1f)
-                                        window?.attributes = window.attributes.apply {
-                                            screenBrightness = value
+                                        window?.let { playerWindow ->
+                                            playerWindow.attributes =
+                                                playerWindow.attributes.apply {
+                                                    screenBrightness = value
+                                                }
                                         }
                                         fullscreenGestureOverlay =
                                             "☀  " + (value * 100f).toInt() + "%"
