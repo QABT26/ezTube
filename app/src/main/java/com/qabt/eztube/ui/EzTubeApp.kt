@@ -3286,6 +3286,27 @@ private fun SearchResult(
                         .padding(horizontal = 4.dp, vertical = 1.dp)
                 )
             }
+            progressEntry
+                ?.progress
+                ?.takeIf { it > 0f }
+                ?.let { progress ->
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f)
+                            )
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                                .background(MaterialTheme.colorScheme.primary)
+                        )
+                    }
+                }
         }
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
@@ -3309,12 +3330,6 @@ private fun SearchResult(
                 Text(meta, style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            progressEntry?.let { entry ->
-                SearchPlaybackProgress(
-                    progress = entry.progress,
-                    durationMs = entry.durationMs
-                )
             }
         }
         Spacer(Modifier.width(2.dp))
