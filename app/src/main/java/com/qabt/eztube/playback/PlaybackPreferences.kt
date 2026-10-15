@@ -97,6 +97,19 @@ class PlaybackPreferences(context: Context) {
             ?.takeIf { it in setOf("PURPLE", "BLUE", "TEAL", "GREEN", "ORANGE", "RED") }
             ?: "PURPLE"
 
+    fun saveThemeMode(mode: String) {
+        val normalized = mode.uppercase().takeIf {
+            it in setOf("AUTO", "LIGHT", "DARK")
+        } ?: "AUTO"
+        prefs.edit().putString("theme_mode", normalized).apply()
+    }
+
+    fun loadThemeMode(): String =
+        prefs.getString("theme_mode", "AUTO")
+            ?.uppercase()
+            ?.takeIf { it in setOf("AUTO", "LIGHT", "DARK") }
+            ?: "AUTO"
+
     fun saveDeveloperUnlocked(unlocked: Boolean) {
         prefs.edit().putBoolean("developer_unlocked", unlocked).apply()
     }
