@@ -89,6 +89,8 @@ import com.qabt.eztube.playback.StorageSnapshot
 import com.qabt.eztube.playback.StorageUsage
 import com.qabt.eztube.playback.MobileDataPriority
 import com.qabt.eztube.movie.MovieProviderRegistry
+import com.qabt.eztube.local.LocalMediaKind
+import com.qabt.eztube.local.LocalMediaRepository
 import com.qabt.eztube.movie.MovieDetail
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.ChannelSummary
@@ -1945,6 +1947,18 @@ fun EzTubeApp(
                         movieProviders = movieProviders,
                         listState = libraryListState,
                         resolvingId = resolvingId,
+                        onPlayLocal = { media, items, kind ->
+                            val localVideo = kind == LocalMediaKind.VIDEO
+                            if (videoMode != localVideo) {
+                                videoMode = localVideo
+                                playbackPrefs.saveVideoMode(localVideo)
+                            }
+                            startQueue(
+                                media,
+                                items,
+                                preserveSourceOrder = true
+                            )
+                        },
                         onPlay = { entry ->
                             val isMovie = isMovieLibraryItem(entry.mediaId, entry.channel)
                             val items = if (isMovie) {
@@ -4559,6 +4573,188 @@ private fun ProgressMediaRow(
     }
 }
 
+@Composable
+private fun LocalMediaScreen(
+    modifier: Modifier,
+    kind: LocalMediaKind,
+    resolvingId: String?,
+    onBack: () -> Unit,
+    onPlay: (MediaSummary, List<MediaSummary>) -> Unit
+) {
+    val context = LocalContext.current
+    val repository = remember(context) { LocalMediaRepository(context) }
+    val permission = remember(kind) {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            if (kind == LocalMediaKind.VIDEO) {
+                android.Manifest.permission.READ_MEDIA_VIDEO
+            } else {
+                android.Manifest.permission.READ_MEDIA_AUDIO
+            }
+        } else {
+            android.Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+    }
+    var permissionGranted by remember(kind) {
+        mutableStateOf(
+            context.checkSelfPermission(permission) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var permissionEpoch by remember { mutableIntStateOf(0) }
+    var items by remember(kind) { mutableStateOf<List<MediaSummary>>(emptyList()) }
+    var loading by remember(kind) { mutableStateOf(false) }
+    var error by remember(kind) { mutableStateOf<String?>(null) }
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        permissionGranted = granted
+        permissionEpoch += 1
+    }
+
+    LaunchedEffect(kind, permissionGranted, permissionEpoch) {
+        if (!permissionGranted) {
+            items = emptyList()
+            return@LaunchedEffect
+        }
+        loading = true
+        error = null
+        runCatching {
+            withContext(Dispatchers.IO) { repository.load(kind) }
+        }.onSuccess {
+            items = it
+        }.onFailure {
+            error = it.message ?: "Unable to read local media"
+        }
+        loading = false
+    }
+
+    BackHandler(onBack = onBack)
+    Column(modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+        Row(
+            Modifier.fillMaxWidth().height(52.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
+            }
+            Text(
+                if (kind == LocalMediaKind.VIDEO) "Local video" else "Local audio",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.weight(1f))
+            if (permissionGranted) {
+                IconButton(onClick = { permissionEpoch += 1 }) {
+                    Icon(Icons.Outlined.Refresh, "Refresh")
+                }
+            }
+        }
+
+        if (!permissionGranted) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            ) {
+                Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        if (kind == LocalMediaKind.VIDEO) {
+                            "Allow ezTube to read videos stored on this device."
+                        } else {
+                            "Allow ezTube to read audio stored on this device."
+                        }
+                    )
+                    FilledButton(onClick = { launcher.launch(permission) }) {
+                        Text("Allow access")
+                    }
+                }
+            }
+            return@Column
+        }
+
+        when {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            error != null -> Text(
+                error.orEmpty(),
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 12.dp)
+            )
+            items.isEmpty() -> Text(
+                if (kind == LocalMediaKind.VIDEO) {
+                    "No local videos found."
+                } else {
+                    "No local audio found."
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp)
+            )
+            else -> LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                items(items, key = { it.id }) { media ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(enabled = resolvingId == null) {
+                                onPlay(media, items)
+                            }
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            modifier = Modifier.size(48.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    if (kind == LocalMediaKind.VIDEO) {
+                                        Icons.Outlined.VideoFile
+                                    } else {
+                                        Icons.Outlined.AudioFile
+                                    },
+                                    null,
+                                    Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                media.title,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                formatDuration(media.durationSeconds),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (resolvingId == media.id) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(Icons.Outlined.PlayArrow, "Play")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(
     androidx.compose.foundation.ExperimentalFoundationApi::class,
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class
@@ -4574,6 +4770,7 @@ private fun LibraryScreen(
     movieProviders: MovieProviderRegistry,
     listState: androidx.compose.foundation.lazy.LazyListState,
     resolvingId: String?,
+    onPlayLocal: (MediaSummary, List<MediaSummary>, LocalMediaKind) -> Unit,
     onPlay: (HistoryEntry) -> Unit,
     onOpenMovie: (HistoryEntry) -> Unit,
     onOpenFavoriteMovie: (FavoriteEntry) -> Unit,
@@ -4602,6 +4799,7 @@ private fun LibraryScreen(
     onClear: () -> Unit
 ) {
     var showAllHistory by remember { mutableStateOf(false) }
+    var selectedLocalKind by remember { mutableStateOf<LocalMediaKind?>(null) }
     var showAllYouTubeFavorites by remember { mutableStateOf(false) }
     var showAllMovieFavorites by remember { mutableStateOf(false) }
     var showAllWatchLater by remember { mutableStateOf(false) }
@@ -4687,12 +4885,72 @@ private fun LibraryScreen(
         return
     }
 
+    selectedLocalKind?.let { kind ->
+        LocalMediaScreen(
+            modifier = modifier,
+            kind = kind,
+            resolvingId = resolvingId,
+            onBack = { selectedLocalKind = null },
+            onPlay = { media, items -> onPlayLocal(media, items, kind) }
+        )
+        return
+    }
+
     LazyColumn(
         modifier = modifier.padding(horizontal = 14.dp),
         state = listState,
         contentPadding = PaddingValues(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        item(key = "local-media") {
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            ) {
+                Column(
+                    Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.FolderOpen, null, Modifier.size(20.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(
+                            "Local media",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Text(
+                        "Play audio and video stored on this device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = { selectedLocalKind = LocalMediaKind.VIDEO },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Outlined.VideoLibrary, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("Video")
+                        }
+                        FilledTonalButton(
+                            onClick = { selectedLocalKind = LocalMediaKind.AUDIO },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Outlined.AudioFile, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("Audio")
+                        }
+                    }
+                }
+            }
+        }
+
         stickyHeader {
             Surface(tonalElevation = 0.dp) {
                 Row(
