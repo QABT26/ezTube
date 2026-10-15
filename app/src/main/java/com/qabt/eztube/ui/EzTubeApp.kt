@@ -3350,16 +3350,18 @@ private fun SearchResult(
             if (thumbnailBadge != null) {
                 Text(
                     thumbnailBadge,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.82f
+                    ),
                     color = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(4.dp)
+                        .padding(3.dp)
                         .background(
                             MaterialTheme.colorScheme.scrim.copy(alpha = 0.78f),
                             RoundedCornerShape(4.dp)
                         )
-                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                        .padding(horizontal = 3.dp, vertical = 0.dp)
                 )
             }
             progressEntry
@@ -3383,7 +3385,7 @@ private fun SearchResult(
                                     androidx.compose.ui.graphics.lerp(
                                         MaterialTheme.colorScheme.primary,
                                         androidx.compose.ui.graphics.Color.White,
-                                        0.42f
+                                        0.18f
                                     )
                                 )
                         )
@@ -3395,7 +3397,10 @@ private fun SearchResult(
             TouchMarqueeTitle(
                 text = media.title,
                 maxLines = 2,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = MaterialTheme.typography.titleSmall.fontSize * 0.90f
+                )
             )
             Spacer(Modifier.height(3.dp))
             Text(
@@ -3588,13 +3593,14 @@ private fun TouchMarqueeTitle(
     text: String,
     maxLines: Int = 1,
     fontWeight: FontWeight? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.titleSmall
 ) {
     var marqueeActive by remember(text) { mutableStateOf(false) }
 
     Text(
         text = text,
-        style = MaterialTheme.typography.titleSmall,
+        style = style,
         fontWeight = fontWeight,
         maxLines = if (marqueeActive) 1 else maxLines,
         softWrap = !marqueeActive,
