@@ -6263,6 +6263,7 @@ private fun FullPlayer(
     var fullscreenControlsEpoch by remember { mutableIntStateOf(0) }
     var fullscreenSeeking by remember { mutableStateOf(false) }
     var fullscreenSeekPreviewMs by remember { mutableLongStateOf(-1L) }
+    var fullscreenGestureOverlay by remember { mutableStateOf<String?>(null) }
     var fullscreenSpeedMenu by remember { mutableStateOf(false) }
     var fullscreenQualityMenu by remember { mutableStateOf(false) }
     var fullscreenSubtitleMenu by remember { mutableStateOf(false) }
@@ -6319,6 +6320,7 @@ private fun FullPlayer(
     }
 
     DisposableEffect(fullscreenRequested, activity) {
+        val originalBrightness = activity?.window?.attributes?.screenBrightness
         if (fullscreenRequested && activity != null) {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             WindowCompat.setDecorFitsSystemWindows(activity.window, false)
@@ -6330,6 +6332,11 @@ private fun FullPlayer(
         }
         onDispose {
             if (activity != null) {
+                if (fullscreenRequested && originalBrightness != null) {
+                    activity.window.attributes = activity.window.attributes.apply {
+                        screenBrightness = originalBrightness
+                    }
+                }
                 WindowInsetsControllerCompat(activity.window, activity.window.decorView)
                     .show(WindowInsetsCompat.Type.systemBars())
                 WindowCompat.setDecorFitsSystemWindows(activity.window, true)
@@ -6421,11 +6428,12 @@ private fun FullPlayer(
                 }
             }
 
-            // Fullscreen surface gestures:
-            // single tap toggles controls; double tap seeks 5s; hold seeks continuously.
+            // Fullscreen gestures:
+            // vertical-left = player brightness, vertical-right = media volume,
+            // horizontal = seek preview committed on release. Tap/double-tap/hold stay intact.
             Box(
                 Modifier.fillMaxSize()
-                    .pointerInput(fullscreenController, duration) {
+                    .pointerInput(fullscreenController, duration, activity) {
                         var lastTapAt = 0L
                         var lastTapForward = false
                         var singleTapJob: kotlinx.coroutines.Job? = null
@@ -6433,17 +6441,109 @@ private fun FullPlayer(
                         awaitEachGesture {
                             val down = awaitFirstDown()
                             val startedAt = down.uptimeMillis
-                            val forward = down.position.x >= size.width / 2f
+                            val startX = down.position.x
+                            val startY = down.position.y
+                            val forward = startX >= size.width / 2f
+                            val startPosition =
+                                fullscreenController.currentPosition.coerceAtLeast(0L)
+                            val audioManager = context.getSystemService(
+                                android.content.Context.AUDIO_SERVICE
+                            ) as android.media.AudioManager
+                            val maxVolume = audioManager
+                                .getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                                .coerceAtLeast(1)
+                            val startVolume = audioManager
+                                .getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+                            val window = activity?.window
+                            val rawBrightness = window?.attributes?.screenBrightness ?: -1f
+                            val systemBrightness = runCatching {
+                                android.provider.Settings.System.getInt(
+                                    context.contentResolver,
+                                    android.provider.Settings.System.SCREEN_BRIGHTNESS
+                                ) / 255f
+                            }.getOrDefault(0.5f)
+                            val startBrightness =
+                                if (rawBrightness >= 0f) rawBrightness else systemBrightness
+
+                            var gestureMode: String? = null
                             var longPress = false
                             var lastSeekAt = startedAt
                             var released = false
+                            var previewTarget = startPosition
 
                             while (!released) {
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull() ?: break
                                 val now = change.uptimeMillis
+                                val dx = change.position.x - startX
+                                val dy = change.position.y - startY
+                                val absDx = kotlin.math.abs(dx)
+                                val absDy = kotlin.math.abs(dy)
 
-                                if (!longPress &&
+                                if (
+                                    gestureMode == null &&
+                                    !longPress &&
+                                    (absDx > viewConfiguration.touchSlop ||
+                                        absDy > viewConfiguration.touchSlop)
+                                ) {
+                                    gestureMode = when {
+                                        absDx > absDy * 1.25f -> "seek"
+                                        absDy > absDx * 1.25f ->
+                                            if (startX < size.width / 2f) "brightness" else "volume"
+                                        else -> null
+                                    }
+                                    if (gestureMode != null) {
+                                        singleTapJob?.cancel()
+                                        fullscreenControlsVisible = false
+                                    }
+                                }
+
+                                when (gestureMode) {
+                                    "seek" -> {
+                                        val seekWindow = if (duration > 0L) {
+                                            (duration * 0.25f).toLong().coerceAtLeast(30_000L)
+                                        } else {
+                                            120_000L
+                                        }
+                                        val delta = ((dx / size.width.toFloat()) * seekWindow).toLong()
+                                        val end = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                        previewTarget =
+                                            (startPosition + delta).coerceIn(0L, end)
+                                        fullscreenSeekPreviewMs = previewTarget
+                                        fullscreenSeeking = true
+                                        val signed = previewTarget - startPosition
+                                        val prefix = if (signed >= 0L) "+" else "-"
+                                        fullscreenGestureOverlay =
+                                            prefix + formatTime(kotlin.math.abs(signed)) +
+                                                "  " + formatTime(previewTarget) +
+                                                " / " + formatTime(duration)
+                                    }
+                                    "brightness" -> {
+                                        val delta = -dy / size.height.toFloat()
+                                        val value = (startBrightness + delta).coerceIn(0.01f, 1f)
+                                        window?.attributes = window.attributes.apply {
+                                            screenBrightness = value
+                                        }
+                                        fullscreenGestureOverlay =
+                                            "☀  " + (value * 100f).toInt() + "%"
+                                    }
+                                    "volume" -> {
+                                        val deltaSteps =
+                                            ((-dy / size.height.toFloat()) * maxVolume).toInt()
+                                        val value = (startVolume + deltaSteps).coerceIn(0, maxVolume)
+                                        audioManager.setStreamVolume(
+                                            android.media.AudioManager.STREAM_MUSIC,
+                                            value,
+                                            0
+                                        )
+                                        fullscreenGestureOverlay =
+                                            "🔊  " + ((value * 100f) / maxVolume).toInt() + "%"
+                                    }
+                                }
+
+                                if (
+                                    gestureMode == null &&
+                                    !longPress &&
                                     now - startedAt >= viewConfiguration.longPressTimeoutMillis
                                 ) {
                                     longPress = true
@@ -6459,7 +6559,8 @@ private fun FullPlayer(
                                         .takeIf { it >= 0L }
                                         ?: fullscreenController.currentPosition.coerceAtLeast(0L)
                                     val target = if (forward) {
-                                        val endPosition = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                        val endPosition =
+                                            duration.takeIf { it > 0L } ?: Long.MAX_VALUE
                                         (current + 2_000L).coerceAtMost(endPosition)
                                     } else {
                                         (current - 2_000L).coerceAtLeast(0L)
@@ -6469,57 +6570,100 @@ private fun FullPlayer(
                                     lastSeekAt = now
                                 }
 
-                                released = change.changedToUpIgnoreConsumed()
+                                released = change.changedToUpIgnoreConsumed() || !change.pressed
                                 change.consume()
                             }
 
-                            if (longPress) {
-                                fullscreenSeeking = false
-                                fullscreenSeekPreviewMs = -1L
-                            } else {
-                                val releasedAt = android.os.SystemClock.uptimeMillis()
-                                val isDoubleTap =
-                                    lastTapAt > 0L &&
-                                    releasedAt - lastTapAt <= viewConfiguration.doubleTapTimeoutMillis &&
-                                    forward == lastTapForward
-
-                                if (isDoubleTap) {
-                                    singleTapJob?.cancel()
-                                    singleTapJob = null
-                                    lastTapAt = 0L
-
-                                    val current =
-                                        fullscreenController.currentPosition.coerceAtLeast(0L)
-                                    val target = if (forward) {
-                                        val endPosition = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
-                                        (current + 5_000L).coerceAtMost(endPosition)
-                                    } else {
-                                        (current - 5_000L).coerceAtLeast(0L)
-                                    }
-                                    fullscreenController.seekTo(target)
-                                    fullscreenSeekPreviewMs = target
-                                    fullscreenSeeking = true
-
+                            when {
+                                gestureMode == "seek" -> {
+                                    fullscreenController.seekTo(previewTarget)
                                     dragScope.launch {
                                         delay(650L)
                                         fullscreenSeeking = false
                                         fullscreenSeekPreviewMs = -1L
+                                        fullscreenGestureOverlay = null
                                     }
-                                } else {
-                                    lastTapAt = releasedAt
-                                    lastTapForward = forward
-                                    singleTapJob?.cancel()
-                                    singleTapJob = dragScope.launch {
-                                        delay(viewConfiguration.doubleTapTimeoutMillis.toLong())
-                                        fullscreenControlsVisible = !fullscreenControlsVisible
-                                        if (fullscreenControlsVisible) fullscreenControlsEpoch += 1
+                                }
+                                gestureMode == "brightness" || gestureMode == "volume" -> {
+                                    dragScope.launch {
+                                        delay(650L)
+                                        fullscreenGestureOverlay = null
+                                    }
+                                }
+                                longPress -> {
+                                    fullscreenSeeking = false
+                                    fullscreenSeekPreviewMs = -1L
+                                }
+                                else -> {
+                                    val releasedAt = android.os.SystemClock.uptimeMillis()
+                                    val isDoubleTap =
+                                        lastTapAt > 0L &&
+                                            releasedAt - lastTapAt <=
+                                            viewConfiguration.doubleTapTimeoutMillis &&
+                                            forward == lastTapForward
+
+                                    if (isDoubleTap) {
+                                        singleTapJob?.cancel()
+                                        singleTapJob = null
                                         lastTapAt = 0L
+
+                                        val current =
+                                            fullscreenController.currentPosition.coerceAtLeast(0L)
+                                        val target = if (forward) {
+                                            val endPosition =
+                                                duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                            (current + 5_000L).coerceAtMost(endPosition)
+                                        } else {
+                                            (current - 5_000L).coerceAtLeast(0L)
+                                        }
+                                        fullscreenController.seekTo(target)
+                                        fullscreenSeekPreviewMs = target
+                                        fullscreenSeeking = true
+                                        fullscreenGestureOverlay =
+                                            (if (forward) "+00:05" else "-00:05") +
+                                                "  " + formatTime(target)
+
+                                        dragScope.launch {
+                                            delay(650L)
+                                            fullscreenSeeking = false
+                                            fullscreenSeekPreviewMs = -1L
+                                            fullscreenGestureOverlay = null
+                                        }
+                                    } else {
+                                        lastTapAt = releasedAt
+                                        lastTapForward = forward
+                                        singleTapJob?.cancel()
+                                        singleTapJob = dragScope.launch {
+                                            delay(viewConfiguration.doubleTapTimeoutMillis.toLong())
+                                            fullscreenControlsVisible =
+                                                !fullscreenControlsVisible
+                                            if (fullscreenControlsVisible) {
+                                                fullscreenControlsEpoch += 1
+                                            }
+                                            lastTapAt = 0L
+                                        }
                                     }
                                 }
                             }
                         }
                     }
             )
+
+            fullscreenGestureOverlay?.let { message ->
+                Surface(
+                    modifier = Modifier.align(Alignment.Center),
+                    shape = RoundedCornerShape(14.dp),
+                    color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.68f)
+                ) {
+                    Text(
+                        message,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 11.dp),
+                        color = androidx.compose.ui.graphics.Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
 
             if (fullscreenControlsVisible) {
                 if (movieEpisodePosition != null) {
