@@ -33,10 +33,12 @@ class PlaybackService : MediaSessionService() {
         const val COMMAND_SET_VIDEO_QUALITY = "com.qabt.eztube.SET_VIDEO_QUALITY"
         const val COMMAND_GET_SABR_DIAGNOSTIC = "com.qabt.eztube.GET_SABR_DIAGNOSTIC"
         const val COMMAND_SET_SLEEP_END_CURRENT = "com.qabt.eztube.SET_SLEEP_END_CURRENT"
+        const val COMMAND_SET_AUDIO_BALANCE = "com.qabt.eztube.SET_AUDIO_BALANCE"
         const val COMMAND_MOVE_QUEUE = "com.qabt.eztube.MOVE_QUEUE"
         const val COMMAND_SYSTEM_PREVIOUS = "com.qabt.eztube.SYSTEM_PREVIOUS"
         const val COMMAND_SYSTEM_NEXT = "com.qabt.eztube.SYSTEM_NEXT"
         const val ARG_ENABLED = "enabled"
+        const val ARG_AUDIO_BALANCE_MODE = "audio_balance_mode"
         const val ARG_DELTA = "delta"
         const val ARG_POSITION_MS = "position_ms"
         const val ARG_PLAY_WHEN_READY = "play_when_ready"
@@ -59,6 +61,7 @@ class PlaybackService : MediaSessionService() {
     private val source by lazy { NewPipeYouTubeSource() }
     private val movieProviders by lazy { MovieProviderRegistry.default() }
     private lateinit var queueManager: PlaybackQueueManager
+    private val audioBalanceController = AudioBalanceController()
 
     override fun onCreate() {
         super.onCreate()
@@ -92,6 +95,10 @@ class PlaybackService : MediaSessionService() {
                 addListener(object : Player.Listener {
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         queueManager.onTransition(mediaItem)
+                    }
+
+                    override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                        audioBalanceController.reapply(audioSessionId)
                     }
 
                     override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
@@ -135,6 +142,10 @@ class PlaybackService : MediaSessionService() {
             movieProviders,
             serviceScope
         )
+        audioBalanceController.apply(
+            requireNotNull(player).audioSessionId,
+            preferences.loadAudioBalanceMode()
+        )
         // Do not resolve YouTube on service/app startup. UI restores logical media/position
         // from PlaybackPreferences; the network source is resolved only when playback starts.
 
@@ -160,6 +171,7 @@ class PlaybackService : MediaSessionService() {
                         .add(androidx.media3.session.SessionCommand(COMMAND_SET_VIDEO_QUALITY, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_GET_SABR_DIAGNOSTIC, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_SET_SLEEP_END_CURRENT, android.os.Bundle.EMPTY))
+                        .add(androidx.media3.session.SessionCommand(COMMAND_SET_AUDIO_BALANCE, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_MOVE_QUEUE, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_SYSTEM_PREVIOUS, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_SYSTEM_NEXT, android.os.Bundle.EMPTY))
@@ -254,6 +266,21 @@ class PlaybackService : MediaSessionService() {
                     }
                     if (customCommand.customAction == COMMAND_SET_SLEEP_END_CURRENT) {
                         queueManager.setSleepEndCurrent(args.getBoolean(ARG_ENABLED, false))
+                        return com.google.common.util.concurrent.Futures.immediateFuture(
+                            SessionResult(SessionResult.RESULT_SUCCESS)
+                        )
+                    }
+                    if (customCommand.customAction == COMMAND_SET_AUDIO_BALANCE) {
+                        val mode = runCatching {
+                            AudioBalanceMode.valueOf(
+                                args.getString(
+                                    ARG_AUDIO_BALANCE_MODE,
+                                    AudioBalanceMode.OFF.name
+                                ).orEmpty()
+                            )
+                        }.getOrDefault(AudioBalanceMode.OFF)
+                        preferences.saveAudioBalanceMode(mode)
+                        audioBalanceController.apply(requireNotNull(player).audioSessionId, mode)
                         return com.google.common.util.concurrent.Futures.immediateFuture(
                             SessionResult(SessionResult.RESULT_SUCCESS)
                         )
