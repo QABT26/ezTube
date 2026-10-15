@@ -7542,104 +7542,101 @@ private fun FullPlayer(
                 }
             }
             Spacer(Modifier.height(3.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    media.channel,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (media.channelUrl != null) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).then(
-                        if (media.channelUrl != null) Modifier.clickable(onClick = onChannel) else Modifier
-                    )
+            Text(
+                media.channel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (media.channelUrl != null) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.then(
+                    if (media.channelUrl != null) Modifier.clickable(onClick = onChannel) else Modifier
                 )
-                IconButton(onClick = onWatchLater) {
+            )
+
+            Spacer(Modifier.height(2.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onWatchLater,
+                    modifier = Modifier.size(36.dp)
+                ) {
                     Icon(
                         if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
-                        if (isWatchLater) "Remove from Watch later" else "Watch later"
+                        if (isWatchLater) "Remove from Watch later" else "Watch later",
+                        Modifier.size(20.dp)
                     )
                 }
-                IconButton(onClick = onFavorite) {
+
+                IconButton(
+                    onClick = onFavorite,
+                    modifier = Modifier.size(36.dp)
+                ) {
                     Icon(
                         if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
-                        if (isFavorite) "Remove favorite" else "Add favorite"
+                        if (isFavorite) "Remove favorite" else "Add favorite",
+                        Modifier.size(20.dp)
                     )
                 }
-                Box(
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    IconButton(
-                        onClick = { showAddToPlaylist = true },
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        Icon(Icons.Outlined.PlaylistAdd, "Add to playlist")
-                    }
-                    playlistMembershipLabel?.let { label ->
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.68f
-                            ),
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .offset(y = 7.dp)
-                                .widthIn(max = 54.dp)
-                        )
-                    }
-                }
-            }
 
-            if (isYouTubeMedia) {
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                IconButton(
+                    onClick = { showAddToPlaylist = true },
+                    modifier = Modifier.size(36.dp)
                 ) {
-                    AssistChip(
-                        modifier = Modifier.height(32.dp),
-                        onClick = {
-                            showComments = true
-                            if (commentsPage == null && !commentsLoading) {
-                                commentsLoading = true
-                                commentsError = null
-                                dragScope.launch {
-                                    runCatching {
-                                        withContext(Dispatchers.IO) {
-                                            youtubeSource.comments(media.id)
+                    Icon(
+                        Icons.Outlined.PlaylistAdd,
+                        "Add to playlist",
+                        Modifier.size(20.dp)
+                    )
+                }
+
+                if (isYouTubeMedia) {
+                    Row(
+                        modifier = Modifier
+                            .height(36.dp)
+                            .clickable {
+                                showComments = true
+                                if (commentsPage == null && !commentsLoading) {
+                                    commentsLoading = true
+                                    commentsError = null
+                                    dragScope.launch {
+                                        runCatching {
+                                            withContext(Dispatchers.IO) {
+                                                youtubeSource.comments(media.id)
+                                            }
+                                        }.onSuccess {
+                                            commentsPage = it
+                                        }.onFailure {
+                                            commentsError = it.message ?: "Unable to load comments"
                                         }
-                                    }.onSuccess {
-                                        commentsPage = it
-                                    }.onFailure {
-                                        commentsError = it.message ?: "Unable to load comments"
+                                        commentsLoading = false
                                     }
-                                    commentsLoading = false
                                 }
                             }
-                        },
-                        label = {
-                            Text(
-                                commentsPage?.totalCount
-                                    ?.takeIf { it > 0 }
-                                    ?.let { "Comments · $it" }
-                                    ?: "Comments"
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Outlined.Comment,
-                                null,
-                                Modifier.size(MediaActionIconSize)
-                            )
-                        }
-                    )
-                    AssistChip(
-                        modifier = Modifier.height(32.dp),
+                            .padding(horizontal = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            Icons.Outlined.Comment,
+                            "Comments",
+                            Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(3.dp))
+                        Text(
+                            text = commentsPage?.totalCount
+                                ?.takeIf { it > 0 }
+                                ?.let { "($it)" }
+                                ?: "(…)",
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1
+                        )
+                    }
+
+                    IconButton(
                         onClick = {
                             val shareIntent = android.content.Intent(
                                 android.content.Intent.ACTION_SEND
@@ -7661,15 +7658,17 @@ private fun FullPlayer(
                                 )
                             )
                         },
-                        label = { Text("Share") },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Outlined.Share,
-                                null,
-                                Modifier.size(MediaActionIconSize)
-                            )
-                        }
-                    )
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.Share,
+                            "Share",
+                            Modifier.size(20.dp)
+                        )
+                    }
+                } else {
+                    Spacer(Modifier.size(36.dp))
+                    Spacer(Modifier.size(36.dp))
                 }
             }
 
