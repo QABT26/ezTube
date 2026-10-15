@@ -6863,13 +6863,12 @@ private fun FullPlayer(
                         if (isFavorite) "Remove favorite" else "Add favorite"
                     )
                 }
-                Column(
-                    modifier = Modifier.width(58.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                Box(
+                    modifier = Modifier.size(48.dp)
                 ) {
                     IconButton(
                         onClick = { showAddToPlaylist = true },
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         Icon(Icons.Outlined.PlaylistAdd, "Add to playlist")
                     }
@@ -6877,13 +6876,17 @@ private fun FullPlayer(
                         Text(
                             text = label,
                             style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.72f
+                                fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.68f
                             ),
                             color = MaterialTheme.colorScheme.primary,
                             maxLines = 1,
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.width(54.dp)
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .offset(y = 7.dp)
+                                .widthIn(max = 54.dp)
                         )
                     }
                 }
