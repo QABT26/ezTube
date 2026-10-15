@@ -107,6 +107,9 @@ private enum class SearchSort(val label: String) {
     RELEVANCE("Relevance"), NEWEST("Newest"), VIEWS("Views"), DURATION("Duration")
 }
 
+private val MediaActionButtonSize = 24.dp
+private val MediaActionIconSize = 16.dp
+
 @Composable
 fun EzTubeApp(
     externalMedia: MediaSummary? = null,
@@ -2352,7 +2355,7 @@ private fun SettingsScreen(
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
-                            Icon(Icons.Outlined.CleaningServices, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.CleaningServices, null, Modifier.size(MediaActionIconSize))
                             Spacer(Modifier.width(4.dp))
                             Text("Clear cache")
                         }
@@ -3418,7 +3421,7 @@ private fun AddToPlaylistDialog(
                                 Icon(
                                     Icons.AutoMirrored.Outlined.PlaylistPlay,
                                     null,
-                                    Modifier.size(19.dp)
+                                    Modifier.size(MediaActionIconSize)
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Column(Modifier.weight(1f)) {
@@ -3469,7 +3472,7 @@ private fun AddToPlaylistDialog(
                         onClick = { creating = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+                        Icon(Icons.Outlined.Add, null, Modifier.size(MediaActionIconSize))
                         Spacer(Modifier.width(6.dp))
                         Text("New playlist")
                     }
@@ -3660,7 +3663,7 @@ private fun MiniPlayer(
                     Icon(
                         if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
                         if (isWatchLater) "Remove from Watch later" else "Watch later",
-                        Modifier.size(17.dp)
+                        Modifier.size(MediaActionIconSize)
                     )
                 }
                 IconButton(
@@ -3670,7 +3673,7 @@ private fun MiniPlayer(
                     Icon(
                         if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
                         if (isFavorite) "Remove from favorites" else "Add to favorites",
-                        Modifier.size(17.dp)
+                        Modifier.size(MediaActionIconSize)
                     )
                 }
             }
@@ -3680,7 +3683,6 @@ private fun MiniPlayer(
                     if (isPlaying) "Pause" else "Play"
                 )
             }
-            Spacer(Modifier.width(12.dp))
         }
         NetworkStatusIcon(
             networkType = networkType,
@@ -4070,24 +4072,24 @@ private fun CompactMediaRow(
                 onToggleWatchLater?.let { action ->
                     IconButton(
                         onClick = action,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(MediaActionButtonSize)
                     ) {
                         Icon(
                             if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
                             if (isWatchLater) "Remove from Watch later" else "Watch later",
-                            Modifier.size(19.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     }
                 }
                 onToggleFavorite?.let { action ->
                     IconButton(
                         onClick = action,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(MediaActionButtonSize)
                     ) {
                         Icon(
                             if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
                             if (isFavorite) "Remove favorite" else "Add favorite",
-                            Modifier.size(19.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     }
                 }
@@ -4285,39 +4287,39 @@ private fun ProgressMediaRow(
                 onToggleWatchLater?.let { action ->
                     IconButton(
                         onClick = action,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(MediaActionButtonSize)
                     ) {
                         Icon(
                             if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
                             if (isWatchLater) "Remove from Watch later" else "Watch later",
-                            Modifier.size(16.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     }
                 }
                 onAddToPlaylist?.let { action ->
                     IconButton(
                         onClick = action,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(MediaActionButtonSize)
                     ) {
-                        Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(16.dp))
+                        Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(MediaActionIconSize))
                     }
                 }
                 onToggleFavorite?.let { action ->
                     IconButton(
                         onClick = action,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(MediaActionButtonSize)
                     ) {
                         Icon(
                             if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
                             if (isFavorite) "Remove favorite" else "Add favorite",
-                            Modifier.size(16.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     }
                 }
                 if (showPlayAction) {
                     IconButton(
                         onClick = onPlay,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(MediaActionButtonSize)
                     ) {
                         Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(20.dp))
                     }
@@ -4492,7 +4494,7 @@ private fun LibraryScreen(
                         Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Outlined.PlayCircle, null, Modifier.size(18.dp))
+                        Icon(Icons.Outlined.PlayCircle, null, Modifier.size(MediaActionIconSize))
                         Spacer(Modifier.width(6.dp))
                         Text(
                             "YouTube",
@@ -4518,7 +4520,7 @@ private fun LibraryScreen(
                             contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
-                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(MediaActionIconSize))
                             Spacer(Modifier.width(3.dp))
                             Text("All")
                         }
@@ -4562,19 +4564,19 @@ private fun LibraryScreen(
                         ) {
                             IconButton(
                                 onClick = { onRemoveFavorite(entry) },
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
                                 Icon(
                                     Icons.Outlined.Favorite,
                                     "Remove favorite",
-                                    Modifier.size(17.dp)
+                                    Modifier.size(MediaActionIconSize)
                                 )
                             }
                             IconButton(
                                 onClick = { playlistTarget = entry.toMediaSummary() },
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
-                                Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(18.dp))
+                                Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(MediaActionIconSize))
                             }
                         }
                     }
@@ -4587,7 +4589,7 @@ private fun LibraryScreen(
                         Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Outlined.LocalMovies, null, Modifier.size(18.dp))
+                        Icon(Icons.Outlined.LocalMovies, null, Modifier.size(MediaActionIconSize))
                         Spacer(Modifier.width(6.dp))
                         Text(
                             "Movie",
@@ -4613,7 +4615,7 @@ private fun LibraryScreen(
                             contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
-                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(MediaActionIconSize))
                             Spacer(Modifier.width(3.dp))
                             Text("All")
                         }
@@ -4657,22 +4659,22 @@ private fun LibraryScreen(
                         ) {
                             IconButton(
                                 onClick = { onRemoveFavorite(entry) },
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
                                 Icon(
                                     Icons.Outlined.Favorite,
                                     "Remove favorite",
-                                    Modifier.size(17.dp)
+                                    Modifier.size(MediaActionIconSize)
                                 )
                             }
                             IconButton(
                                 onClick = { playlistTarget = entry.toMediaSummary() },
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
                                 Icon(
                                     Icons.Outlined.PlaylistAdd,
                                     "Add to playlist",
-                                    Modifier.size(18.dp)
+                                    Modifier.size(MediaActionIconSize)
                                 )
                             }
                         }
@@ -4789,19 +4791,19 @@ private fun LibraryScreen(
                         ) {
                             IconButton(
                                 onClick = { onRemoveWatchLater(entry) },
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
                                 Icon(
                                     Icons.Outlined.Bookmark,
                                     "Remove from Watch later",
-                                    Modifier.size(17.dp)
+                                    Modifier.size(MediaActionIconSize)
                                 )
                             }
                             IconButton(
                                 onClick = { playlistTarget = entry.toMediaSummary() },
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
-                                Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(18.dp))
+                                Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(MediaActionIconSize))
                             }
                         }
                     }
@@ -4836,7 +4838,7 @@ private fun LibraryScreen(
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                     modifier = Modifier.height(34.dp)
                 ) {
-                    Icon(Icons.Outlined.Add, null, Modifier.size(16.dp))
+                    Icon(Icons.Outlined.Add, null, Modifier.size(MediaActionIconSize))
                     Spacer(Modifier.width(4.dp))
                     Text("New")
                 }
@@ -4957,7 +4959,7 @@ private fun LibraryScreen(
                             Icon(
                                 Icons.Outlined.PlaylistAdd,
                                 "Add current",
-                                Modifier.size(19.dp)
+                                Modifier.size(MediaActionIconSize)
                             )
                         }
                         IconButton(
@@ -5093,15 +5095,15 @@ private fun LibraryScreen(
                     ) {
                         IconButton(
                             onClick = { onDelete(entry) },
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(MediaActionButtonSize)
                         ) {
-                            Icon(Icons.Outlined.Close, "Remove from history", Modifier.size(15.dp))
+                            Icon(Icons.Outlined.Close, "Remove from history", Modifier.size(MediaActionIconSize))
                         }
                         IconButton(
                             onClick = { playlistTarget = entry.toMediaSummary() },
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(MediaActionButtonSize)
                         ) {
-                            Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(16.dp))
+                            Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(MediaActionIconSize))
                         }
 
                     }
@@ -5279,7 +5281,7 @@ private fun PersonalPlaylistDetailScreen(
                 Icon(
                     Icons.Outlined.PushPin,
                     "Pinned",
-                    Modifier.size(17.dp),
+                    Modifier.size(MediaActionIconSize),
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Spacer(Modifier.width(2.dp))
@@ -5377,7 +5379,7 @@ private fun PersonalPlaylistDetailScreen(
                             contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
-                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(MediaActionIconSize))
                             Spacer(Modifier.width(3.dp))
                             Text("All")
                         }
@@ -5387,7 +5389,7 @@ private fun PersonalPlaylistDetailScreen(
                             contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
-                            Icon(Icons.Outlined.Shuffle, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.Shuffle, null, Modifier.size(MediaActionIconSize))
                             Spacer(Modifier.width(3.dp))
                             Text("Shuffle")
                         }
@@ -5409,7 +5411,7 @@ private fun PersonalPlaylistDetailScreen(
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
                 singleLine = true,
-                leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(19.dp)) },
+                leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(MediaActionIconSize)) },
                 trailingIcon = {
                     if (query.isNotEmpty()) {
                         IconButton(onClick = { query = "" }) {
@@ -5560,7 +5562,7 @@ private fun PersonalPlaylistDetailScreen(
                                             enabled = originalIndex > 0,
                                             modifier = Modifier.size(25.dp)
                                         ) {
-                                            Icon(Icons.Outlined.KeyboardArrowUp, "Move up", Modifier.size(17.dp))
+                                            Icon(Icons.Outlined.KeyboardArrowUp, "Move up", Modifier.size(MediaActionIconSize))
                                         }
                                         IconButton(
                                             onClick = {
@@ -5571,7 +5573,7 @@ private fun PersonalPlaylistDetailScreen(
                                             enabled = originalIndex in 0 until playlist.items.lastIndex,
                                             modifier = Modifier.size(25.dp)
                                         ) {
-                                            Icon(Icons.Outlined.KeyboardArrowDown, "Move down", Modifier.size(17.dp))
+                                            Icon(Icons.Outlined.KeyboardArrowDown, "Move down", Modifier.size(MediaActionIconSize))
                                         }
                                     }
                                 }
@@ -5583,13 +5585,13 @@ private fun PersonalPlaylistDetailScreen(
                                         onClick = { onRemoveItem(media.id) },
                                         modifier = Modifier.size(25.dp)
                                     ) {
-                                        Icon(Icons.Outlined.Close, "Remove", Modifier.size(16.dp))
+                                        Icon(Icons.Outlined.Close, "Remove", Modifier.size(MediaActionIconSize))
                                     }
                                     IconButton(
                                         onClick = { onPlayItem(media, displayedItems) },
                                         modifier = Modifier.size(25.dp)
                                     ) {
-                                        Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
+                                        Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(MediaActionIconSize))
                                     }
                                 }
                             }
@@ -5961,6 +5963,18 @@ private fun FullPlayer(
     val isFavorite = state.isFavorite
     val isWatchLater = state.isWatchLater
     val personalPlaylists = state.personalPlaylists
+    val containingPlaylists = remember(personalPlaylists, media.id) {
+        personalPlaylists.filter { playlist ->
+            playlist.items.any { it.id == media.id }
+        }
+    }
+    val playlistMembershipLabel = containingPlaylists.firstOrNull()?.let { first ->
+        if (containingPlaylists.size > 1) {
+            first.name + " +" + (containingPlaylists.size - 1)
+        } else {
+            first.name
+        }
+    }
     val networkType = state.networkType
     val movieEpisodePosition =
         if (isMovie && queue.size > 1 && queueIndex in queue.indices) {
@@ -6849,8 +6863,29 @@ private fun FullPlayer(
                         if (isFavorite) "Remove favorite" else "Add favorite"
                     )
                 }
-                IconButton(onClick = { showAddToPlaylist = true }) {
-                    Icon(Icons.Outlined.PlaylistAdd, "Add to playlist")
+                Column(
+                    modifier = Modifier.width(58.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    IconButton(
+                        onClick = { showAddToPlaylist = true },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(Icons.Outlined.PlaylistAdd, "Add to playlist")
+                    }
+                    playlistMembershipLabel?.let { label ->
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.72f
+                            ),
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.width(54.dp)
+                        )
+                    }
                 }
             }
 
@@ -6868,7 +6903,7 @@ private fun FullPlayer(
                         onClick = { onSubtitle(null) },
                         label = { Text("CC Off") },
                         leadingIcon = {
-                            Icon(Icons.Outlined.ClosedCaptionOff, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.ClosedCaptionOff, null, Modifier.size(MediaActionIconSize))
                         }
                     )
                     if (subtitleOptions.isEmpty()) {
@@ -6878,7 +6913,7 @@ private fun FullPlayer(
                             enabled = false,
                             label = { Text("No subtitles") },
                             leadingIcon = {
-                                Icon(Icons.Outlined.SubtitlesOff, null, Modifier.size(16.dp))
+                                Icon(Icons.Outlined.SubtitlesOff, null, Modifier.size(MediaActionIconSize))
                             }
                         )
                     } else {
@@ -6889,7 +6924,7 @@ private fun FullPlayer(
                                 onClick = { onSubtitle(option) },
                                 label = { Text(option.label, maxLines = 1) },
                                 leadingIcon = {
-                                    Icon(Icons.Outlined.ClosedCaption, null, Modifier.size(16.dp))
+                                    Icon(Icons.Outlined.ClosedCaption, null, Modifier.size(MediaActionIconSize))
                                 }
                             )
                         }
@@ -6902,7 +6937,7 @@ private fun FullPlayer(
                         selected = !videoMode,
                         onClick = { onVideoMode(false) },
                         label = { Text("AUDIO") },
-                        leadingIcon = { Icon(Icons.Outlined.Headphones, null, Modifier.size(16.dp)) }
+                        leadingIcon = { Icon(Icons.Outlined.Headphones, null, Modifier.size(MediaActionIconSize)) }
                     )
                     FilterChip(
                         modifier = Modifier.height(32.dp),
@@ -6922,7 +6957,7 @@ private fun FullPlayer(
                             )
                         },
                         leadingIcon = {
-                            Icon(Icons.Outlined.OndemandVideo, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.OndemandVideo, null, Modifier.size(MediaActionIconSize))
                         }
                     )
                 }
@@ -7076,7 +7111,7 @@ private fun FullPlayer(
                 FilterChip(
                     selected = autoplay,
                     onClick = { onAutoplay(!autoplay) },
-                    leadingIcon = { Icon(Icons.Outlined.SkipNext, null, Modifier.size(18.dp)) },
+                    leadingIcon = { Icon(Icons.Outlined.SkipNext, null, Modifier.size(MediaActionIconSize)) },
                     label = {
                         Text("Auto next", modifier = Modifier.fillMaxWidth(),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
@@ -7109,7 +7144,7 @@ private fun FullPlayer(
                             } else {
                                 "Random next"
                             },
-                            Modifier.size(18.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     },
                     label = {
@@ -7137,7 +7172,7 @@ private fun FullPlayer(
                         Icon(
                             if (repeatMode == RepeatMode.ONE) Icons.Outlined.RepeatOne else Icons.Outlined.Repeat,
                             null,
-                            Modifier.size(18.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     },
                     label = {
@@ -7205,7 +7240,7 @@ private fun FullPlayer(
                     onClick = { showQueue = !showQueue },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Outlined.PlaylistPlay, null, Modifier.size(18.dp))
+                    Icon(Icons.AutoMirrored.Outlined.PlaylistPlay, null, Modifier.size(MediaActionIconSize))
                     Spacer(Modifier.width(5.dp))
                     Text(if (showQueue) "Hide queue" else "Up next")
                 }
@@ -7218,7 +7253,7 @@ private fun FullPlayer(
                         Icon(
                             Icons.Outlined.Refresh,
                             "Refresh queue",
-                            Modifier.size(19.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     }
                     TextButton(
@@ -7291,7 +7326,7 @@ private fun FullPlayer(
                                     )
                                 }
                                 if (current) {
-                                    Icon(Icons.Outlined.GraphicEq, "Playing", Modifier.size(19.dp),
+                                    Icon(Icons.Outlined.GraphicEq, "Playing", Modifier.size(MediaActionIconSize),
                                         tint = MaterialTheme.colorScheme.primary)
                                 } else {
                                     Icon(
@@ -7358,7 +7393,7 @@ private fun FullPlayer(
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     IconButton(onClick = { onQueueRemove(index) }, modifier = Modifier.size(30.dp)) {
-                                        Icon(Icons.Outlined.Close, "Remove from queue", Modifier.size(18.dp))
+                                        Icon(Icons.Outlined.Close, "Remove from queue", Modifier.size(MediaActionIconSize))
                                     }
                                 }
                             }
