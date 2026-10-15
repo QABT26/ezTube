@@ -829,6 +829,15 @@ class PlaybackQueueManager(
         busy = true
         invalidatePending()
         val requestGeneration = generation
+
+        // The logical selection has already changed in the UI. Do not keep the
+        // previous item's audio/video visible while the new source is resolving.
+        // Clearing the old Media3 timeline makes the handoff immediate from the
+        // user's perspective; the selected item remains available from the saved
+        // logical queue and is attached as soon as resolution completes.
+        player.stop()
+        player.clearMediaItems()
+
         scope.launch {
             val media = items[target]
             val useFastStart = allowFastStart && preferences.loadVideoMode() && playWhenReady

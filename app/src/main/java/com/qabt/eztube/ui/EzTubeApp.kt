@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.clickable
@@ -39,6 +40,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -70,6 +72,7 @@ import com.qabt.eztube.history.PersonalPlaylistStore
 import com.qabt.eztube.history.toMediaSummary
 import com.qabt.eztube.history.progress
 import com.qabt.eztube.playback.AudioQuality
+import com.qabt.eztube.playback.AudioBalanceMode
 import com.qabt.eztube.playback.VideoQuality
 import com.qabt.eztube.playback.PlaybackService
 import com.qabt.eztube.playback.PlaybackPreferences
@@ -86,6 +89,8 @@ import com.qabt.eztube.playback.StorageSnapshot
 import com.qabt.eztube.playback.StorageUsage
 import com.qabt.eztube.playback.MobileDataPriority
 import com.qabt.eztube.movie.MovieProviderRegistry
+import com.qabt.eztube.local.LocalMediaKind
+import com.qabt.eztube.local.LocalMediaRepository
 import com.qabt.eztube.movie.MovieDetail
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.ChannelSummary
@@ -106,6 +111,69 @@ private enum class NextMode { LIST, RECOMMENDED }
 private enum class SearchSort(val label: String) {
     RELEVANCE("Relevance"), NEWEST("Newest"), VIEWS("Views"), DURATION("Duration")
 }
+
+private enum class AppAccent(val label: String) {
+    PURPLE("Purple"),
+    BLUE("Blue"),
+    TEAL("Teal"),
+    GREEN("Green"),
+    ORANGE("Orange"),
+    RED("Red")
+}
+
+private enum class ThemeMode(val label: String) {
+    AUTO("Auto"),
+    LIGHT("Light"),
+    DARK("Dark")
+}
+
+@Composable
+private fun appColorScheme(accent: AppAccent, darkTheme: Boolean): ColorScheme {
+    val primary = when (accent) {
+        AppAccent.PURPLE -> androidx.compose.ui.graphics.Color(0xFF6750A4)
+        AppAccent.BLUE -> androidx.compose.ui.graphics.Color(0xFF3F51B5)
+        AppAccent.TEAL -> androidx.compose.ui.graphics.Color(0xFF00796B)
+        AppAccent.GREEN -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+        AppAccent.ORANGE -> androidx.compose.ui.graphics.Color(0xFFEF6C00)
+        AppAccent.RED -> androidx.compose.ui.graphics.Color(0xFFC62828)
+    }
+    val primaryContainer = when (accent) {
+        AppAccent.PURPLE -> androidx.compose.ui.graphics.Color(0xFFEADDFF)
+        AppAccent.BLUE -> androidx.compose.ui.graphics.Color(0xFFDDE3FF)
+        AppAccent.TEAL -> androidx.compose.ui.graphics.Color(0xFFD3F5EE)
+        AppAccent.GREEN -> androidx.compose.ui.graphics.Color(0xFFD9F2D8)
+        AppAccent.ORANGE -> androidx.compose.ui.graphics.Color(0xFFFFE0B2)
+        AppAccent.RED -> androidx.compose.ui.graphics.Color(0xFFFFDAD6)
+    }
+    return if (darkTheme) {
+        darkColorScheme(
+            primary = androidx.compose.ui.graphics.lerp(
+                primary,
+                androidx.compose.ui.graphics.Color.White,
+                0.28f
+            ),
+            primaryContainer = androidx.compose.ui.graphics.lerp(
+                primary,
+                androidx.compose.ui.graphics.Color.Black,
+                0.42f
+            ),
+            secondaryContainer = androidx.compose.ui.graphics.lerp(
+                primaryContainer,
+                androidx.compose.ui.graphics.Color.Black,
+                0.62f
+            )
+        )
+    } else {
+        lightColorScheme(
+            primary = primary,
+            primaryContainer = primaryContainer,
+            secondaryContainer = primaryContainer.copy(alpha = 0.82f)
+        )
+    }
+}
+
+private val MediaActionButtonSize = 24.dp
+private val MediaActionIconSize = 16.dp
 
 @Composable
 fun EzTubeApp(
@@ -142,6 +210,18 @@ fun EzTubeApp(
     }
 
     val playbackPrefs = remember { PlaybackPreferences(context) }
+    var appAccent by remember {
+        mutableStateOf(
+            runCatching { AppAccent.valueOf(playbackPrefs.loadAppAccent()) }
+                .getOrDefault(AppAccent.PURPLE)
+        )
+    }
+    var themeMode by remember {
+        mutableStateOf(
+            runCatching { ThemeMode.valueOf(playbackPrefs.loadThemeMode()) }
+                .getOrDefault(ThemeMode.AUTO)
+        )
+    }
     val networkUsageTracker = remember { NetworkUsageTracker(context) }
     var networkType by remember { mutableStateOf(NetworkEnvironment.type(context)) }
     var dataUsage by remember { mutableStateOf(networkUsageTracker.sample()) }
@@ -166,6 +246,7 @@ fun EzTubeApp(
     var queue by remember { mutableStateOf<List<MediaSummary>>(emptyList()) }
     var queueIndex by remember { mutableIntStateOf(-1) }
     var playbackSpeed by remember { mutableFloatStateOf(playbackPrefs.loadSpeed()) }
+    var audioBalanceMode by remember { mutableStateOf(playbackPrefs.loadAudioBalanceMode()) }
     var compatibilityFallback by remember { mutableStateOf(false) }
     var playerError by remember { mutableStateOf<String?>(null) }
     var isBuffering by remember { mutableStateOf(false) }
@@ -596,10 +677,16 @@ fun EzTubeApp(
         if (resolvingId != null) return
 
         when {
-            media.id.startsWith("movie:") -> {
+            media.id.startsWith("movie:") || media.channel == "Local video" -> {
                 if (!videoMode) {
                     videoMode = true
                     playbackPrefs.saveVideoMode(true)
+                }
+            }
+            media.channel == "Local audio" -> {
+                if (videoMode) {
+                    videoMode = false
+                    playbackPrefs.saveVideoMode(false)
                 }
             }
             PlaybackSourceResolver.resolve(media.id) is PlaybackSource.Hls ||
@@ -1192,7 +1279,14 @@ fun EzTubeApp(
         }
     }
 
-    MaterialTheme {
+    val systemDarkTheme = isSystemInDarkTheme()
+    val useDarkTheme = when (themeMode) {
+        ThemeMode.AUTO -> systemDarkTheme
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+
+    MaterialTheme(colorScheme = appColorScheme(appAccent, useDarkTheme)) {
         if (isInPictureInPictureMode && videoMode && controller != null) {
             Box(
                 Modifier
@@ -1379,6 +1473,7 @@ fun EzTubeApp(
                         (repeatMode == RepeatMode.ALL && queue.size > 1),
                     isFavorite = favorites.any { it.mediaId == nowPlaying?.id },
                     isWatchLater = watchLater.any { it.mediaId == nowPlaying?.id },
+                    personalPlaylists = personalPlaylists,
                     networkType = networkType
                 ),
                 actions = FullPlayerActions(
@@ -1540,6 +1635,19 @@ fun EzTubeApp(
                     onWatchLater = {
                         nowPlaying?.let { toggleWatchLater(it) }
                     },
+                    onAddToPlaylist = { playlistId, media ->
+                        personalPlaylists = personalPlaylistStore.add(playlistId, media)
+                    },
+                    onCreatePlaylistWithMedia = { name, media ->
+                        val existingIds = personalPlaylists.mapTo(mutableSetOf()) { it.id }
+                        val created = personalPlaylistStore.create(name)
+                        val createdPlaylist = created.firstOrNull { it.id !in existingIds }
+                        personalPlaylists = if (createdPlaylist != null) {
+                            personalPlaylistStore.add(createdPlaylist.id, media)
+                        } else {
+                            created
+                        }
+                    },
                     onToggle = {
                         if (controller?.currentMediaItem == null) {
                             nowPlaying?.let { playMedia(it, resumePositionMs) }
@@ -1550,8 +1658,32 @@ fun EzTubeApp(
             )
         } else if (showSettings) {
             SettingsScreen(
+                appAccent = appAccent,
+                onAppAccent = { accent ->
+                    appAccent = accent
+                    playbackPrefs.saveAppAccent(accent.name)
+                },
+                themeMode = themeMode,
+                onThemeMode = { mode ->
+                    themeMode = mode
+                    playbackPrefs.saveThemeMode(mode.name)
+                },
                 quality = quality,
                 onQuality = { quality = it; playbackPrefs.saveQuality(it) },
+                audioBalanceMode = audioBalanceMode,
+                onAudioBalanceMode = { mode ->
+                    audioBalanceMode = mode
+                    playbackPrefs.saveAudioBalanceMode(mode)
+                    controller?.sendCustomCommand(
+                        androidx.media3.session.SessionCommand(
+                            PlaybackService.COMMAND_SET_AUDIO_BALANCE,
+                            android.os.Bundle.EMPTY
+                        ),
+                        android.os.Bundle().apply {
+                            putString(PlaybackService.ARG_AUDIO_BALANCE_MODE, mode.name)
+                        }
+                    )
+                },
                 speed = playbackSpeed,
                 onSpeed = { playbackSpeed = it; playbackPrefs.saveSpeed(it); controller?.setPlaybackSpeed(it) },
                 autoplay = autoplay,
@@ -1739,6 +1871,20 @@ fun EzTubeApp(
                         onPlay = { media, resultQueue -> startQueue(media, resultQueue) },
                         onPlayNext = { playNext(it) },
                         onAddToQueue = { addToQueue(it) },
+                        personalPlaylists = personalPlaylists,
+                        onAddToPlaylist = { playlistId, media ->
+                            personalPlaylists = personalPlaylistStore.add(playlistId, media)
+                        },
+                        onCreatePlaylistWithMedia = { name, media ->
+                            val existingIds = personalPlaylists.mapTo(mutableSetOf()) { it.id }
+                            val created = personalPlaylistStore.create(name)
+                            val createdPlaylist = created.firstOrNull { it.id !in existingIds }
+                            personalPlaylists = if (createdPlaylist != null) {
+                                personalPlaylistStore.add(createdPlaylist.id, media)
+                            } else {
+                                created
+                            }
+                        },
                         watchLaterIds = watchLater.mapTo(mutableSetOf()) { it.mediaId },
                         onToggleWatchLater = { toggleWatchLater(it) }
                     )
@@ -1785,6 +1931,16 @@ fun EzTubeApp(
                         },
                         watchLaterIds = watchLater.mapTo(mutableSetOf()) { it.mediaId },
                         onToggleWatchLater = { toggleWatchLater(it) },
+                        favoriteIds = favorites.mapTo(mutableSetOf()) { it.mediaId },
+                        onToggleFavorite = { media ->
+                            scope.launch(Dispatchers.IO) {
+                                if (favorites.any { it.mediaId == media.id }) {
+                                    favoritesRepo.remove(media.id)
+                                } else {
+                                    favoritesRepo.add(media)
+                                }
+                            }
+                        },
                         onSearch = { selected = Tab.SEARCH }
                     )
                     Tab.LIBRARY -> LibraryScreen(
@@ -1797,6 +1953,18 @@ fun EzTubeApp(
                         movieProviders = movieProviders,
                         listState = libraryListState,
                         resolvingId = resolvingId,
+                        onPlayLocal = { media, items, kind ->
+                            val localVideo = kind == LocalMediaKind.VIDEO
+                            if (videoMode != localVideo) {
+                                videoMode = localVideo
+                                playbackPrefs.saveVideoMode(localVideo)
+                            }
+                            startQueue(
+                                media,
+                                items,
+                                preserveSourceOrder = true
+                            )
+                        },
                         onPlay = { entry ->
                             val isMovie = isMovieLibraryItem(entry.mediaId, entry.channel)
                             val items = if (isMovie) {
@@ -1888,6 +2056,19 @@ fun EzTubeApp(
                         onToggleWatchLaterMedia = { media ->
                             toggleWatchLater(media)
                         },
+                        onAddToPlaylist = { playlistId, media ->
+                            personalPlaylists = personalPlaylistStore.add(playlistId, media)
+                        },
+                        onCreatePlaylistWithMedia = { name, media ->
+                            val existingIds = personalPlaylists.mapTo(mutableSetOf()) { it.id }
+                            val created = personalPlaylistStore.create(name)
+                            val createdPlaylist = created.firstOrNull { it.id !in existingIds }
+                            personalPlaylists = if (createdPlaylist != null) {
+                                personalPlaylistStore.add(createdPlaylist.id, media)
+                            } else {
+                                created
+                            }
+                        },
                         onCreatePlaylist = { name ->
                             personalPlaylists = personalPlaylistStore.create(name)
                         },
@@ -1896,6 +2077,15 @@ fun EzTubeApp(
                         },
                         onDeletePlaylist = { id ->
                             personalPlaylists = personalPlaylistStore.delete(id)
+                        },
+                        onPinPlaylist = { id, pinned ->
+                            personalPlaylists = personalPlaylistStore.setPinned(id, pinned)
+                        },
+                        onDuplicatePlaylist = { id ->
+                            personalPlaylists = personalPlaylistStore.duplicate(id)
+                        },
+                        onClearPlaylist = { id ->
+                            personalPlaylists = personalPlaylistStore.clearItems(id)
                         },
                         onAddCurrentToPlaylist = { id ->
                             nowPlaying?.let { media ->
@@ -1953,8 +2143,14 @@ private fun AppHeader(onSettings: () -> Unit, onDoubleTapCenter: () -> Unit) {
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsScreen(
+    appAccent: AppAccent,
+    onAppAccent: (AppAccent) -> Unit,
+    themeMode: ThemeMode,
+    onThemeMode: (ThemeMode) -> Unit,
     quality: AudioQuality,
     onQuality: (AudioQuality) -> Unit,
+    audioBalanceMode: AudioBalanceMode,
+    onAudioBalanceMode: (AudioBalanceMode) -> Unit,
     speed: Float,
     onSpeed: (Float) -> Unit,
     autoplay: Boolean,
@@ -1998,6 +2194,11 @@ private fun SettingsScreen(
     val context = LocalContext.current
     var developerTapCount by remember { mutableIntStateOf(0) }
 
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground
+    ) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(
             Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
@@ -2010,6 +2211,53 @@ private fun SettingsScreen(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
+            Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Column {
+                Text("Theme", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Auto follows the phone's light/dark setting.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    ThemeMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = themeMode == mode,
+                            onClick = { onThemeMode(mode) },
+                            label = { Text(mode.label) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+            Column {
+                Text("App color", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Choose the default accent color used across ezTube.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.foundation.layout.FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    AppAccent.entries.forEach { accent ->
+                        FilterChip(
+                            selected = appAccent == accent,
+                            onClick = { onAppAccent(accent) },
+                            label = { Text(accent.label) }
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider()
             Text("Playback", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
             Column {
@@ -2026,6 +2274,28 @@ private fun SettingsScreen(
                                 AudioQuality.STANDARD -> "Std 128"
                                 AudioQuality.HIGH -> "High 160+"
                             }) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Column {
+                Text("Volume balance", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Smooths large volume differences during playback. Strong uses heavier compression.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    AudioBalanceMode.entries.forEach { option ->
+                        FilterChip(
+                            selected = audioBalanceMode == option,
+                            onClick = { onAudioBalanceMode(option) },
+                            label = { Text(option.label) },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -2292,7 +2562,7 @@ private fun SettingsScreen(
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
-                            Icon(Icons.Outlined.CleaningServices, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.CleaningServices, null, Modifier.size(MediaActionIconSize))
                             Spacer(Modifier.width(4.dp))
                             Text("Clear cache")
                         }
@@ -2463,6 +2733,7 @@ private fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+    }
 }
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -2489,6 +2760,9 @@ private fun SearchScreen(
     onPlay: (MediaSummary, List<MediaSummary>) -> Unit,
     onPlayNext: (MediaSummary) -> Unit,
     onAddToQueue: (MediaSummary) -> Unit,
+    personalPlaylists: List<PersonalPlaylist>,
+    onAddToPlaylist: (String, MediaSummary) -> Unit,
+    onCreatePlaylistWithMedia: (String, MediaSummary) -> Unit,
     watchLaterIds: Set<String>,
     onToggleWatchLater: (MediaSummary) -> Unit
 ) {
@@ -2496,6 +2770,7 @@ private fun SearchScreen(
     var loading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searchSort by remember { mutableStateOf(SearchSort.RELEVANCE) }
+    var playlistTarget by remember { mutableStateOf<MediaSummary?>(null) }
     val displayResults = remember(results, searchSort) {
         when (searchSort) {
             SearchSort.RELEVANCE -> results
@@ -2737,12 +3012,29 @@ private fun SearchScreen(
                         },
                         onPlayNext = if (movieProviders.isTitle(media.id)) null else { { onPlayNext(media) } },
                         onAddToQueue = if (movieProviders.isTitle(media.id)) null else { { onAddToQueue(media) } },
+                        onAddToPlaylist = { playlistTarget = media },
                         isWatchLater = media.id in watchLaterIds,
                         onToggleWatchLater = { onToggleWatchLater(media) }
                     )
                 }
             }
         }
+    }
+
+    playlistTarget?.let { target ->
+        AddToPlaylistDialog(
+            media = target,
+            playlists = personalPlaylists,
+            onDismiss = { playlistTarget = null },
+            onSelect = { playlistId ->
+                onAddToPlaylist(playlistId, target)
+                playlistTarget = null
+            },
+            onCreate = { name ->
+                onCreatePlaylistWithMedia(name, target)
+                playlistTarget = null
+            }
+        )
     }
 }
 
@@ -3165,6 +3457,7 @@ private fun SearchResult(
     onPlay: () -> Unit,
     onPlayNext: (() -> Unit)? = null,
     onAddToQueue: (() -> Unit)? = null,
+    onAddToPlaylist: (() -> Unit)? = null,
     isWatchLater: Boolean = false,
     onToggleWatchLater: (() -> Unit)? = null
 ) {
@@ -3176,7 +3469,11 @@ private fun SearchResult(
             .clickable(enabled = enabled, onClick = onPlay)
             .padding(7.dp), verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(width = 116.dp, height = 66.dp)) {
+        Box(
+            Modifier
+                .size(width = 116.dp, height = 66.dp)
+                .clip(RoundedCornerShape(10.dp))
+        ) {
             AsyncImage(
                 media.thumbnailUrl,
                 null,
@@ -3189,25 +3486,68 @@ private fun SearchResult(
             if (thumbnailBadge != null) {
                 Text(
                     thumbnailBadge,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.82f
+                    ),
                     color = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(4.dp)
+                        .padding(3.dp)
                         .background(
                             MaterialTheme.colorScheme.scrim.copy(alpha = 0.78f),
                             RoundedCornerShape(4.dp)
                         )
-                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                        .padding(horizontal = 3.dp, vertical = 0.dp)
                 )
             }
+            progressEntry
+                ?.progress
+                ?.takeIf { it > 0f }
+                ?.let { progress ->
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(0.5.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.onSurface.copy(
+                                        alpha = if (
+                                            MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                                        ) 0.55f else 0.28f
+                                    )
+                                )
+                        )
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(2.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f)
+                                )
+                        ) {
+                            Box(
+                                Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(progress.coerceIn(0f, 1f))
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                        }
+                    }
+                }
         }
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
             TouchMarqueeTitle(
                 text = media.title,
                 maxLines = 2,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = MaterialTheme.typography.titleSmall.fontSize * 0.90f
+                )
             )
             Spacer(Modifier.height(3.dp))
             Text(
@@ -3225,16 +3565,15 @@ private fun SearchResult(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            progressEntry?.let { entry ->
-                SearchPlaybackProgress(
-                    progress = entry.progress,
-                    durationMs = entry.durationMs
-                )
-            }
         }
         Spacer(Modifier.width(2.dp))
         if (resolving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-        else if (onPlayNext != null || onAddToQueue != null || onToggleWatchLater != null) {
+        else if (
+            onPlayNext != null ||
+            onAddToQueue != null ||
+            onAddToPlaylist != null ||
+            onToggleWatchLater != null
+        ) {
             Box {
                 IconButton(
                     onClick = { showMenu = true },
@@ -3261,6 +3600,13 @@ private fun SearchResult(
                             onClick = { showMenu = false; action() }
                         )
                     }
+                    onAddToPlaylist?.let { action ->
+                        DropdownMenuItem(
+                            text = { Text("Add to playlist") },
+                            leadingIcon = { Icon(Icons.Outlined.PlaylistAdd, null) },
+                            onClick = { showMenu = false; action() }
+                        )
+                    }
                     onToggleWatchLater?.let { action ->
                         DropdownMenuItem(
                             text = {
@@ -3283,17 +3629,125 @@ private fun SearchResult(
 }
 
 @Composable
+private fun AddToPlaylistDialog(
+    media: MediaSummary,
+    playlists: List<PersonalPlaylist>,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
+    onCreate: (String) -> Unit
+) {
+    var creating by remember(media.id, playlists.isEmpty()) {
+        mutableStateOf(playlists.isEmpty())
+    }
+    var playlistName by remember(media.id) { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add to playlist") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    media.title,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(4.dp))
+                if (playlists.isNotEmpty()) {
+                    playlists.forEach { playlist ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(playlist.id) },
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Outlined.PlaylistPlay,
+                                    null,
+                                    Modifier.size(19.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        playlist.name,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        playlist.items.size.toString() + " items",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                }
+
+                if (creating) {
+                    OutlinedTextField(
+                        value = playlistName,
+                        onValueChange = { playlistName = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("New playlist name") }
+                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        if (playlists.isNotEmpty()) {
+                            TextButton(onClick = {
+                                creating = false
+                                playlistName = ""
+                            }) {
+                                Text("Back")
+                            }
+                        }
+                        TextButton(onClick = { onCreate(playlistName) }) {
+                            Text("Create & add")
+                        }
+                    }
+                } else {
+                    FilledTonalButton(
+                        onClick = { creating = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("New playlist")
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
 private fun TouchMarqueeTitle(
     text: String,
     maxLines: Int = 1,
     fontWeight: FontWeight? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.titleSmall
 ) {
     var marqueeActive by remember(text) { mutableStateOf(false) }
 
     Text(
         text = text,
-        style = MaterialTheme.typography.titleSmall,
+        style = style,
         fontWeight = fontWeight,
         maxLines = if (marqueeActive) 1 else maxLines,
         softWrap = !marqueeActive,
@@ -3481,9 +3935,9 @@ private fun MiniPlayer(
             }
         }
         NetworkStatusIcon(
-            networkType,
-            10.dp,
-            Modifier.align(Alignment.TopEnd).padding(top = 3.dp, end = 43.dp)
+            networkType = networkType,
+            size = 10.dp,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 3.dp, end = 3.dp)
         )
         }
     }
@@ -3511,6 +3965,8 @@ private fun HomeScreen(
     onMovie: (MediaSummary) -> Unit,
     watchLaterIds: Set<String>,
     onToggleWatchLater: (MediaSummary) -> Unit,
+    favoriteIds: Set<String>,
+    onToggleFavorite: (MediaSummary) -> Unit,
     onSearch: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -3594,6 +4050,11 @@ private fun HomeScreen(
                     onToggleWatchLater = {
                         onToggleWatchLater(entry.toMediaSummary())
                     },
+                    isFavorite = entry.mediaId in favoriteIds,
+                    onToggleFavorite = {
+                        onToggleFavorite(entry.toMediaSummary())
+                    },
+                    showPlayAction = false,
                     onClick = { onContinue(entry) },
                     onPlay = { onContinue(entry) }
                 )
@@ -3660,7 +4121,9 @@ private fun HomeScreen(
                     media = media,
                     resolving = resolvingId == media.id,
                     isWatchLater = media.id in watchLaterIds,
-                    onToggleWatchLater = { onToggleWatchLater(media) }
+                    onToggleWatchLater = { onToggleWatchLater(media) },
+                    isFavorite = media.id in favoriteIds,
+                    onToggleFavorite = { onToggleFavorite(media) }
                 ) {
                     if (recommendationMode == SearchSourceMode.MOVIE && movieProvidersTitleId(media.id)) {
                         onMovie(media)
@@ -3738,6 +4201,8 @@ private fun HomeScreen(
                         resolving = resolvingId == media.id,
                         isWatchLater = media.id in watchLaterIds,
                         onToggleWatchLater = { onToggleWatchLater(media) },
+                        isFavorite = media.id in favoriteIds,
+                        onToggleFavorite = { onToggleFavorite(media) },
                         durationInThumbnail = true
                     ) { onPlay(media, trending) }
                 }
@@ -3797,6 +4262,8 @@ private fun CompactMediaRow(
     resolving: Boolean,
     isWatchLater: Boolean = false,
     onToggleWatchLater: (() -> Unit)? = null,
+    isFavorite: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null,
     durationInThumbnail: Boolean = false,
     onClick: () -> Unit
 ) {
@@ -3855,20 +4322,27 @@ private fun CompactMediaRow(
                 onToggleWatchLater?.let { action ->
                     IconButton(
                         onClick = action,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(MediaActionButtonSize)
                     ) {
                         Icon(
                             if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
                             if (isWatchLater) "Remove from Watch later" else "Watch later",
-                            Modifier.size(19.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     }
                 }
-                Icon(
-                    Icons.Outlined.PlayArrow,
-                    "Play",
-                    Modifier.size(22.dp)
-                )
+                onToggleFavorite?.let { action ->
+                    IconButton(
+                        onClick = action,
+                        modifier = Modifier.size(MediaActionButtonSize)
+                    ) {
+                        Icon(
+                            if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                            if (isFavorite) "Remove favorite" else "Add favorite",
+                            Modifier.size(MediaActionIconSize)
+                        )
+                    }
+                }
             }
         }
     }
@@ -4022,6 +4496,10 @@ private fun ProgressMediaRow(
     resolving: Boolean,
     isWatchLater: Boolean = false,
     onToggleWatchLater: (() -> Unit)? = null,
+    onAddToPlaylist: (() -> Unit)? = null,
+    isFavorite: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null,
+    showPlayAction: Boolean = true,
     onClick: () -> Unit,
     onPlay: () -> Unit
 ) {
@@ -4059,20 +4537,224 @@ private fun ProgressMediaRow(
                 onToggleWatchLater?.let { action ->
                     IconButton(
                         onClick = action,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(MediaActionButtonSize)
                     ) {
                         Icon(
                             if (isWatchLater) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
                             if (isWatchLater) "Remove from Watch later" else "Watch later",
-                            Modifier.size(18.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     }
                 }
-                IconButton(
-                    onClick = onPlay,
-                    modifier = Modifier.size(28.dp)
+                onAddToPlaylist?.let { action ->
+                    IconButton(
+                        onClick = action,
+                        modifier = Modifier.size(MediaActionButtonSize)
+                    ) {
+                        Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(MediaActionIconSize))
+                    }
+                }
+                onToggleFavorite?.let { action ->
+                    IconButton(
+                        onClick = action,
+                        modifier = Modifier.size(MediaActionButtonSize)
+                    ) {
+                        Icon(
+                            if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                            if (isFavorite) "Remove favorite" else "Add favorite",
+                            Modifier.size(MediaActionIconSize)
+                        )
+                    }
+                }
+                if (showPlayAction) {
+                    IconButton(
+                        onClick = onPlay,
+                        modifier = Modifier.size(MediaActionButtonSize)
+                    ) {
+                        Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(20.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalMediaScreen(
+    modifier: Modifier,
+    kind: LocalMediaKind,
+    resolvingId: String?,
+    onBack: () -> Unit,
+    onPlay: (MediaSummary, List<MediaSummary>) -> Unit
+) {
+    val context = LocalContext.current
+    val repository = remember(context) { LocalMediaRepository(context) }
+    val permission = remember(kind) {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            if (kind == LocalMediaKind.VIDEO) {
+                android.Manifest.permission.READ_MEDIA_VIDEO
+            } else {
+                android.Manifest.permission.READ_MEDIA_AUDIO
+            }
+        } else {
+            android.Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+    }
+    var permissionGranted by remember(kind) {
+        mutableStateOf(
+            context.checkSelfPermission(permission) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var permissionEpoch by remember { mutableIntStateOf(0) }
+    var items by remember(kind) { mutableStateOf<List<MediaSummary>>(emptyList()) }
+    var loading by remember(kind) { mutableStateOf(false) }
+    var error by remember(kind) { mutableStateOf<String?>(null) }
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        permissionGranted = granted
+        permissionEpoch += 1
+    }
+
+    LaunchedEffect(kind, permissionGranted, permissionEpoch) {
+        if (!permissionGranted) {
+            items = emptyList()
+            return@LaunchedEffect
+        }
+        loading = true
+        error = null
+        runCatching {
+            withContext(Dispatchers.IO) { repository.load(kind) }
+        }.onSuccess {
+            items = it
+        }.onFailure {
+            error = it.message ?: "Unable to read local media"
+        }
+        loading = false
+    }
+
+    BackHandler(onBack = onBack)
+    Column(modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+        Row(
+            Modifier.fillMaxWidth().height(52.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
+            }
+            Text(
+                if (kind == LocalMediaKind.VIDEO) "Local video" else "Local audio",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.weight(1f))
+            if (permissionGranted) {
+                IconButton(onClick = { permissionEpoch += 1 }) {
+                    Icon(Icons.Outlined.Refresh, "Refresh")
+                }
+            }
+        }
+
+        if (!permissionGranted) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            ) {
+                Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(20.dp))
+                    Text(
+                        if (kind == LocalMediaKind.VIDEO) {
+                            "Allow ezTube to read videos stored on this device."
+                        } else {
+                            "Allow ezTube to read audio stored on this device."
+                        }
+                    )
+                    Button(onClick = { launcher.launch(permission) }) {
+                        Text("Allow access")
+                    }
+                }
+            }
+            return@Column
+        }
+
+        when {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            error != null -> Text(
+                error.orEmpty(),
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 12.dp)
+            )
+            items.isEmpty() -> Text(
+                if (kind == LocalMediaKind.VIDEO) {
+                    "No local videos found."
+                } else {
+                    "No local audio found."
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp)
+            )
+            else -> LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                items(items, key = { it.id }) { media ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(enabled = resolvingId == null) {
+                                onPlay(media, items)
+                            }
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            modifier = Modifier.size(48.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    if (kind == LocalMediaKind.VIDEO) {
+                                        Icons.Outlined.VideoFile
+                                    } else {
+                                        Icons.Outlined.AudioFile
+                                    },
+                                    null,
+                                    Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                media.title,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                formatDuration(media.durationSeconds),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (resolvingId == media.id) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(Icons.Outlined.PlayArrow, "Play")
+                        }
+                    }
                 }
             }
         }
@@ -4094,6 +4776,7 @@ private fun LibraryScreen(
     movieProviders: MovieProviderRegistry,
     listState: androidx.compose.foundation.lazy.LazyListState,
     resolvingId: String?,
+    onPlayLocal: (MediaSummary, List<MediaSummary>, LocalMediaKind) -> Unit,
     onPlay: (HistoryEntry) -> Unit,
     onOpenMovie: (HistoryEntry) -> Unit,
     onOpenFavoriteMovie: (FavoriteEntry) -> Unit,
@@ -4105,9 +4788,14 @@ private fun LibraryScreen(
     onPlayAllWatchLater: () -> Unit,
     onRemoveWatchLater: (WatchLaterEntry) -> Unit,
     onToggleWatchLaterMedia: (MediaSummary) -> Unit,
+    onAddToPlaylist: (String, MediaSummary) -> Unit,
+    onCreatePlaylistWithMedia: (String, MediaSummary) -> Unit,
     onCreatePlaylist: (String) -> Unit,
     onRenamePlaylist: (String, String) -> Unit,
     onDeletePlaylist: (String) -> Unit,
+    onPinPlaylist: (String, Boolean) -> Unit,
+    onDuplicatePlaylist: (String) -> Unit,
+    onClearPlaylist: (String) -> Unit,
     onAddCurrentToPlaylist: (String) -> Unit,
     onRemovePlaylistItem: (String, String) -> Unit,
     onMovePlaylistItem: (String, Int, Int) -> Unit,
@@ -4117,13 +4805,15 @@ private fun LibraryScreen(
     onClear: () -> Unit
 ) {
     var showAllHistory by remember { mutableStateOf(false) }
+    var selectedLocalKind by remember { mutableStateOf<LocalMediaKind?>(null) }
     var showAllYouTubeFavorites by remember { mutableStateOf(false) }
     var showAllMovieFavorites by remember { mutableStateOf(false) }
     var showAllWatchLater by remember { mutableStateOf(false) }
-    var expandedPlaylistId by remember { mutableStateOf<String?>(null) }
+    var selectedPlaylistId by remember { mutableStateOf<String?>(null) }
     var showCreatePlaylist by remember { mutableStateOf(false) }
     var renamePlaylist by remember { mutableStateOf<PersonalPlaylist?>(null) }
     var playlistNameDraft by remember { mutableStateOf("") }
+    var playlistTarget by remember { mutableStateOf<MediaSummary?>(null) }
     val youtubeFavorites = remember(favorites) {
         favorites.filterNot { isMovieLibraryItem(it.mediaId, it.channel) }
     }
@@ -4137,12 +4827,136 @@ private fun LibraryScreen(
     }
     val historyByMediaId = remember(recent) { recent.associateBy { it.mediaId } }
 
+    val selectedPlaylist = selectedPlaylistId?.let { id ->
+        personalPlaylists.firstOrNull { it.id == id }
+    }
+    if (selectedPlaylist != null) {
+        BackHandler { selectedPlaylistId = null }
+        PersonalPlaylistDetailScreen(
+            modifier = modifier,
+            playlist = selectedPlaylist,
+            nowPlaying = nowPlaying,
+            resolvingId = resolvingId,
+            onBack = { selectedPlaylistId = null },
+            onPlayAll = { onPlayPlaylist(selectedPlaylist) },
+            onShuffle = {
+                if (selectedPlaylist.items.isNotEmpty()) {
+                    val shuffled = selectedPlaylist.items.shuffled()
+                    onPlayPlaylistItem(shuffled.first(), shuffled)
+                }
+            },
+            onAddCurrent = { onAddCurrentToPlaylist(selectedPlaylist.id) },
+            onRename = {
+                playlistNameDraft = selectedPlaylist.name
+                renamePlaylist = selectedPlaylist
+            },
+            onPin = { onPinPlaylist(selectedPlaylist.id, !selectedPlaylist.pinned) },
+            onDuplicate = { onDuplicatePlaylist(selectedPlaylist.id) },
+            onClear = { onClearPlaylist(selectedPlaylist.id) },
+            onDelete = {
+                onDeletePlaylist(selectedPlaylist.id)
+                selectedPlaylistId = null
+            },
+            onPlayItem = { media, items -> onPlayPlaylistItem(media, items) },
+            onRemoveItem = { mediaId -> onRemovePlaylistItem(selectedPlaylist.id, mediaId) },
+            onMoveItem = { from, to -> onMovePlaylistItem(selectedPlaylist.id, from, to) }
+        )
+
+        renamePlaylist?.let { playlist ->
+            AlertDialog(
+                onDismissRequest = { renamePlaylist = null },
+                title = { Text("Rename playlist") },
+                text = {
+                    OutlinedTextField(
+                        value = playlistNameDraft,
+                        onValueChange = { playlistNameDraft = it },
+                        singleLine = true,
+                        label = { Text("Name") }
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            onRenamePlaylist(playlist.id, playlistNameDraft)
+                            renamePlaylist = null
+                            playlistNameDraft = ""
+                        }
+                    ) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { renamePlaylist = null }) { Text("Cancel") }
+                }
+            )
+        }
+        return
+    }
+
+    selectedLocalKind?.let { kind ->
+        LocalMediaScreen(
+            modifier = modifier,
+            kind = kind,
+            resolvingId = resolvingId,
+            onBack = { selectedLocalKind = null },
+            onPlay = { media, items -> onPlayLocal(media, items, kind) }
+        )
+        return
+    }
+
     LazyColumn(
         modifier = modifier.padding(horizontal = 14.dp),
         state = listState,
         contentPadding = PaddingValues(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        item(key = "local-media") {
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            ) {
+                Column(
+                    Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.FolderOpen, null, Modifier.size(20.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(
+                            "Local media",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Text(
+                        "Play audio and video stored on this device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = { selectedLocalKind = LocalMediaKind.VIDEO },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Outlined.VideoLibrary, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("Video")
+                        }
+                        FilledTonalButton(
+                            onClick = { selectedLocalKind = LocalMediaKind.AUDIO },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Outlined.AudioFile, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("Audio")
+                        }
+                    }
+                }
+            }
+        }
+
         stickyHeader {
             Surface(tonalElevation = 0.dp) {
                 Row(
@@ -4200,7 +5014,7 @@ private fun LibraryScreen(
                             contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
-                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(MediaActionIconSize))
                             Spacer(Modifier.width(3.dp))
                             Text("All")
                         }
@@ -4244,19 +5058,19 @@ private fun LibraryScreen(
                         ) {
                             IconButton(
                                 onClick = { onRemoveFavorite(entry) },
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
                                 Icon(
                                     Icons.Outlined.Favorite,
                                     "Remove favorite",
-                                    Modifier.size(17.dp)
+                                    Modifier.size(MediaActionIconSize)
                                 )
                             }
                             IconButton(
-                                onClick = { onPlayFavorite(entry) },
-                                modifier = Modifier.size(26.dp)
+                                onClick = { playlistTarget = entry.toMediaSummary() },
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
-                                Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
+                                Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(MediaActionIconSize))
                             }
                         }
                     }
@@ -4295,7 +5109,7 @@ private fun LibraryScreen(
                             contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
-                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(MediaActionIconSize))
                             Spacer(Modifier.width(3.dp))
                             Text("All")
                         }
@@ -4339,22 +5153,22 @@ private fun LibraryScreen(
                         ) {
                             IconButton(
                                 onClick = { onRemoveFavorite(entry) },
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
                                 Icon(
                                     Icons.Outlined.Favorite,
                                     "Remove favorite",
-                                    Modifier.size(17.dp)
+                                    Modifier.size(MediaActionIconSize)
                                 )
                             }
                             IconButton(
-                                onClick = { onPlayFavorite(entry) },
-                                modifier = Modifier.size(26.dp)
+                                onClick = { playlistTarget = entry.toMediaSummary() },
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
                                 Icon(
-                                    Icons.Outlined.PlayArrow,
-                                    "Play movie",
-                                    Modifier.size(18.dp)
+                                    Icons.Outlined.PlaylistAdd,
+                                    "Add to playlist",
+                                    Modifier.size(MediaActionIconSize)
                                 )
                             }
                         }
@@ -4471,19 +5285,19 @@ private fun LibraryScreen(
                         ) {
                             IconButton(
                                 onClick = { onRemoveWatchLater(entry) },
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
                                 Icon(
                                     Icons.Outlined.Bookmark,
                                     "Remove from Watch later",
-                                    Modifier.size(17.dp)
+                                    Modifier.size(MediaActionIconSize)
                                 )
                             }
                             IconButton(
-                                onClick = { onPlayWatchLater(entry) },
-                                modifier = Modifier.size(26.dp)
+                                onClick = { playlistTarget = entry.toMediaSummary() },
+                                modifier = Modifier.size(MediaActionButtonSize)
                             ) {
-                                Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
+                                Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(MediaActionIconSize))
                             }
                         }
                     }
@@ -4504,7 +5318,8 @@ private fun LibraryScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "Local playlists · no login required",
+                        if (personalPlaylists.isEmpty()) "Local playlists · no login required"
+                        else personalPlaylists.size.toString() + " playlists · local",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4517,7 +5332,7 @@ private fun LibraryScreen(
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                     modifier = Modifier.height(34.dp)
                 ) {
-                    Icon(Icons.Outlined.Add, null, Modifier.size(16.dp))
+                    Icon(Icons.Outlined.Add, null, Modifier.size(MediaActionIconSize))
                     Spacer(Modifier.width(4.dp))
                     Text("New")
                 }
@@ -4526,148 +5341,134 @@ private fun LibraryScreen(
 
         if (personalPlaylists.isEmpty()) {
             item(key = "personal-playlists-empty") {
-                Text(
-                    "Create a playlist, then add the current item from Library.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.PlaylistPlay,
+                            null,
+                            Modifier.size(26.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text("Build your own queue", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Create a playlist, then add the current item. Playlist V2 keeps custom order and works offline.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         } else {
-            personalPlaylists.forEach { playlist ->
-                item(key = "personal-playlist-" + playlist.id) {
-                    Column(
-                        Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-                            .padding(8.dp)
+            items(
+                personalPlaylists,
+                key = { "personal-playlist-" + it.id }
+            ) { playlist ->
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp)
+                        .clickable { selectedPlaylistId = playlist.id },
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f)
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
+                        Box(
+                            Modifier.size(56.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
                         ) {
-                            IconButton(
-                                onClick = {
-                                    expandedPlaylistId =
-                                        if (expandedPlaylistId == playlist.id) null else playlist.id
-                                },
-                                modifier = Modifier.size(34.dp)
-                            ) {
+                            val cover = playlist.items.firstOrNull()?.thumbnailUrl
+                            if (!cover.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = cover,
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
                                 Icon(
-                                    if (expandedPlaylistId == playlist.id) Icons.Outlined.ExpandLess
-                                    else Icons.Outlined.ExpandMore,
-                                    "Expand playlist"
+                                    Icons.AutoMirrored.Outlined.PlaylistPlay,
+                                    null,
+                                    Modifier.align(Alignment.Center).size(28.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Column(
-                                Modifier.weight(1f).clickable {
-                                    expandedPlaylistId =
-                                        if (expandedPlaylistId == playlist.id) null else playlist.id
+                            if (playlist.pinned) {
+                                Surface(
+                                    modifier = Modifier.align(Alignment.TopEnd).padding(3.dp),
+                                    shape = RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f)
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.PushPin,
+                                        "Pinned",
+                                        Modifier.padding(3.dp).size(12.dp)
+                                    )
                                 }
-                            ) {
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                playlist.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                playlist.items.size.toString() + " items" +
+                                    if (playlist.items.isNotEmpty()) {
+                                        " · " + formatPlaylistDuration(playlist.items)
+                                    } else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                            playlist.items.firstOrNull()?.let { first ->
                                 Text(
-                                    playlist.name,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
+                                    playlist.items.getOrNull(1)?.let { second ->
+                                        first.title + " · " + second.title
+                                    } ?: first.title,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Text(
-                                    playlist.items.size.toString() + " items",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = { onAddCurrentToPlaylist(playlist.id) },
-                                enabled = nowPlaying != null,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(Icons.Outlined.PlaylistAdd, "Add current")
-                            }
-                            IconButton(
-                                onClick = { onPlayPlaylist(playlist) },
-                                enabled = playlist.items.isNotEmpty() && resolvingId == null,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(Icons.Outlined.PlayArrow, "Play all")
-                            }
-                            IconButton(
-                                onClick = {
-                                    playlistNameDraft = playlist.name
-                                    renamePlaylist = playlist
-                                },
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(Icons.Outlined.Edit, "Rename")
-                            }
-                            IconButton(
-                                onClick = { onDeletePlaylist(playlist.id) },
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(Icons.Outlined.DeleteOutline, "Delete playlist")
                             }
                         }
-
-                        if (expandedPlaylistId == playlist.id) {
-                            playlist.items.forEachIndexed { index, media ->
-                                Row(
-                                    Modifier.fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable(enabled = resolvingId == null) {
-                                            onPlayPlaylistItem(media, playlist.items)
-                                        }
-                                        .padding(horizontal = 6.dp, vertical = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    AsyncImage(
-                                        model = media.thumbnailUrl,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(42.dp)
-                                            .clip(RoundedCornerShape(7.dp))
-                                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        TouchMarqueeTitle(text = media.title)
-                                        Text(
-                                            media.channel,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            if (index > 0) {
-                                                onMovePlaylistItem(playlist.id, index, index - 1)
-                                            }
-                                        },
-                                        enabled = index > 0,
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(Icons.Outlined.KeyboardArrowUp, "Move up", Modifier.size(18.dp))
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            if (index < playlist.items.lastIndex) {
-                                                onMovePlaylistItem(playlist.id, index, index + 1)
-                                            }
-                                        },
-                                        enabled = index < playlist.items.lastIndex,
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(Icons.Outlined.KeyboardArrowDown, "Move down", Modifier.size(18.dp))
-                                    }
-                                    IconButton(
-                                        onClick = { onRemovePlaylistItem(playlist.id, media.id) },
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(Icons.Outlined.Close, "Remove", Modifier.size(17.dp))
-                                    }
-                                }
-                            }
+                        IconButton(
+                            onClick = { onAddCurrentToPlaylist(playlist.id) },
+                            enabled = nowPlaying != null,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.PlaylistAdd,
+                                "Add current",
+                                Modifier.size(19.dp)
+                            )
                         }
+                        IconButton(
+                            onClick = { onPlayPlaylist(playlist) },
+                            enabled = playlist.items.isNotEmpty() && resolvingId == null,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, "Play all", Modifier.size(20.dp))
+                        }
+                        Icon(
+                            Icons.Outlined.KeyboardArrowRight,
+                            "Open playlist",
+                            Modifier.size(22.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -4712,6 +5513,8 @@ private fun LibraryScreen(
                     onToggleWatchLater = {
                         onToggleWatchLaterMedia(entry.toMediaSummary())
                     },
+                    onAddToPlaylist = { playlistTarget = entry.toMediaSummary() },
+                    showPlayAction = false,
                     onClick = {
                         if (isMovieLibraryItem(entry.mediaId, entry.channel)) {
                             onOpenMovie(entry)
@@ -4786,16 +5589,17 @@ private fun LibraryScreen(
                     ) {
                         IconButton(
                             onClick = { onDelete(entry) },
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier.size(MediaActionButtonSize)
                         ) {
-                            Icon(Icons.Outlined.Close, "Remove from history", Modifier.size(16.dp))
+                            Icon(Icons.Outlined.Close, "Remove from history", Modifier.size(MediaActionIconSize))
                         }
                         IconButton(
-                            onClick = { onPlay(entry) },
-                            modifier = Modifier.size(26.dp)
+                            onClick = { playlistTarget = entry.toMediaSummary() },
+                            modifier = Modifier.size(MediaActionButtonSize)
                         ) {
-                            Icon(Icons.Outlined.PlayArrow, "Continue", Modifier.size(18.dp))
+                            Icon(Icons.Outlined.PlaylistAdd, "Add to playlist", Modifier.size(MediaActionIconSize))
                         }
+
                     }
                 }
             }
@@ -4811,6 +5615,22 @@ private fun LibraryScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
         }
+    }
+
+    playlistTarget?.let { target ->
+        AddToPlaylistDialog(
+            media = target,
+            playlists = personalPlaylists,
+            onDismiss = { playlistTarget = null },
+            onSelect = { playlistId ->
+                onAddToPlaylist(playlistId, target)
+                playlistTarget = null
+            },
+            onCreate = { name ->
+                onCreatePlaylistWithMedia(name, target)
+                playlistTarget = null
+            }
+        )
     }
 
     if (showCreatePlaylist) {
@@ -4863,6 +5683,453 @@ private fun LibraryScreen(
             },
             dismissButton = {
                 TextButton(onClick = { renamePlaylist = null }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+private fun formatPlaylistDuration(items: List<MediaSummary>): String {
+    val seconds = items.map { it.durationSeconds }.filter { it > 0L }.sum()
+    if (seconds <= 0L) return "duration unknown"
+    val hours = seconds / 3600L
+    val minutes = (seconds % 3600L) / 60L
+    return if (hours > 0L) "${hours}h ${minutes}m" else "${minutes}m"
+}
+
+@Composable
+private fun PersonalPlaylistDetailScreen(
+    modifier: Modifier,
+    playlist: PersonalPlaylist,
+    nowPlaying: MediaSummary?,
+    resolvingId: String?,
+    onBack: () -> Unit,
+    onPlayAll: () -> Unit,
+    onShuffle: () -> Unit,
+    onAddCurrent: () -> Unit,
+    onRename: () -> Unit,
+    onPin: () -> Unit,
+    onDuplicate: () -> Unit,
+    onClear: () -> Unit,
+    onDelete: () -> Unit,
+    onPlayItem: (MediaSummary, List<MediaSummary>) -> Unit,
+    onRemoveItem: (String) -> Unit,
+    onMoveItem: (Int, Int) -> Unit
+) {
+    var query by remember(playlist.id) { mutableStateOf("") }
+    var sortMode by remember(playlist.id) { mutableStateOf("Custom") }
+    var showMenu by remember(playlist.id) { mutableStateOf(false) }
+    var confirmClear by remember(playlist.id) { mutableStateOf(false) }
+    var confirmDelete by remember(playlist.id) { mutableStateOf(false) }
+
+    val displayedItems = remember(playlist.items, query, sortMode) {
+        val filtered = if (query.isBlank()) {
+            playlist.items
+        } else {
+            val needle = query.trim().lowercase()
+            playlist.items.filter {
+                it.title.lowercase().contains(needle) ||
+                    it.channel.lowercase().contains(needle)
+            }
+        }
+        when (sortMode) {
+            "A-Z" -> filtered.sortedBy { it.title.lowercase() }
+            "Z-A" -> filtered.sortedByDescending { it.title.lowercase() }
+            else -> filtered
+        }
+    }
+    val canReorder = query.isBlank() && sortMode == "Custom"
+    val listState = rememberLazyListState()
+    val currentDisplayedIndex = displayedItems.indexOfFirst { it.id == nowPlaying?.id }
+
+    LaunchedEffect(nowPlaying?.id, playlist.id, sortMode, query) {
+        if (currentDisplayedIndex >= 0 && query.isBlank()) {
+            runCatching {
+                listState.animateScrollToItem(currentDisplayedIndex)
+            }
+        }
+    }
+
+    Column(modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    playlist.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    playlist.items.size.toString() + " items · " + formatPlaylistDuration(playlist.items),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (playlist.pinned) {
+                Icon(
+                    Icons.Outlined.PushPin,
+                    "Pinned",
+                    Modifier.size(17.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(2.dp))
+            }
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(Icons.Outlined.MoreVert, "Playlist menu")
+                }
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (playlist.pinned) "Unpin" else "Pin") },
+                        leadingIcon = { Icon(Icons.Outlined.PushPin, null) },
+                        onClick = { showMenu = false; onPin() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Rename") },
+                        leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                        onClick = { showMenu = false; onRename() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Duplicate") },
+                        leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
+                        onClick = { showMenu = false; onDuplicate() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Clear items") },
+                        leadingIcon = { Icon(Icons.Outlined.DeleteSweep, null) },
+                        enabled = playlist.items.isNotEmpty(),
+                        onClick = { showMenu = false; confirmClear = true }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete playlist") },
+                        leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null) },
+                        onClick = { showMenu = false; confirmDelete = true }
+                    )
+                }
+            }
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f)
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(74.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    val cover = playlist.items.firstOrNull()?.thumbnailUrl
+                    if (!cover.isNullOrBlank()) {
+                        AsyncImage(
+                            model = cover,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.PlaylistPlay,
+                            null,
+                            Modifier.align(Alignment.Center).size(34.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        playlist.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "Local playlist · custom order",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        Modifier.padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = onPlayAll,
+                            enabled = playlist.items.isNotEmpty() && resolvingId == null,
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(MediaActionIconSize))
+                            Spacer(Modifier.width(3.dp))
+                            Text("All")
+                        }
+                        FilledTonalButton(
+                            onClick = onShuffle,
+                            enabled = playlist.items.size > 1 && resolvingId == null,
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(Icons.Outlined.Shuffle, null, Modifier.size(MediaActionIconSize))
+                            Spacer(Modifier.width(3.dp))
+                            Text("Shuffle")
+                        }
+                        IconButton(
+                            onClick = onAddCurrent,
+                            enabled = nowPlaying != null,
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlaylistAdd, "Add current", Modifier.size(20.dp))
+                        }
+                    }
+                }
+            }
+        }
+
+        if (playlist.items.size >= 4) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(19.dp)) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Outlined.Close, "Clear search")
+                        }
+                    }
+                },
+                placeholder = { Text("Search in playlist") },
+                shape = RoundedCornerShape(14.dp)
+            )
+        }
+
+        Row(
+            Modifier.fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf("Custom", "A-Z", "Z-A").forEach { option ->
+                FilterChip(
+                    selected = sortMode == option,
+                    onClick = { sortMode = option },
+                    label = { Text(option) },
+                    modifier = Modifier.height(32.dp)
+                )
+            }
+            if (!canReorder && playlist.items.size > 1) {
+                Text(
+                    "Reorder in Custom view",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.CenterVertically)
+                )
+            }
+        }
+
+        if (playlist.items.isEmpty()) {
+            Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.PlaylistPlay,
+                        null,
+                        Modifier.size(38.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("Playlist is empty", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Play something, then use Add current.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else if (displayedItems.isEmpty()) {
+            Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    "No items match “$query”.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                state = listState,
+                contentPadding = PaddingValues(top = 4.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                items(displayedItems, key = { "local-pl-" + it.id }) { media ->
+                    val originalIndex = playlist.items.indexOfFirst { it.id == media.id }
+                    val isCurrent = nowPlaying?.id == media.id
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isCurrent) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        }
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clickable(enabled = resolvingId == null) {
+                                    onPlayItem(media, displayedItems)
+                                }
+                                .padding(horizontal = 5.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box {
+                                AsyncImage(
+                                    model = media.thumbnailUrl,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                    contentScale = ContentScale.Crop
+                                )
+                                if (isCurrent) {
+                                    Surface(
+                                        modifier = Modifier.align(Alignment.BottomEnd).padding(2.dp),
+                                        shape = RoundedCornerShape(50),
+                                        color = MaterialTheme.colorScheme.primaryContainer
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.GraphicEq,
+                                            "Playing",
+                                            Modifier.padding(2.dp).size(12.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.width(9.dp))
+                            Column(Modifier.weight(1f)) {
+                                TouchMarqueeTitle(
+                                    text = media.title,
+                                    fontWeight = if (isCurrent) FontWeight.SemiBold else null
+                                )
+                                Text(
+                                    media.channel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (media.durationSeconds > 0L) {
+                                    Text(
+                                        formatDuration(media.durationSeconds),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (resolvingId == media.id) {
+                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                if (canReorder) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy((-3).dp)
+                                    ) {
+                                        IconButton(
+                                            onClick = {
+                                                if (originalIndex > 0) {
+                                                    onMoveItem(originalIndex, originalIndex - 1)
+                                                }
+                                            },
+                                            enabled = originalIndex > 0,
+                                            modifier = Modifier.size(25.dp)
+                                        ) {
+                                            Icon(Icons.Outlined.KeyboardArrowUp, "Move up", Modifier.size(17.dp))
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                if (originalIndex in 0 until playlist.items.lastIndex) {
+                                                    onMoveItem(originalIndex, originalIndex + 1)
+                                                }
+                                            },
+                                            enabled = originalIndex in 0 until playlist.items.lastIndex,
+                                            modifier = Modifier.size(25.dp)
+                                        ) {
+                                            Icon(Icons.Outlined.KeyboardArrowDown, "Move down", Modifier.size(17.dp))
+                                        }
+                                    }
+                                }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy((-3).dp)
+                                ) {
+                                    IconButton(
+                                        onClick = { onRemoveItem(media.id) },
+                                        modifier = Modifier.size(25.dp)
+                                    ) {
+                                        Icon(Icons.Outlined.Close, "Remove", Modifier.size(MediaActionIconSize))
+                                    }
+                                    IconButton(
+                                        onClick = { onPlayItem(media, displayedItems) },
+                                        modifier = Modifier.size(25.dp)
+                                    ) {
+                                        Icon(Icons.Outlined.PlayArrow, "Play", Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Clear playlist?") },
+            text = { Text("Remove all items from “${playlist.name}”? The playlist itself stays.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmClear = false
+                        onClear()
+                    }
+                ) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete playlist?") },
+            text = { Text("Delete “${playlist.name}” and its local item list?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        onDelete()
+                    }
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
             }
         )
     }
@@ -5125,6 +6392,7 @@ private data class FullPlayerState(
     val hasNext: Boolean,
     val isFavorite: Boolean,
     val isWatchLater: Boolean,
+    val personalPlaylists: List<PersonalPlaylist>,
     val networkType: NetworkType
 )
 
@@ -5149,6 +6417,8 @@ private class FullPlayerActions(
     val onChannel: () -> Unit,
     val onFavorite: () -> Unit,
     val onWatchLater: () -> Unit,
+    val onAddToPlaylist: (String, MediaSummary) -> Unit,
+    val onCreatePlaylistWithMedia: (String, MediaSummary) -> Unit,
     val onToggle: () -> Unit,
     val onClose: () -> Unit
 )
@@ -5186,6 +6456,19 @@ private fun FullPlayer(
     val hasNext = state.hasNext
     val isFavorite = state.isFavorite
     val isWatchLater = state.isWatchLater
+    val personalPlaylists = state.personalPlaylists
+    val containingPlaylists = remember(personalPlaylists, media.id) {
+        personalPlaylists.filter { playlist ->
+            playlist.items.any { it.id == media.id }
+        }
+    }
+    val playlistMembershipLabel = containingPlaylists.firstOrNull()?.let { first ->
+        if (containingPlaylists.size > 1) {
+            first.name + " +" + (containingPlaylists.size - 1)
+        } else {
+            first.name
+        }
+    }
     val networkType = state.networkType
     val movieEpisodePosition =
         if (isMovie && queue.size > 1 && queueIndex in queue.indices) {
@@ -5222,6 +6505,8 @@ private fun FullPlayer(
     val onChannel = actions.onChannel
     val onFavorite = actions.onFavorite
     val onWatchLater = actions.onWatchLater
+    val onAddToPlaylist = actions.onAddToPlaylist
+    val onCreatePlaylistWithMedia = actions.onCreatePlaylistWithMedia
     val onToggle = actions.onToggle
     val onClose = actions.onClose
 
@@ -5229,6 +6514,7 @@ private fun FullPlayer(
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var showQueue by remember { mutableStateOf(false) }
+    var showAddToPlaylist by remember(media.id) { mutableStateOf(false) }
     var draggedQueueId by remember { mutableStateOf<String?>(null) }
     var draggedQueueIndex by remember { mutableIntStateOf(-1) }
     var draggedQueueStartIndex by remember { mutableIntStateOf(-1) }
@@ -5241,6 +6527,7 @@ private fun FullPlayer(
     var fullscreenControlsEpoch by remember { mutableIntStateOf(0) }
     var fullscreenSeeking by remember { mutableStateOf(false) }
     var fullscreenSeekPreviewMs by remember { mutableLongStateOf(-1L) }
+    var fullscreenGestureOverlay by remember { mutableStateOf<String?>(null) }
     var fullscreenSpeedMenu by remember { mutableStateOf(false) }
     var fullscreenQualityMenu by remember { mutableStateOf(false) }
     var fullscreenSubtitleMenu by remember { mutableStateOf(false) }
@@ -5297,6 +6584,7 @@ private fun FullPlayer(
     }
 
     DisposableEffect(fullscreenRequested, activity) {
+        val originalBrightness = activity?.window?.attributes?.screenBrightness
         if (fullscreenRequested && activity != null) {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             WindowCompat.setDecorFitsSystemWindows(activity.window, false)
@@ -5308,6 +6596,11 @@ private fun FullPlayer(
         }
         onDispose {
             if (activity != null) {
+                if (fullscreenRequested && originalBrightness != null) {
+                    activity.window.attributes = activity.window.attributes.apply {
+                        screenBrightness = originalBrightness
+                    }
+                }
                 WindowInsetsControllerCompat(activity.window, activity.window.decorView)
                     .show(WindowInsetsCompat.Type.systemBars())
                 WindowCompat.setDecorFitsSystemWindows(activity.window, true)
@@ -5399,11 +6692,12 @@ private fun FullPlayer(
                 }
             }
 
-            // Fullscreen surface gestures:
-            // single tap toggles controls; double tap seeks 5s; hold seeks continuously.
+            // Fullscreen gestures:
+            // vertical-left = player brightness, vertical-right = media volume,
+            // horizontal = seek preview committed on release. Tap/double-tap/hold stay intact.
             Box(
                 Modifier.fillMaxSize()
-                    .pointerInput(fullscreenController, duration) {
+                    .pointerInput(fullscreenController, duration, activity) {
                         var lastTapAt = 0L
                         var lastTapForward = false
                         var singleTapJob: kotlinx.coroutines.Job? = null
@@ -5411,17 +6705,112 @@ private fun FullPlayer(
                         awaitEachGesture {
                             val down = awaitFirstDown()
                             val startedAt = down.uptimeMillis
-                            val forward = down.position.x >= size.width / 2f
+                            val startX = down.position.x
+                            val startY = down.position.y
+                            val forward = startX >= size.width / 2f
+                            val startPosition =
+                                fullscreenController.currentPosition.coerceAtLeast(0L)
+                            val audioManager = context.getSystemService(
+                                android.content.Context.AUDIO_SERVICE
+                            ) as android.media.AudioManager
+                            val maxVolume = audioManager
+                                .getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                                .coerceAtLeast(1)
+                            val startVolume = audioManager
+                                .getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+                            val window = activity?.window
+                            val rawBrightness = window?.attributes?.screenBrightness ?: -1f
+                            val systemBrightness = runCatching {
+                                android.provider.Settings.System.getInt(
+                                    context.contentResolver,
+                                    android.provider.Settings.System.SCREEN_BRIGHTNESS
+                                ) / 255f
+                            }.getOrDefault(0.5f)
+                            val startBrightness =
+                                if (rawBrightness >= 0f) rawBrightness else systemBrightness
+
+                            var gestureMode: String? = null
                             var longPress = false
                             var lastSeekAt = startedAt
                             var released = false
+                            var previewTarget = startPosition
 
                             while (!released) {
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull() ?: break
                                 val now = change.uptimeMillis
+                                val dx = change.position.x - startX
+                                val dy = change.position.y - startY
+                                val absDx = kotlin.math.abs(dx)
+                                val absDy = kotlin.math.abs(dy)
 
-                                if (!longPress &&
+                                if (
+                                    gestureMode == null &&
+                                    !longPress &&
+                                    (absDx > viewConfiguration.touchSlop ||
+                                        absDy > viewConfiguration.touchSlop)
+                                ) {
+                                    gestureMode = when {
+                                        absDx > absDy * 1.25f -> "seek"
+                                        absDy > absDx * 1.25f ->
+                                            if (startX < size.width / 2f) "brightness" else "volume"
+                                        else -> null
+                                    }
+                                    if (gestureMode != null) {
+                                        singleTapJob?.cancel()
+                                        fullscreenControlsVisible = false
+                                    }
+                                }
+
+                                when (gestureMode) {
+                                    "seek" -> {
+                                        val seekWindow = if (duration > 0L) {
+                                            (duration * 0.25f).toLong().coerceAtLeast(30_000L)
+                                        } else {
+                                            120_000L
+                                        }
+                                        val delta = ((dx / size.width.toFloat()) * seekWindow).toLong()
+                                        val end = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                        previewTarget =
+                                            (startPosition + delta).coerceIn(0L, end)
+                                        fullscreenSeekPreviewMs = previewTarget
+                                        fullscreenSeeking = true
+                                        val signed = previewTarget - startPosition
+                                        val prefix = if (signed >= 0L) "+" else "-"
+                                        fullscreenGestureOverlay =
+                                            prefix + formatTime(kotlin.math.abs(signed)) +
+                                                "  " + formatTime(previewTarget) +
+                                                " / " + formatTime(duration)
+                                    }
+                                    "brightness" -> {
+                                        val delta = -dy / size.height.toFloat()
+                                        val value = (startBrightness + delta).coerceIn(0.01f, 1f)
+                                        window?.let { playerWindow ->
+                                            playerWindow.attributes =
+                                                playerWindow.attributes.apply {
+                                                    screenBrightness = value
+                                                }
+                                        }
+                                        fullscreenGestureOverlay =
+                                            "☀  " + (value * 100f).toInt() + "%"
+                                    }
+                                    "volume" -> {
+                                        val deltaSteps =
+                                            ((-dy / size.height.toFloat()) * maxVolume).toInt()
+                                        val value = (startVolume + deltaSteps).coerceIn(0, maxVolume)
+                                        audioManager.setStreamVolume(
+                                            android.media.AudioManager.STREAM_MUSIC,
+                                            value,
+                                            0
+                                        )
+                                        fullscreenGestureOverlay =
+                                            "🔊  " + ((value * 100f) / maxVolume).toInt() + "%"
+                                    }
+                                }
+
+                                if (
+                                    gestureMode == null &&
+                                    !longPress &&
                                     now - startedAt >= viewConfiguration.longPressTimeoutMillis
                                 ) {
                                     longPress = true
@@ -5437,7 +6826,8 @@ private fun FullPlayer(
                                         .takeIf { it >= 0L }
                                         ?: fullscreenController.currentPosition.coerceAtLeast(0L)
                                     val target = if (forward) {
-                                        val endPosition = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                        val endPosition =
+                                            duration.takeIf { it > 0L } ?: Long.MAX_VALUE
                                         (current + 2_000L).coerceAtMost(endPosition)
                                     } else {
                                         (current - 2_000L).coerceAtLeast(0L)
@@ -5447,57 +6837,100 @@ private fun FullPlayer(
                                     lastSeekAt = now
                                 }
 
-                                released = change.changedToUpIgnoreConsumed()
+                                released = change.changedToUpIgnoreConsumed() || !change.pressed
                                 change.consume()
                             }
 
-                            if (longPress) {
-                                fullscreenSeeking = false
-                                fullscreenSeekPreviewMs = -1L
-                            } else {
-                                val releasedAt = android.os.SystemClock.uptimeMillis()
-                                val isDoubleTap =
-                                    lastTapAt > 0L &&
-                                    releasedAt - lastTapAt <= viewConfiguration.doubleTapTimeoutMillis &&
-                                    forward == lastTapForward
-
-                                if (isDoubleTap) {
-                                    singleTapJob?.cancel()
-                                    singleTapJob = null
-                                    lastTapAt = 0L
-
-                                    val current =
-                                        fullscreenController.currentPosition.coerceAtLeast(0L)
-                                    val target = if (forward) {
-                                        val endPosition = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
-                                        (current + 5_000L).coerceAtMost(endPosition)
-                                    } else {
-                                        (current - 5_000L).coerceAtLeast(0L)
-                                    }
-                                    fullscreenController.seekTo(target)
-                                    fullscreenSeekPreviewMs = target
-                                    fullscreenSeeking = true
-
+                            when {
+                                gestureMode == "seek" -> {
+                                    fullscreenController.seekTo(previewTarget)
                                     dragScope.launch {
                                         delay(650L)
                                         fullscreenSeeking = false
                                         fullscreenSeekPreviewMs = -1L
+                                        fullscreenGestureOverlay = null
                                     }
-                                } else {
-                                    lastTapAt = releasedAt
-                                    lastTapForward = forward
-                                    singleTapJob?.cancel()
-                                    singleTapJob = dragScope.launch {
-                                        delay(viewConfiguration.doubleTapTimeoutMillis.toLong())
-                                        fullscreenControlsVisible = !fullscreenControlsVisible
-                                        if (fullscreenControlsVisible) fullscreenControlsEpoch += 1
+                                }
+                                gestureMode == "brightness" || gestureMode == "volume" -> {
+                                    dragScope.launch {
+                                        delay(650L)
+                                        fullscreenGestureOverlay = null
+                                    }
+                                }
+                                longPress -> {
+                                    fullscreenSeeking = false
+                                    fullscreenSeekPreviewMs = -1L
+                                }
+                                else -> {
+                                    val releasedAt = android.os.SystemClock.uptimeMillis()
+                                    val isDoubleTap =
+                                        lastTapAt > 0L &&
+                                            releasedAt - lastTapAt <=
+                                            viewConfiguration.doubleTapTimeoutMillis &&
+                                            forward == lastTapForward
+
+                                    if (isDoubleTap) {
+                                        singleTapJob?.cancel()
+                                        singleTapJob = null
                                         lastTapAt = 0L
+
+                                        val current =
+                                            fullscreenController.currentPosition.coerceAtLeast(0L)
+                                        val target = if (forward) {
+                                            val endPosition =
+                                                duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                            (current + 5_000L).coerceAtMost(endPosition)
+                                        } else {
+                                            (current - 5_000L).coerceAtLeast(0L)
+                                        }
+                                        fullscreenController.seekTo(target)
+                                        fullscreenSeekPreviewMs = target
+                                        fullscreenSeeking = true
+                                        fullscreenGestureOverlay =
+                                            (if (forward) "+00:05" else "-00:05") +
+                                                "  " + formatTime(target)
+
+                                        dragScope.launch {
+                                            delay(650L)
+                                            fullscreenSeeking = false
+                                            fullscreenSeekPreviewMs = -1L
+                                            fullscreenGestureOverlay = null
+                                        }
+                                    } else {
+                                        lastTapAt = releasedAt
+                                        lastTapForward = forward
+                                        singleTapJob?.cancel()
+                                        singleTapJob = dragScope.launch {
+                                            delay(viewConfiguration.doubleTapTimeoutMillis.toLong())
+                                            fullscreenControlsVisible =
+                                                !fullscreenControlsVisible
+                                            if (fullscreenControlsVisible) {
+                                                fullscreenControlsEpoch += 1
+                                            }
+                                            lastTapAt = 0L
+                                        }
                                     }
                                 }
                             }
                         }
                     }
             )
+
+            fullscreenGestureOverlay?.let { message ->
+                Surface(
+                    modifier = Modifier.align(Alignment.Center),
+                    shape = RoundedCornerShape(14.dp),
+                    color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.68f)
+                ) {
+                    Text(
+                        message,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 11.dp),
+                        color = androidx.compose.ui.graphics.Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
 
             if (fullscreenControlsVisible) {
                 if (movieEpisodePosition != null) {
@@ -5945,6 +7378,11 @@ private fun FullPlayer(
         return
     }
 
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground
+    ) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(
             Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 10.dp),
@@ -6071,6 +7509,33 @@ private fun FullPlayer(
                         if (isFavorite) "Remove favorite" else "Add favorite"
                     )
                 }
+                Box(
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    IconButton(
+                        onClick = { showAddToPlaylist = true },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Icon(Icons.Outlined.PlaylistAdd, "Add to playlist")
+                    }
+                    playlistMembershipLabel?.let { label ->
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.68f
+                            ),
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .offset(y = 7.dp)
+                                .widthIn(max = 54.dp)
+                        )
+                    }
+                }
             }
 
             Spacer(Modifier.height(6.dp))
@@ -6087,7 +7552,7 @@ private fun FullPlayer(
                         onClick = { onSubtitle(null) },
                         label = { Text("CC Off") },
                         leadingIcon = {
-                            Icon(Icons.Outlined.ClosedCaptionOff, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.ClosedCaptionOff, null, Modifier.size(MediaActionIconSize))
                         }
                     )
                     if (subtitleOptions.isEmpty()) {
@@ -6097,7 +7562,7 @@ private fun FullPlayer(
                             enabled = false,
                             label = { Text("No subtitles") },
                             leadingIcon = {
-                                Icon(Icons.Outlined.SubtitlesOff, null, Modifier.size(16.dp))
+                                Icon(Icons.Outlined.SubtitlesOff, null, Modifier.size(MediaActionIconSize))
                             }
                         )
                     } else {
@@ -6108,7 +7573,7 @@ private fun FullPlayer(
                                 onClick = { onSubtitle(option) },
                                 label = { Text(option.label, maxLines = 1) },
                                 leadingIcon = {
-                                    Icon(Icons.Outlined.ClosedCaption, null, Modifier.size(16.dp))
+                                    Icon(Icons.Outlined.ClosedCaption, null, Modifier.size(MediaActionIconSize))
                                 }
                             )
                         }
@@ -6121,7 +7586,7 @@ private fun FullPlayer(
                         selected = !videoMode,
                         onClick = { onVideoMode(false) },
                         label = { Text("AUDIO") },
-                        leadingIcon = { Icon(Icons.Outlined.Headphones, null, Modifier.size(16.dp)) }
+                        leadingIcon = { Icon(Icons.Outlined.Headphones, null, Modifier.size(MediaActionIconSize)) }
                     )
                     FilterChip(
                         modifier = Modifier.height(32.dp),
@@ -6141,7 +7606,7 @@ private fun FullPlayer(
                             )
                         },
                         leadingIcon = {
-                            Icon(Icons.Outlined.OndemandVideo, null, Modifier.size(16.dp))
+                            Icon(Icons.Outlined.OndemandVideo, null, Modifier.size(MediaActionIconSize))
                         }
                     )
                 }
@@ -6295,7 +7760,7 @@ private fun FullPlayer(
                 FilterChip(
                     selected = autoplay,
                     onClick = { onAutoplay(!autoplay) },
-                    leadingIcon = { Icon(Icons.Outlined.SkipNext, null, Modifier.size(18.dp)) },
+                    leadingIcon = { Icon(Icons.Outlined.SkipNext, null, Modifier.size(MediaActionIconSize)) },
                     label = {
                         Text("Auto next", modifier = Modifier.fillMaxWidth(),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
@@ -6328,7 +7793,7 @@ private fun FullPlayer(
                             } else {
                                 "Random next"
                             },
-                            Modifier.size(18.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     },
                     label = {
@@ -6356,7 +7821,7 @@ private fun FullPlayer(
                         Icon(
                             if (repeatMode == RepeatMode.ONE) Icons.Outlined.RepeatOne else Icons.Outlined.Repeat,
                             null,
-                            Modifier.size(18.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     },
                     label = {
@@ -6424,7 +7889,7 @@ private fun FullPlayer(
                     onClick = { showQueue = !showQueue },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Outlined.PlaylistPlay, null, Modifier.size(18.dp))
+                    Icon(Icons.AutoMirrored.Outlined.PlaylistPlay, null, Modifier.size(MediaActionIconSize))
                     Spacer(Modifier.width(5.dp))
                     Text(if (showQueue) "Hide queue" else "Up next")
                 }
@@ -6437,7 +7902,7 @@ private fun FullPlayer(
                         Icon(
                             Icons.Outlined.Refresh,
                             "Refresh queue",
-                            Modifier.size(19.dp)
+                            Modifier.size(MediaActionIconSize)
                         )
                     }
                     TextButton(
@@ -6510,7 +7975,7 @@ private fun FullPlayer(
                                     )
                                 }
                                 if (current) {
-                                    Icon(Icons.Outlined.GraphicEq, "Playing", Modifier.size(19.dp),
+                                    Icon(Icons.Outlined.GraphicEq, "Playing", Modifier.size(MediaActionIconSize),
                                         tint = MaterialTheme.colorScheme.primary)
                                 } else {
                                     Icon(
@@ -6577,7 +8042,7 @@ private fun FullPlayer(
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     IconButton(onClick = { onQueueRemove(index) }, modifier = Modifier.size(30.dp)) {
-                                        Icon(Icons.Outlined.Close, "Remove from queue", Modifier.size(18.dp))
+                                        Icon(Icons.Outlined.Close, "Remove from queue", Modifier.size(MediaActionIconSize))
                                     }
                                 }
                             }
@@ -6719,6 +8184,23 @@ private fun FullPlayer(
                 }
             }
         }
+    }
+    }
+
+    if (showAddToPlaylist) {
+        AddToPlaylistDialog(
+            media = media,
+            playlists = personalPlaylists,
+            onDismiss = { showAddToPlaylist = false },
+            onSelect = { playlistId ->
+                onAddToPlaylist(playlistId, media)
+                showAddToPlaylist = false
+            },
+            onCreate = { name ->
+                onCreatePlaylistWithMedia(name, media)
+                showAddToPlaylist = false
+            }
+        )
     }
 }
 

@@ -10,7 +10,9 @@ data class PersonalPlaylist(
     val id: String,
     val name: String,
     val items: List<MediaSummary>,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val createdAt: Long = updatedAt,
+    val pinned: Boolean = false
 )
 
 class PersonalPlaylistStore(context: Context) {
@@ -46,16 +48,22 @@ class PersonalPlaylistStore(context: Context) {
                             )
                         }
                     }
+                    val updatedAt = obj.optLong("updatedAt", 0L)
                     add(
                         PersonalPlaylist(
                             id = id,
                             name = obj.optString("name").ifBlank { "Playlist" },
                             items = items,
-                            updatedAt = obj.optLong("updatedAt", 0L)
+                            updatedAt = updatedAt,
+                            createdAt = obj.optLong("createdAt", updatedAt),
+                            pinned = obj.optBoolean("pinned", false)
                         )
                     )
                 }
-            }.sortedByDescending { it.updatedAt }
+            }.sortedWith(
+                compareByDescending<PersonalPlaylist> { it.pinned }
+                    .thenByDescending { it.updatedAt }
+            )
         }.getOrDefault(emptyList())
     }
 
@@ -68,11 +76,13 @@ class PersonalPlaylistStore(context: Context) {
                 id = UUID.randomUUID().toString(),
                 name = normalized,
                 items = emptyList(),
-                updatedAt = now
+                updatedAt = now,
+                createdAt = now,
+                pinned = false
             )
         ) + load()
         save(updated)
-        return updated
+        return sort(updated)
     }
 
     @Synchronized
@@ -84,14 +94,14 @@ class PersonalPlaylistStore(context: Context) {
             if (it.id == id) it.copy(name = normalized, updatedAt = now) else it
         }
         save(updated)
-        return updated.sortedByDescending { it.updatedAt }
+        return sort(updated)
     }
 
     @Synchronized
     fun delete(id: String): List<PersonalPlaylist> {
         val updated = load().filterNot { it.id == id }
         save(updated)
-        return updated
+        return sort(updated)
     }
 
     @Synchronized
@@ -104,7 +114,7 @@ class PersonalPlaylistStore(context: Context) {
             }
         }
         save(updated)
-        return updated.sortedByDescending { it.updatedAt }
+        return sort(updated)
     }
 
     @Synchronized
@@ -119,7 +129,7 @@ class PersonalPlaylistStore(context: Context) {
             }
         }
         save(updated)
-        return updated.sortedByDescending { it.updatedAt }
+        return sort(updated)
     }
 
     @Synchronized
@@ -136,8 +146,81 @@ class PersonalPlaylistStore(context: Context) {
             }
         }
         save(updated)
-        return updated.sortedByDescending { it.updatedAt }
+        return sort(updated)
     }
+
+
+    @Synchronized
+    fun setPinned(id: String, pinned: Boolean): List<PersonalPlaylist> {
+        val now = System.currentTimeMillis()
+        val updated = load().map { playlist ->
+            if (playlist.id == id) {
+                playlist.copy(pinned = pinned, updatedAt = now)
+            } else {
+                playlist
+            }
+        }
+        save(updated)
+        return sort(updated)
+    }
+
+    @Synchronized
+    fun duplicate(id: String): List<PersonalPlaylist> {
+        val source = load().firstOrNull { it.id == id } ?: return load()
+        val now = System.currentTimeMillis()
+        val copy = source.copy(
+            id = UUID.randomUUID().toString(),
+            name = source.name + " copy",
+            updatedAt = now,
+            createdAt = now,
+            pinned = false
+        )
+        val updated = listOf(copy) + load()
+        save(updated)
+        return sort(updated)
+    }
+
+    @Synchronized
+    fun clearItems(id: String): List<PersonalPlaylist> {
+        val now = System.currentTimeMillis()
+        val updated = load().map { playlist ->
+            if (playlist.id == id) {
+                playlist.copy(items = emptyList(), updatedAt = now)
+            } else {
+                playlist
+            }
+        }
+        save(updated)
+        return sort(updated)
+    }
+
+    @Synchronized
+    fun addMany(id: String, media: List<MediaSummary>): List<PersonalPlaylist> {
+        if (media.isEmpty()) return load()
+        val now = System.currentTimeMillis()
+        val updated = load().map { playlist ->
+            if (playlist.id != id) playlist else {
+                val existing = playlist.items.associateBy { it.id }.toMutableMap()
+                val order = playlist.items.map { it.id }.toMutableList()
+                media.forEach { item ->
+                    if (item.id !in existing) order += item.id
+                    existing[item.id] = item
+                }
+                playlist.copy(
+                    items = order.mapNotNull(existing::get),
+                    updatedAt = now
+                )
+            }
+        }
+        save(updated)
+        return sort(updated)
+    }
+
+    private fun sort(playlists: List<PersonalPlaylist>): List<PersonalPlaylist> =
+        playlists.sortedWith(
+            compareByDescending<PersonalPlaylist> { it.pinned }
+                .thenByDescending { it.updatedAt }
+        )
 
     private fun save(playlists: List<PersonalPlaylist>) {
         val root = JSONArray()
@@ -160,6 +243,8 @@ class PersonalPlaylistStore(context: Context) {
                     .put("id", playlist.id)
                     .put("name", playlist.name)
                     .put("updatedAt", playlist.updatedAt)
+                    .put("createdAt", playlist.createdAt)
+                    .put("pinned", playlist.pinned)
                     .put("items", items)
             )
         }

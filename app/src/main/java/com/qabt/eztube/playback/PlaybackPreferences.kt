@@ -84,6 +84,43 @@ class PlaybackPreferences(context: Context) {
 
     fun loadDeveloperMode(): Boolean = prefs.getBoolean("developer_mode", false)
 
+    fun saveAppAccent(accent: String) {
+        val normalized = accent.uppercase().takeIf {
+            it in setOf("PURPLE", "BLUE", "TEAL", "GREEN", "ORANGE", "RED")
+        } ?: "PURPLE"
+        prefs.edit().putString("app_accent", normalized).apply()
+    }
+
+    fun loadAppAccent(): String =
+        prefs.getString("app_accent", "PURPLE")
+            ?.uppercase()
+            ?.takeIf { it in setOf("PURPLE", "BLUE", "TEAL", "GREEN", "ORANGE", "RED") }
+            ?: "PURPLE"
+
+    fun saveThemeMode(mode: String) {
+        val normalized = mode.uppercase().takeIf {
+            it in setOf("AUTO", "LIGHT", "DARK")
+        } ?: "AUTO"
+        prefs.edit().putString("theme_mode", normalized).apply()
+    }
+
+    fun loadThemeMode(): String =
+        prefs.getString("theme_mode", "AUTO")
+            ?.uppercase()
+            ?.takeIf { it in setOf("AUTO", "LIGHT", "DARK") }
+            ?: "AUTO"
+
+    fun saveAudioBalanceMode(mode: AudioBalanceMode) {
+        prefs.edit().putString("audio_balance_mode", mode.name).apply()
+    }
+
+    fun loadAudioBalanceMode(): AudioBalanceMode =
+        runCatching {
+            AudioBalanceMode.valueOf(
+                prefs.getString("audio_balance_mode", AudioBalanceMode.OFF.name).orEmpty()
+            )
+        }.getOrDefault(AudioBalanceMode.OFF)
+
     fun saveDeveloperUnlocked(unlocked: Boolean) {
         prefs.edit().putBoolean("developer_unlocked", unlocked).apply()
     }
