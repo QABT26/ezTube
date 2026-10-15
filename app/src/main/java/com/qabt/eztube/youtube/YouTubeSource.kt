@@ -14,6 +14,23 @@ data class MediaSummary(
     val thumbnailBadge: String? = null
 )
 
+data class CommentSummary(
+    val id: String,
+    val author: String,
+    val authorAvatarUrl: String?,
+    val text: String,
+    val uploadDateText: String?,
+    val likeCount: Int,
+    val pinned: Boolean,
+    val heartedByUploader: Boolean
+)
+
+data class CommentsPage(
+    val comments: List<CommentSummary>,
+    val totalCount: Int,
+    val disabled: Boolean
+)
+
 data class PlaylistSummary(
     val url: String,
     val title: String,
@@ -41,6 +58,9 @@ data class ChannelSummary(
 
 interface YouTubeSource {
     suspend fun search(query: String): List<MediaSummary>
+    suspend fun searchLive(query: String): List<MediaSummary>
+    suspend fun searchShorts(query: String): List<MediaSummary>
+    suspend fun comments(mediaId: String): CommentsPage
     suspend fun trending(topic: String = "Music", language: String = "Vietnamese"): List<MediaSummary>
     suspend fun audioStreams(mediaId: String): List<AudioStream>
     suspend fun videoStreams(mediaId: String): List<AudioStream>
