@@ -1,5 +1,7 @@
 package com.qabt.eztube.playback
 
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -62,11 +64,67 @@ class PlaybackService : MediaSessionService() {
     private val movieProviders by lazy { MovieProviderRegistry.default() }
     private lateinit var queueManager: PlaybackQueueManager
     private val audioBalanceController = AudioBalanceController()
+    private lateinit var audioManager: AudioManager
+    private lateinit var audioFocusRequest: AudioFocusRequest
+    private var resumeAfterTransientAudioFocusLoss = false
+    private var handlingAudioFocusChange = false
+
+    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        val activePlayer = player
+        when (focusChange) {
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                if (resumeAfterTransientAudioFocusLoss && activePlayer != null) {
+                    resumeAfterTransientAudioFocusLoss = false
+                    handlingAudioFocusChange = true
+                    activePlayer.play()
+                    handlingAudioFocusChange = false
+                }
+            }
+
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                if (
+                    activePlayer != null &&
+                    activePlayer.playWhenReady &&
+                    activePlayer.mediaItemCount > 0 &&
+                    activePlayer.playbackState != Player.STATE_ENDED
+                ) {
+                    resumeAfterTransientAudioFocusLoss = true
+                    handlingAudioFocusChange = true
+                    activePlayer.pause()
+                    handlingAudioFocusChange = false
+                }
+            }
+
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                resumeAfterTransientAudioFocusLoss = false
+                if (activePlayer?.playWhenReady == true) {
+                    handlingAudioFocusChange = true
+                    activePlayer.pause()
+                    handlingAudioFocusChange = false
+                }
+                if (::audioManager.isInitialized && ::audioFocusRequest.isInitialized) {
+                    audioManager.abandonAudioFocusRequest(audioFocusRequest)
+                }
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         preferences = PlaybackPreferences(this)
         networkUsageTracker = NetworkUsageTracker(this)
+        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setWillPauseWhenDucked(true)
+            .setOnAudioFocusChangeListener(audioFocusChangeListener)
+            .build()
         serviceScope.launch {
             while (true) {
                 networkUsageTracker.sample()
@@ -90,7 +148,9 @@ class PlaybackService : MediaSessionService() {
             .setSeekForwardIncrementMs(10_000)
             .build()
             .apply {
-                setAudioAttributes(audioAttributes, true)
+                // PlaybackService owns audio focus explicitly so transient interruptions such as
+                // phone calls can resume only when playback was active before the interruption.
+                setAudioAttributes(audioAttributes, false)
                 setHandleAudioBecomingNoisy(true)
                 addListener(object : Player.Listener {
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -121,6 +181,19 @@ class PlaybackService : MediaSessionService() {
                     }
 
                     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                        if (!handlingAudioFocusChange) {
+                            if (playWhenReady) {
+                                val focusResult = audioManager.requestAudioFocus(audioFocusRequest)
+                                if (focusResult != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                                    resumeAfterTransientAudioFocusLoss = false
+                                    handlingAudioFocusChange = true
+                                    pause()
+                                    handlingAudioFocusChange = false
+                                }
+                            } else if (!resumeAfterTransientAudioFocusLoss) {
+                                audioManager.abandonAudioFocusRequest(audioFocusRequest)
+                            }
+                        }
                         queueManager.checkpointSession()
                     }
 
@@ -371,6 +444,10 @@ class PlaybackService : MediaSessionService() {
         if (::queueManager.isInitialized) queueManager.checkpointSession()
         SystemTransportBridge.clear()
         audioBalanceController.release()
+        resumeAfterTransientAudioFocusLoss = false
+        if (::audioManager.isInitialized && ::audioFocusRequest.isInitialized) {
+            audioManager.abandonAudioFocusRequest(audioFocusRequest)
+        }
         serviceScope.cancel()
         session?.release()
         session = null
