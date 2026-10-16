@@ -6573,6 +6573,23 @@ private fun FullPlayer(
     var commentsLoading by remember(media.id) { mutableStateOf(false) }
     var commentsPage by remember(media.id) { mutableStateOf<CommentsPage?>(null) }
     var commentsError by remember(media.id) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(media.id, isYouTubeMedia) {
+        if (!isYouTubeMedia) return@LaunchedEffect
+        commentsLoading = true
+        commentsError = null
+        runCatching {
+            withContext(Dispatchers.IO) {
+                youtubeSource.comments(media.id)
+            }
+        }.onSuccess {
+            commentsPage = it
+        }.onFailure {
+            commentsError = it.message ?: "Unable to load comments"
+        }
+        commentsLoading = false
+    }
+
     var draggedQueueId by remember { mutableStateOf<String?>(null) }
     var draggedQueueIndex by remember { mutableIntStateOf(-1) }
     var draggedQueueStartIndex by remember { mutableIntStateOf(-1) }
