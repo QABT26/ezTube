@@ -163,8 +163,17 @@ $dualUserIds = @()
 foreach ($line in $userList) {
     if ($line -match 'UserInfo\{(\d+):DUAL_APP:') {
         $dualUserIds += $Matches[1]
+        continue
+    }
+
+    # Samsung commonly reserves user 95 for Dual Messenger / Dual App. Some
+    # firmware revisions do not expose the literal DUAL_APP label through ADB,
+    # so include user 95 defensively when it exists and is not the active user.
+    if ($line -match 'UserInfo\{95:' -and $currentUser -ne '95') {
+        $dualUserIds += '95'
     }
 }
+$dualUserIds = $dualUserIds | Select-Object -Unique
 
 foreach ($dualUserId in $dualUserIds) {
     $installed = & $Adb shell pm list packages --user $dualUserId $Package 2>&1
@@ -175,6 +184,15 @@ foreach ($dualUserId in $dualUserIds) {
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to remove ezTube from DUAL_APP user $dualUserId"
         }
+    }
+}
+
+# Final invariant: ezTube must not remain installed in any detected Samsung
+# Dual App profile after a debug deployment.
+foreach ($dualUserId in $dualUserIds) {
+    $remaining = & $Adb shell pm list packages --user $dualUserId $Package 2>&1
+    if (($remaining -join [Environment]::NewLine) -match [regex]::Escape("package:$Package")) {
+        throw "Samsung DUAL_APP cleanup invariant failed for user $dualUserId"
     }
 }
 
