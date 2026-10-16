@@ -187,7 +187,7 @@ class PlaybackService : MediaSessionService() {
                                 if (focusResult != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
                                     resumeAfterTransientAudioFocusLoss = false
                                     handlingAudioFocusChange = true
-                                    pause()
+                                    this@PlaybackService.player?.pause()
                                     handlingAudioFocusChange = false
                                 }
                             } else if (!resumeAfterTransientAudioFocusLoss) {
