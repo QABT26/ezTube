@@ -283,15 +283,16 @@ fun EzTubeApp(
     var selectedSubtitleLabel by remember { mutableStateOf<String?>(null) }
     var videoMode by remember { mutableStateOf(playbackPrefs.loadVideoMode()) }
     val playbackActivity = context as? Activity
-    DisposableEffect(videoMode, playbackActivity) {
+    DisposableEffect(videoMode, isPlaying, playbackActivity) {
         val window = playbackActivity?.window
-        if (videoMode) {
+        val keepScreenOn = videoMode && isPlaying
+        if (keepScreenOn) {
             window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
         onDispose {
-            if (videoMode) {
+            if (keepScreenOn) {
                 window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
         }
@@ -6579,6 +6580,8 @@ private fun FullPlayer(
     var holdSeekPreviewMs by remember { mutableLongStateOf(-1L) }
     var showDeveloperDiagnostics by remember { mutableStateOf(false) }
     var fullscreenRequested by remember { mutableStateOf(false) }
+    var inlineVideoControlsVisible by remember(media.id, videoMode) { mutableStateOf(true) }
+    var inlineVideoControlsEpoch by remember { mutableIntStateOf(0) }
     var fullscreenRendered by remember { mutableStateOf(false) }
     var fullscreenControlsVisible by remember { mutableStateOf(true) }
     var fullscreenControlsEpoch by remember { mutableIntStateOf(0) }
@@ -6669,6 +6672,13 @@ private fun FullPlayer(
 
     BackHandler(enabled = fullscreenRequested || fullscreenRendered) {
         fullscreenRequested = false
+    }
+
+    LaunchedEffect(inlineVideoControlsVisible, inlineVideoControlsEpoch, videoMode) {
+        if (videoMode && inlineVideoControlsVisible && !fullscreenRequested) {
+            delay(2_500L)
+            inlineVideoControlsVisible = false
+        }
     }
 
     LaunchedEffect(
@@ -7493,11 +7503,22 @@ private fun FullPlayer(
                         },
                         modifier = Modifier.fillMaxSize()
                     )
-                    FilledTonalIconButton(
-                        onClick = { fullscreenRequested = true },
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(38.dp)
-                    ) {
-                        Icon(Icons.Outlined.Fullscreen, "Fullscreen", Modifier.size(22.dp))
+                    Box(
+                        Modifier.fillMaxSize()
+                            .pointerInput(media.id, videoMode) {
+                                detectTapGestures {
+                                    inlineVideoControlsVisible = !inlineVideoControlsVisible
+                                    if (inlineVideoControlsVisible) inlineVideoControlsEpoch += 1
+                                }
+                            }
+                    )
+                    if (inlineVideoControlsVisible) {
+                        FilledTonalIconButton(
+                            onClick = { fullscreenRequested = true },
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(38.dp)
+                        ) {
+                            Icon(Icons.Outlined.Fullscreen, "Fullscreen", Modifier.size(22.dp))
+                        }
                     }
                 }
             } else {
