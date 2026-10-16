@@ -342,6 +342,46 @@ class NewPipeYouTubeSource : YouTubeSource {
         }
     }
 
+    private fun relativeDateLabel(instant: Instant?): String? {
+        if (instant == null) return null
+        val now = Instant.now()
+        val safeInstant = if (instant.isAfter(now)) now else instant
+        val seconds = ChronoUnit.SECONDS.between(safeInstant, now).coerceAtLeast(0L)
+        val language = NewPipe.getPreferredLocalization().languageCode.lowercase()
+
+        val (value, unit) = when {
+            seconds < 60L -> 0L to "minute"
+            seconds < 3_600L -> (seconds / 60L).coerceAtLeast(1L) to "minute"
+            seconds < 86_400L -> (seconds / 3_600L).coerceAtLeast(1L) to "hour"
+            seconds < 604_800L -> (seconds / 86_400L).coerceAtLeast(1L) to "day"
+            seconds < 2_629_800L -> (seconds / 604_800L).coerceAtLeast(1L) to "week"
+            seconds < 31_557_600L -> (seconds / 2_629_800L).coerceAtLeast(1L) to "month"
+            else -> (seconds / 31_557_600L).coerceAtLeast(1L) to "year"
+        }
+
+        return if (language == "vi") {
+            when (unit) {
+                "minute" -> if (value == 0L) "vừa xong" else value.toString() + " phút trước"
+                "hour" -> value.toString() + " giờ trước"
+                "day" -> value.toString() + " ngày trước"
+                "week" -> value.toString() + " tuần trước"
+                "month" -> value.toString() + " tháng trước"
+                else -> value.toString() + " năm trước"
+            }
+        } else {
+            fun plural(singular: String): String =
+                if (value == 1L) singular else singular + "s"
+            when (unit) {
+                "minute" -> if (value == 0L) "just now" else value.toString() + " " + plural("minute") + " ago"
+                "hour" -> value.toString() + " " + plural("hour") + " ago"
+                "day" -> value.toString() + " " + plural("day") + " ago"
+                "week" -> value.toString() + " " + plural("week") + " ago"
+                "month" -> value.toString() + " " + plural("month") + " ago"
+                else -> value.toString() + " " + plural("year") + " ago"
+            }
+        }
+    }
+
     private fun uploadDateLabel(item: StreamInfoItem): String? =
         relativeUploadDate(item)
             ?: item.textualUploadDate
@@ -454,7 +494,9 @@ class NewPipeYouTubeSource : YouTubeSource {
                 // avatar collections are not available through this compatibility layer.
                 authorAvatarUrl = null,
                 text = item.commentText.content,
-                uploadDateText = item.textualUploadDate,
+                uploadDateText = relativeDateLabel(
+                    item.uploadDate?.offsetDateTime()?.toInstant()
+                ) ?: item.textualUploadDate,
                 likeCount = item.likeCount,
                 pinned = item.isPinned,
                 heartedByUploader = item.isHeartedByUploader
