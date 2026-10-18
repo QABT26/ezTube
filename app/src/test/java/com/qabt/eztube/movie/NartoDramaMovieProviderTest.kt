@@ -25,7 +25,6 @@ class NartoDramaMovieProviderTest {
     }
 
     @Test
-    @Test
     fun slugifiesVietnameseTitleForExactTitleLookup() {
         assertEquals(
             "toi-co-ba-ban-gai-nho-he-thong",
