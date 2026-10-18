@@ -7670,6 +7670,7 @@ private fun FullPlayer(
     var holdSeekPreviewMs by remember { mutableLongStateOf(-1L) }
     var showDeveloperDiagnostics by remember { mutableStateOf(false) }
     var fullscreenRequested by remember { mutableStateOf(false) }
+    var portraitVideo by remember(media.id) { mutableStateOf(false) }
     var inlineVideoControlsVisible by remember(media.id, videoMode) { mutableStateOf(true) }
     var inlineVideoControlsEpoch by remember { mutableIntStateOf(0) }
     var fullscreenRendered by remember { mutableStateOf(false) }
@@ -7702,6 +7703,14 @@ private fun FullPlayer(
         while (true) {
             position = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
             duration = controller?.duration?.takeIf { it > 0 } ?: 0L
+
+            controller?.videoSize?.let { size ->
+                if (size.width > 0 && size.height > 0) {
+                    // Use the decoded stream dimensions, not poster/metadata.
+                    // Vertical dramas should stay portrait when entering fullscreen.
+                    portraitVideo = size.height > size.width
+                }
+            }
             delay(500)
         }
     }
@@ -7711,19 +7720,22 @@ private fun FullPlayer(
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape =
         configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val isPortrait =
+        configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+    val fullscreenOrientationReady =
+        if (portraitVideo) isPortrait else isLandscape
 
-    // Keep the normal player visible while Android is rotating into landscape.
-    // Likewise, keep the fullscreen surface alive while rotating back to portrait.
-    // This prevents Compose from rendering the wrong layout for a transient
-    // orientation and avoids the diagonal/half-rotated frames seen during transition.
-    LaunchedEffect(fullscreenRequested, isLandscape) {
+    // Render fullscreen only after Android reaches the orientation that matches
+    // the actual decoded video. Vertical dramas therefore use portrait fullscreen,
+    // while normal widescreen video keeps the existing landscape behavior.
+    LaunchedEffect(fullscreenRequested, fullscreenOrientationReady, portraitVideo) {
         when {
-            fullscreenRequested && isLandscape -> {
+            fullscreenRequested && fullscreenOrientationReady -> {
                 fullscreenRendered = true
                 fullscreenControlsVisible = true
                 fullscreenControlsEpoch += 1
             }
-            !fullscreenRequested && !isLandscape -> {
+            !fullscreenRequested && isPortrait -> {
                 fullscreenRendered = false
                 fullscreenSpeedMenu = false
                 fullscreenQualityMenu = false
@@ -7733,10 +7745,15 @@ private fun FullPlayer(
         }
     }
 
-    DisposableEffect(fullscreenRequested, activity) {
+    DisposableEffect(fullscreenRequested, portraitVideo, activity) {
         val originalBrightness = activity?.window?.attributes?.screenBrightness
         if (fullscreenRequested && activity != null) {
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            activity.requestedOrientation =
+                if (portraitVideo) {
+                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                } else {
+                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                }
             WindowCompat.setDecorFitsSystemWindows(activity.window, false)
             WindowInsetsControllerCompat(activity.window, activity.window.decorView).apply {
                 systemBarsBehavior =
