@@ -862,6 +862,13 @@ class PlaybackQueueManager(
             repeatMode = preferences.loadRepeatMode()
         ) ?: return
 
+        if (items[target].id.startsWith("movie:narto:")) {
+            // App UI owns the visible Narto unlock flow. Background/system
+            // transport must not try to resolve a gated episode and surface a
+            // misleading source error.
+            return
+        }
+
         // Native adjacent items are safe only when they match the logical target.
         // Queue edits can otherwise leave a stale resolved item in Media3.
         if (delta > 0 && target == current + 1 && player.hasNextMediaItem()) {
