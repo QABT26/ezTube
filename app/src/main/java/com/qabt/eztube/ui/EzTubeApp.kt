@@ -270,6 +270,8 @@ fun EzTubeApp(
     var playbackEngine by remember { mutableStateOf(PlaybackService.ENGINE_DIRECT) }
     var movieDiagnostic by remember { mutableStateOf<String?>(null) }
     var sabrDiagnostic by remember { mutableStateOf<String?>(null) }
+    var nartoDiagnostic by remember { mutableStateOf<String?>(null) }
+    var nartoDiagnosticRunning by remember { mutableStateOf(false) }
     var developerUnlocked by remember {
         mutableStateOf(playbackPrefs.loadDeveloperUnlocked())
     }
@@ -1786,6 +1788,26 @@ fun EzTubeApp(
                 },
                 developerUnlocked = developerUnlocked,
                 developerMode = developerMode,
+                nartoDiagnostic = nartoDiagnostic,
+                nartoDiagnosticRunning = nartoDiagnosticRunning,
+                onRunNartoDiagnostic = { diagnosticQuery ->
+                    if (!nartoDiagnosticRunning) {
+                        scope.launch {
+                            nartoDiagnosticRunning = true
+                            nartoDiagnostic = "Running Narto diagnostics…"
+                            nartoDiagnostic = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    movieProviders.diagnoseNarto(diagnosticQuery)
+                                }.getOrElse { error ->
+                                    "Narto diagnostics failed\n" +
+                                        error.javaClass.simpleName + ": " +
+                                        (error.message ?: "unknown error")
+                                }
+                            }
+                            nartoDiagnosticRunning = false
+                        }
+                    }
+                },
                 onDeveloperMode = {
                     developerMode = it
                     playbackPrefs.saveDeveloperMode(it)
@@ -1797,6 +1819,8 @@ fun EzTubeApp(
                 onDeveloperLock = {
                     developerMode = false
                     developerUnlocked = false
+                    nartoDiagnostic = null
+                    nartoDiagnosticRunning = false
                     playbackPrefs.saveDeveloperMode(false)
                     playbackPrefs.saveDeveloperUnlocked(false)
                 },
@@ -2194,6 +2218,9 @@ private fun SettingsScreen(
     onClearCache: () -> Unit,
     developerUnlocked: Boolean,
     developerMode: Boolean,
+    nartoDiagnostic: String?,
+    nartoDiagnosticRunning: Boolean,
+    onRunNartoDiagnostic: (String) -> Unit,
     onDeveloperMode: (Boolean) -> Unit,
     onDeveloperUnlocked: () -> Unit,
     onDeveloperLock: () -> Unit,
@@ -2201,6 +2228,9 @@ private fun SettingsScreen(
 ) {
     val context = LocalContext.current
     var developerTapCount by remember { mutableIntStateOf(0) }
+    var nartoDiagnosticQuery by remember {
+        mutableStateOf("tôi có ba bạn gái")
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -2690,6 +2720,101 @@ private fun SettingsScreen(
                         onCheckedChange = onDeveloperMode
                     )
                 }
+
+                if (developerMode) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    ) {
+                        Column(
+                            Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "Narto diagnostics",
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "Checks what the Android client actually receives from Narto. " +
+                                    "It reports HTTP status, final URL, Cloudflare challenge detection, " +
+                                    "detail links, parsed cards and title matches.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = nartoDiagnosticQuery,
+                                onValueChange = { nartoDiagnosticQuery = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                label = { Text("Movie search query") }
+                            )
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        onRunNartoDiagnostic(nartoDiagnosticQuery)
+                                    },
+                                    enabled = !nartoDiagnosticRunning &&
+                                        nartoDiagnosticQuery.isNotBlank()
+                                ) {
+                                    if (nartoDiagnosticRunning) {
+                                        CircularProgressIndicator(
+                                            Modifier.size(16.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                    }
+                                    Text(
+                                        if (nartoDiagnosticRunning) "Running…"
+                                        else "Run Narto diagnostic"
+                                    )
+                                }
+
+                                if (!nartoDiagnostic.isNullOrBlank()) {
+                                    TextButton(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(
+                                                android.content.ClipboardManager::class.java
+                                            )
+                                            clipboard?.setPrimaryClip(
+                                                android.content.ClipData.newPlainText(
+                                                    "Narto diagnostics",
+                                                    nartoDiagnostic
+                                                )
+                                            )
+                                            Toast.makeText(
+                                                context,
+                                                "Diagnostics copied",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    ) {
+                                        Text("Copy")
+                                    }
+                                }
+                            }
+
+                            if (!nartoDiagnostic.isNullOrBlank()) {
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(10.dp),
+                                    tonalElevation = 1.dp
+                                ) {
+                                    Text(
+                                        nartoDiagnostic,
+                                        modifier = Modifier.padding(10.dp),
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 TextButton(
                     onClick = onDeveloperLock,
                     modifier = Modifier.align(Alignment.End)
