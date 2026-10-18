@@ -2482,7 +2482,7 @@ private fun NartoUnlockScreen(
         }
         addDiagnostic("probe-start:" + reason, active.url)
 
-        if (gateUnlockSeen.get() && capturedSubtitleUrl == null) {
+        if (capturedSubtitleUrl == null) {
             active.evaluateJavascript(
                 """
                 (function() {
@@ -2505,19 +2505,38 @@ private fun NartoUnlockScreen(
                     } catch (e) {}
                   };
 
-                  const candidates = [];
+                  const preferred = [];
+                  const resources = [];
+
                   try {
                     document.querySelectorAll('track').forEach((t) => {
+                      const src = String(t.src || '');
                       const lang = String(t.srclang || t.label || '').toLowerCase();
                       const kind = String(t.kind || '').toLowerCase();
                       if (
-                        kind === 'subtitles' ||
-                        kind === 'captions' ||
-                        lang.includes('vi') ||
-                        lang.includes('viet')
+                        src &&
+                        (
+                          kind === 'subtitles' ||
+                          kind === 'captions' ||
+                          lang.includes('vi') ||
+                          lang.includes('viet')
+                        )
                       ) {
-                        save(t.src);
+                        preferred.push(src);
+                        // A real <track> element is already strong evidence. Save it
+                        // immediately when it is a Narto /e/s/ URL.
+                        save(src);
                       }
+                    });
+                  } catch (e) {}
+
+                  try {
+                    const html = String(document.documentElement?.innerHTML || '');
+                    const absolute = html.match(/https:\/\/[^"'\\s<>]+\/e\/s\/[^"'\\s<>]+/gi) || [];
+                    absolute.forEach((u) => preferred.push(u.replace(/\\u0026/g, '&')));
+                    const relative = html.match(/\/e\/s\/[^"'\\s<>]+/gi) || [];
+                    relative.forEach((u) => {
+                      try { preferred.push(new URL(u, location.href).href); } catch (e) {}
                     });
                   } catch (e) {}
 
@@ -2531,21 +2550,13 @@ private fun NartoUnlockScreen(
                         if (bx === 0 && ax !== 0) return -1;
                         return ax - bx;
                       })
-                      .forEach((e) => candidates.push(String(e.name || '')));
-                  } catch (e) {}
-
-                  try {
-                    const html = String(document.documentElement?.innerHTML || '');
-                    const absolute = html.match(/https:\/\/[^"'\\s<>]+\/e\/s\/[^"'\\s<>]+/gi) || [];
-                    absolute.forEach((u) => candidates.push(u.replace(/\\u0026/g, '&')));
-                    const relative = html.match(/\/e\/s\/[^"'\\s<>]+/gi) || [];
-                    relative.forEach((u) => {
-                      try { candidates.push(new URL(u, location.href).href); } catch (e) {}
-                    });
+                      .forEach((e) => resources.push(String(e.name || '')));
                   } catch (e) {}
 
                   (async () => {
-                    const urls = Array.from(new Set(candidates)).slice(0, 16);
+                    const urls = Array.from(
+                      new Set([...preferred, ...resources])
+                    ).slice(0, 32);
                     const classify = async (u) => {
                       try {
                         const controller = new AbortController();
@@ -2709,8 +2720,7 @@ private fun NartoUnlockScreen(
                     path.endsWith(".m3u8", ignoreCase = true)
 
                 if (nartoPlayable || unlockedUpstreamPlayable) {
-                    val waitingForSubtitle =
-                        capturedSubtitleUrl == null && gateUnlockSeen.get()
+                    val waitingForSubtitle = capturedSubtitleUrl == null
 
                     if (
                         waitingForSubtitle &&
@@ -2730,6 +2740,10 @@ private fun NartoUnlockScreen(
                             { probeMainPlayback("vietsub-grace+1300ms") },
                             1300
                         )
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("vietsub-grace+1700ms") },
+                            1700
+                        )
                     } else {
                         val graceElapsedMs =
                             android.os.SystemClock.elapsedRealtime() -
@@ -2739,7 +2753,7 @@ private fun NartoUnlockScreen(
                             !waitingForSubtitle ||
                                 (
                                     subtitleWaitArmed.get() &&
-                                    graceElapsedMs >= 1200L
+                                    graceElapsedMs >= 1600L
                                 )
 
                         if (
