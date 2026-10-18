@@ -3551,22 +3551,24 @@ private fun SearchResult(
                 )
             }
 
-            Text(
-                mediaSourceBadge(media),
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.72f,
-                    fontWeight = FontWeight.Bold
-                ),
-                color = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(3.dp)
-                    .background(
-                        MaterialTheme.colorScheme.scrim.copy(alpha = 0.82f),
-                        RoundedCornerShape(4.dp)
-                    )
-                    .padding(horizontal = 4.dp, vertical = 0.dp)
-            )
+            mediaSourceBadge(media)?.let { sourceBadge ->
+                Text(
+                    sourceBadge,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.72f,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(3.dp)
+                        .background(
+                            MaterialTheme.colorScheme.scrim.copy(alpha = 0.82f),
+                            RoundedCornerShape(4.dp)
+                        )
+                        .padding(horizontal = 4.dp, vertical = 0.dp)
+                )
+            }
             progressEntry
                 ?.progress
                 ?.takeIf { it > 0f }
@@ -3868,7 +3870,7 @@ private fun NetworkStatusIcon(
     )
 }
 
-private fun mediaSourceBadge(media: MediaSummary): String {
+private fun mediaSourceBadge(media: MediaSummary): String? {
     val id = media.id.lowercase()
     return when {
         id.startsWith("movie-title:narto:") || id.startsWith("movie:narto:") -> "NARTO"
@@ -3876,7 +3878,7 @@ private fun mediaSourceBadge(media: MediaSummary): String {
         id.startsWith("movie-title:ophim:") || id.startsWith("movie:ophim:") -> "OPHIM"
         id.startsWith("movie-title:motphim:") || id.startsWith("movie:motphim:") -> "MOTPHIM"
         id.startsWith("movie-title:biliintl:") || id.startsWith("movie:biliintl:") -> "BILI"
-        else -> "YT"
+        else -> null
     }
 }
 
