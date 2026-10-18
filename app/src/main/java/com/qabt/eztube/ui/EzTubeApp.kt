@@ -2768,6 +2768,8 @@ private fun NartoUnlockScreen(
                 null
             )
 
+            pinNartoOpenAdButton("focus")
+            mainHandler.postDelayed({ pinNartoOpenAdButton("focus+250ms") }, 250)
             probeMainPlayback("focus")
             mainHandler.postDelayed({ probeMainPlayback("focus+750ms") }, 750)
             mainHandler.postDelayed({ probeMainPlayback("focus+2000ms") }, 2000)
@@ -2787,11 +2789,8 @@ private fun NartoUnlockScreen(
         notifyMainReturned()
     }
 
-    fun clickNartoOpenAdFromHeader() {
+    fun pinNartoOpenAdButton(reason: String) {
         val active = mainWebView ?: return
-        if (popupVisible) return
-
-        addDiagnostic("header-open-ad-tap")
         active.evaluateJavascript(
             """
             (function() {
@@ -2801,81 +2800,65 @@ private fun NartoUnlockScreen(
                   .toLowerCase()
                   .replace(/\\s+/g, ' ');
 
-                const findIn = (doc) => {
-                  const nodes = Array.from(
-                    doc.querySelectorAll('button,a,[role="button"],input[type="button"],input[type="submit"]')
-                  );
-                  for (const el of nodes) {
-                    const text = norm(el.innerText || el.textContent || el.value);
-                    const aria = norm(el.getAttribute && el.getAttribute('aria-label'));
-                    if (
-                      text.includes('mở quảng cáo') ||
-                      text.includes('mo quang cao') ||
-                      aria.includes('mở quảng cáo') ||
-                      aria.includes('mo quang cao')
-                    ) return el;
-                  }
-                  for (const frame of Array.from(doc.querySelectorAll('iframe'))) {
-                    try {
-                      const found = frame.contentDocument && findIn(frame.contentDocument);
-                      if (found) return found;
-                    } catch (e) {}
-                  }
-                  return null;
-                };
+                const nodes = Array.from(
+                  document.querySelectorAll(
+                    'button,a,[role="button"],input[type="button"],input[type="submit"]'
+                  )
+                );
 
-                const target = findIn(document);
-                if (!target) return 'not-found';
-                try { target.scrollIntoView({block:'center', inline:'center'}); } catch (e) {}
-                const r = target.getBoundingClientRect();
-                return JSON.stringify({
-                  x: r.left + r.width / 2,
-                  y: r.top + r.height / 2
+                const target = nodes.find((el) => {
+                  const text = norm(el.innerText || el.textContent || el.value);
+                  const aria = norm(el.getAttribute && el.getAttribute('aria-label'));
+                  return (
+                    text.includes('mở quảng cáo') ||
+                    text.includes('mo quang cao') ||
+                    aria.includes('mở quảng cáo') ||
+                    aria.includes('mo quang cao')
+                  );
                 });
+
+                if (!target) return 'not-found';
+
+                if (!document.getElementById('eztube-narto-pin-style')) {
+                  const style = document.createElement('style');
+                  style.id = 'eztube-narto-pin-style';
+                  style.textContent = `
+                    .eztube-narto-open-ad {
+                      position: fixed !important;
+                      top: 12px !important;
+                      right: 12px !important;
+                      left: auto !important;
+                      bottom: auto !important;
+                      z-index: 2147483647 !important;
+                      width: auto !important;
+                      min-width: 132px !important;
+                      max-width: 48vw !important;
+                      margin: 0 !important;
+                      padding: 12px 20px !important;
+                      opacity: 1 !important;
+                      visibility: visible !important;
+                      pointer-events: auto !important;
+                      transform: none !important;
+                      border-radius: 999px !important;
+                      box-shadow: 0 4px 16px rgba(0,0,0,.28) !important;
+                    }
+                  `;
+                  document.head.appendChild(style);
+                }
+
+                target.classList.add('eztube-narto-open-ad');
+                target.style.display = '';
+                return 'pinned';
               } catch (e) {
                 return 'error';
               }
             })();
             """.trimIndent()
         ) { raw ->
-            val decoded = runCatching {
+            val result = runCatching {
                 org.json.JSONTokener(raw).nextValue() as? String
             }.getOrNull().orEmpty()
-
-            if (decoded == "not-found" || decoded == "error" || decoded.isBlank()) {
-                addDiagnostic("header-open-ad-" + decoded.ifBlank { "empty" })
-                android.widget.Toast.makeText(
-                    context,
-                    "Chưa thấy nút Mở quảng cáo",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
-                return@evaluateJavascript
-            }
-
-            runCatching {
-                val point = org.json.JSONObject(decoded)
-                val scale = active.scale
-                val x = (point.getDouble("x") * scale).toFloat()
-                val y = (point.getDouble("y") * scale).toFloat()
-                val downTime = android.os.SystemClock.uptimeMillis()
-                val down = android.view.MotionEvent.obtain(
-                    downTime, downTime,
-                    android.view.MotionEvent.ACTION_DOWN,
-                    x, y, 0
-                )
-                val up = android.view.MotionEvent.obtain(
-                    downTime, downTime + 60L,
-                    android.view.MotionEvent.ACTION_UP,
-                    x, y, 0
-                )
-                active.dispatchTouchEvent(down)
-                active.dispatchTouchEvent(up)
-                down.recycle()
-                up.recycle()
-                addDiagnostic("header-open-ad-touch-forwarded")
-            }.onFailure {
-                addDiagnostic("header-open-ad-touch-error")
-            }
+            addDiagnostic("pin-open-ad:" + reason + ":" + result)
         }
     }
 
@@ -3333,6 +3316,8 @@ private fun NartoUnlockScreen(
                     if (sameEpisodeUrl(url, pageUrl)) {
                         pageReadyForCapture = true
                         pageCaptureReadyFlag.set(true)
+                        mainHandler.postDelayed({ pinNartoOpenAdButton("page+100ms") }, 100)
+                        mainHandler.postDelayed({ pinNartoOpenAdButton("page+600ms") }, 600)
                         mainHandler.postDelayed(
                             { probeMainPlayback("page-finish+750ms") },
                             750
@@ -3381,12 +3366,6 @@ private fun NartoUnlockScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                }
-                TextButton(
-                    enabled = !popupVisible,
-                    onClick = { clickNartoOpenAdFromHeader() }
-                ) {
-                    Text(if (popupVisible) "Đang mở QC" else "Mở QC")
                 }
             }
 
