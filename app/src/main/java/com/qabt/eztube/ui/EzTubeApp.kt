@@ -2654,7 +2654,18 @@ private fun NartoUnlockScreen(
                                     gateUnlockSeen.compareAndSet(false, true)
                                 ) {
                                     addDiagnostic("gate-unlock-seen", value)
-                                    mainHandler.post { probeMainPlayback("gate-unlock") }
+
+                                    // Narto itself has confirmed that the ad gate is unlocked.
+                                    // At this point it is safe to close ezTube's own popup shell
+                                    // automatically; we do not click or fake any third-party ad UI.
+                                    mainHandler.post {
+                                        if (popupVisible) {
+                                            addDiagnostic("auto-close-popup-after-unlock", popupWebView?.url)
+                                            closePopup()
+                                        } else {
+                                            probeMainPlayback("gate-unlock")
+                                        }
+                                    }
                                     mainHandler.postDelayed(
                                         { probeMainPlayback("gate-unlock+750ms") },
                                         750
