@@ -2320,6 +2320,9 @@ private fun NartoUnlockScreen(
     val playbackCaptured = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
+    val gateUnlockSeen = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
     val diagnosticEvents = remember(pageUrl) { mutableStateListOf<String>() }
     var diagnosticSeq by remember(pageUrl) { mutableIntStateOf(0) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
@@ -2337,6 +2340,8 @@ private fun NartoUnlockScreen(
                     "/e/m/[redacted]"
                 host.endsWith("narto-drama.com") && path.startsWith("/e/s/") ->
                     "/e/s/[redacted]"
+                host.endsWith(".mydramawave.com") && path.endsWith(".m3u8", true) ->
+                    "/vt/[redacted].m3u8"
                 path.length > 160 -> path.take(160) + "…"
                 else -> path
             }
@@ -2454,7 +2459,7 @@ private fun NartoUnlockScreen(
                         }.getOrNull()
                         val host = uri?.host.orEmpty().lowercase()
                         val path = uri?.path.orEmpty()
-                        val playable =
+                        val nartoPlayable =
                             (
                                 host == "stream.narto-drama.com" ||
                                 host == "edge.narto-drama.com"
@@ -2464,8 +2469,16 @@ private fun NartoUnlockScreen(
                                 path.endsWith(".m3u8", ignoreCase = true)
                             )
 
+                        val unlockedUpstreamPlayable =
+                            gateUnlockSeen.get() &&
+                            (
+                                host == "mydramawave.com" ||
+                                host.endsWith(".mydramawave.com")
+                            ) &&
+                            path.endsWith(".m3u8", ignoreCase = true)
+
                         if (
-                            playable &&
+                            (nartoPlayable || unlockedUpstreamPlayable) &&
                             playbackCaptured.compareAndSet(false, true)
                         ) {
                             addDiagnostic("probe-playable-manifest", url)
@@ -2634,7 +2647,29 @@ private fun NartoUnlockScreen(
                                 }.getOrNull()
                                 val path = uri?.path.orEmpty()
                                 val nartoHost = uri?.host.orEmpty().lowercase()
-                                val looksLikePlayableManifest =
+
+                                if (
+                                    nartoHost == "edge.narto-drama.com" &&
+                                    path == "/player/ads/gate-unlock" &&
+                                    gateUnlockSeen.compareAndSet(false, true)
+                                ) {
+                                    addDiagnostic("gate-unlock-seen", value)
+                                    mainHandler.post { probeMainPlayback("gate-unlock") }
+                                    mainHandler.postDelayed(
+                                        { probeMainPlayback("gate-unlock+750ms") },
+                                        750
+                                    )
+                                    mainHandler.postDelayed(
+                                        { probeMainPlayback("gate-unlock+2000ms") },
+                                        2000
+                                    )
+                                    mainHandler.postDelayed(
+                                        { probeMainPlayback("gate-unlock+5000ms") },
+                                        5000
+                                    )
+                                }
+
+                                val nartoManifest =
                                     (
                                         nartoHost == "stream.narto-drama.com" ||
                                         nartoHost == "edge.narto-drama.com"
@@ -2644,8 +2679,16 @@ private fun NartoUnlockScreen(
                                         path.endsWith(".m3u8", ignoreCase = true)
                                     )
 
+                                val unlockedUpstreamManifest =
+                                    gateUnlockSeen.get() &&
+                                    (
+                                        nartoHost == "mydramawave.com" ||
+                                        nartoHost.endsWith(".mydramawave.com")
+                                    ) &&
+                                    path.endsWith(".m3u8", ignoreCase = true)
+
                                 if (
-                                    looksLikePlayableManifest &&
+                                    (nartoManifest || unlockedUpstreamManifest) &&
                                     playbackCaptured.compareAndSet(false, true)
                                 ) {
                                     addDiagnostic("signed-hls-detected", value)
