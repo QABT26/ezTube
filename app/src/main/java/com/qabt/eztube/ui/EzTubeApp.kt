@@ -2542,39 +2542,41 @@ private fun NartoUnlockScreen(
                   } catch (e) {}
 
                   (async () => {
-                    for (const u of Array.from(new Set(candidates)).slice(0, 32)) {
-                      if (window.__eztubeVietsub) break;
+                    const urls = Array.from(new Set(candidates)).slice(0, 16);
+                    const classify = async (u) => {
                       try {
+                        const controller = new AbortController();
+                        const timer = setTimeout(() => controller.abort(), 900);
                         const r = await fetch(u, {
                           credentials: 'omit',
-                          cache: 'no-store'
+                          cache: 'no-store',
+                          signal: controller.signal
                         });
+                        clearTimeout(timer);
+
                         const type = String(r.headers.get('content-type') || '').toLowerCase();
                         if (type.includes('text/vtt') || type.includes('application/vtt')) {
-                          save(u);
-                          break;
+                          return u;
                         }
 
-                        // Narto may serve VTT through a generic content type. Read only
-                        // the first response chunk, then cancel, so fMP4 /e/s/ segments
-                        // are not downloaded just to classify them.
                         const reader = r.body && r.body.getReader ? r.body.getReader() : null;
-                        if (reader) {
-                          const first = await reader.read();
-                          try { await reader.cancel(); } catch (e) {}
-                          if (first && first.value) {
-                            const head = new TextDecoder('utf-8')
-                              .decode(first.value.slice(0, 512))
-                              .replace(/^\uFEFF/, '')
-                              .trimStart();
-                            if (head.startsWith('WEBVTT')) {
-                              save(u);
-                              break;
-                            }
-                          }
-                        }
-                      } catch (e) {}
-                    }
+                        if (!reader) return '';
+                        const first = await reader.read();
+                        try { await reader.cancel(); } catch (e) {}
+                        if (!first || !first.value) return '';
+                        const head = new TextDecoder('utf-8')
+                          .decode(first.value.slice(0, 512))
+                          .replace(/^\uFEFF/, '')
+                          .trimStart();
+                        return head.startsWith('WEBVTT') ? u : '';
+                      } catch (e) {
+                        return '';
+                      }
+                    };
+
+                    const results = await Promise.all(urls.map(classify));
+                    const found = results.find(Boolean);
+                    if (found) save(found);
                     window.__eztubeSubtitleScanRunning = false;
                   })();
                 })();
@@ -2711,8 +2713,16 @@ private fun NartoUnlockScreen(
                     ) {
                         addDiagnostic("vietsub-grace-wait")
                         mainHandler.postDelayed(
-                            { probeMainPlayback("vietsub-grace+1200ms") },
-                            1200
+                            { probeMainPlayback("vietsub-grace+350ms") },
+                            350
+                        )
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("vietsub-grace+800ms") },
+                            800
+                        )
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("vietsub-grace+1300ms") },
+                            1300
                         )
                     } else if (playbackCaptured.compareAndSet(false, true)) {
                         addDiagnostic("probe-playable-manifest", url)
@@ -2926,7 +2936,7 @@ private fun NartoUnlockScreen(
                             closePopup()
                         }
                     },
-                    100
+                    50
                 )
             }
         }
@@ -2994,7 +3004,7 @@ private fun NartoUnlockScreen(
                                 closePopup()
                             }
                         },
-                        50
+                        25
                     )
                 }
             
@@ -3063,21 +3073,12 @@ private fun NartoUnlockScreen(
                     ) &&
                     path.endsWith(".m3u8", ignoreCase = true)
             
-                if (
-                    currentEpisodeActive &&
-                    nartoManifest &&
-                    playbackCaptured.compareAndSet(false, true)
-                ) {
+                if (currentEpisodeActive && nartoManifest) {
                     addDiagnostic("signed-hls-detected", value)
-                    android.os.Handler(
-                        android.os.Looper.getMainLooper()
-                    ).post {
-                        cookieManager.flush()
-                        onStreamCaptured(value, capturedSubtitleUrl)
-                    }
+                    // Do not hand off immediately. Let the main-thread probe discover
+                    // subtitle tracks/resources first, then Media3 gets video + subtitle together.
+                    mainHandler.post { probeMainPlayback("signed-manifest") }
                 } else if (currentEpisodeActive && unlockedUpstreamManifest) {
-                    // The page's <track> element is probed first so Vietsub
-                    // can be attached to the Media3 item before handoff.
                     mainHandler.post { probeMainPlayback("upstream-manifest") }
                 }
             }
@@ -3229,7 +3230,7 @@ private fun NartoUnlockScreen(
                                 closePopup()
                             }
                         },
-                        700
+                        500
                     )
                     return true
                 }
