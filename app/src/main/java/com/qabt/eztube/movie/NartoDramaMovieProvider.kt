@@ -57,7 +57,9 @@ class NartoDramaMovieProvider(
                     }
                 }
                 .take(8)
-            if (ranked.isNotEmpty()) return ranked
+            if (ranked.isNotEmpty()) {
+                return ranked.map { hydrateCatalogItem(it) }
+            }
         }
 
         val slug = slugify(normalized).takeIf { it.isNotBlank() } ?: return emptyList()
@@ -65,21 +67,48 @@ class NartoDramaMovieProvider(
             .getOrDefault(emptyList())
     }
 
+    private fun hydrateCatalogItem(item: MovieCatalogItem): MovieCatalogItem {
+        if (!item.thumbnailUrl.isNullOrBlank() && item.episodeBadge != null) {
+            return item
+        }
+
+        val page = runCatching { fetchPage(detailUrls(item.slug)) }.getOrNull()
+            ?: return item
+
+        val thumbnail = item.thumbnailUrl
+            ?: extractMeta(page, "og:image")?.let(::normalizeImageUrl)
+            ?: extractFirstImageUrl(page)
+
+        val episodeCount = item.episodeBadge
+            ?.let { Regex("""\d+""").find(it)?.value?.toIntOrNull() }
+            ?: extractEpisodeCount(page, item.slug)
+
+        val title = item.title.takeIf { it.isNotBlank() }
+            ?: extractTitle(page)
+            ?: item.title
+
+        return item.copy(
+            title = title,
+            thumbnailUrl = thumbnail,
+            episodeBadge = episodeCount?.let { it.toString() + " tập" } ?: item.episodeBadge,
+            isSeries = episodeCount?.let { it > 1 } ?: item.isSeries
+        )
+    }
+
     override fun detail(slug: String): MovieDetail {
         requireSlug(slug)
         val page = runCatching { fetchPage(detailUrls(slug)) }.getOrNull()
-        val catalogFallback = if (page == null) {
-            runCatching {
-                extractCatalogItems(fetchPage(catalogUrls()))
-                    .firstOrNull { it.slug == slug }
-            }.getOrNull()
-        } else null
+        val catalogFallback = runCatching {
+            extractCatalogItems(fetchPage(catalogUrls()))
+                .firstOrNull { it.slug == slug }
+        }.getOrNull()
 
-        val title = page?.let(::extractTitle)
-            ?: catalogFallback?.title
+        val title = catalogFallback?.title
+            ?: page?.let(::extractTitle)
             ?: slug.replace('-', ' ').replaceFirstChar { it.uppercase() }
-        val thumbnail = page?.let { extractMeta(it, "og:image") }
-            ?: catalogFallback?.thumbnailUrl
+        val thumbnail = catalogFallback?.thumbnailUrl
+            ?: page?.let { extractMeta(it, "og:image") }
+                ?.let(::normalizeImageUrl)
         val episodeCount = page?.let { extractEpisodeCount(it, slug) }
             ?: catalogFallback?.episodeBadge
                 ?.let { Regex("""\d+""").find(it)?.value?.toIntOrNull() }
@@ -413,11 +442,7 @@ class NartoDramaMovieProvider(
             val epCount = EP_COUNT_REGEX.find(visible)
                 ?.groupValues?.getOrNull(1)?.toIntOrNull()
 
-            val image = IMG_REGEX.find(block)
-                ?.groupValues?.getOrNull(1)
-                ?.let(::htmlDecode)
-                ?.trim()
-                ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            val image = extractFirstImageUrl(block)
 
             return MovieCatalogItem(
                 providerId = "narto",
@@ -433,6 +458,61 @@ class NartoDramaMovieProvider(
                 episodeBadge = epCount?.let { it.toString() + " tập" },
                 isSeries = epCount?.let { it > 1 }
             )
+        }
+
+        private val IMAGE_ATTR_REGEX = Regex(
+            """(?:src|data-src|data-lazy-src|poster)\s*=\s*["']([^"']+)["']""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        private val SRCSET_ATTR_REGEX = Regex(
+            """(?:srcset|data-srcset)\s*=\s*["']([^"']+)["']""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        private val CSS_URL_REGEX = Regex(
+            """url\(\s*['"]?([^)'"]+)['"]?\s*\)""",
+            RegexOption.IGNORE_CASE
+        )
+
+        internal fun extractFirstImageUrl(block: String): String? {
+            val candidates = buildList {
+                IMAGE_ATTR_REGEX.findAll(block).forEach { match ->
+                    match.groupValues.getOrNull(1)?.let(::add)
+                }
+                SRCSET_ATTR_REGEX.findAll(block).forEach { match ->
+                    match.groupValues.getOrNull(1)
+                        ?.split(',')
+                        ?.firstOrNull()
+                        ?.trim()
+                        ?.substringBefore(' ')
+                        ?.let(::add)
+                }
+                CSS_URL_REGEX.findAll(block).forEach { match ->
+                    match.groupValues.getOrNull(1)?.let(::add)
+                }
+            }
+
+            return candidates
+                .asSequence()
+                .mapNotNull(::normalizeImageUrl)
+                .firstOrNull()
+        }
+
+        internal fun normalizeImageUrl(value: String): String? {
+            var raw = htmlDecode(value).trim()
+            if (raw.isBlank() || raw.startsWith("data:", ignoreCase = true)) return null
+
+            raw = raw
+                .replace("\\u002F", "/", ignoreCase = true)
+                .replace("\\/", "/")
+
+            if (raw.startsWith("//")) raw = "https:" + raw
+            if (raw.startsWith("/")) raw = "https://edge.narto-drama.com" + raw
+
+            if (!raw.startsWith("http://") && !raw.startsWith("https://")) {
+                return null
+            }
+
+            return raw
         }
 
         internal fun normalizeSearchText(value: String): String {
@@ -458,13 +538,29 @@ class NartoDramaMovieProvider(
         ): Boolean {
             val text = body.lowercase()
             val url = finalUrl.lowercase()
-            return statusCode == 403 ||
+
+            if (
+                statusCode == 403 ||
                 statusCode == 429 ||
-                "challenges.cloudflare.com" in url ||
-                "cf-chl-" in text ||
-                "challenge-platform" in text ||
-                "turnstile" in text ||
-                "just a moment" in text
+                "challenges.cloudflare.com" in url
+            ) {
+                return true
+            }
+
+            val hasCatalogContent =
+                "/detail/watch/" in text &&
+                    (text.contains("<h2") || text.contains("<h3"))
+
+            if (hasCatalogContent && body.length > 20_000) {
+                return false
+            }
+
+            return (
+                "just a moment" in text ||
+                    "cf-chl-" in text ||
+                    "challenge-platform" in text ||
+                    "turnstile" in text
+                ) && body.length < 50_000
         }
 
         internal fun slugify(value: String): String {
