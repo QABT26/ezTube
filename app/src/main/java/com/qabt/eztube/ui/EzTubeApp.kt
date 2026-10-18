@@ -3250,7 +3250,7 @@ private fun NartoUnlockScreen(
                         }
                         active
                     },
-                    update = { active ->                    update = { active ->
+                    update = { active ->
                         mainWebView = active
                         configureMainWebView(active, active.context)
                         active.onResume()
