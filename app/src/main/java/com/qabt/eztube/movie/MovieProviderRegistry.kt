@@ -142,6 +142,7 @@ class MovieProviderRegistry(
             // Direct Bilibili URLs are explicit user input and should win for that item.
             "biliintl" -> 50
             "phimapi" -> 40
+            "narto" -> 30
             "motphim" -> 20
             else -> 0
         }
@@ -199,6 +200,7 @@ class MovieProviderRegistry(
             MovieProviderRegistry(
                 providers = listOf(
                     PhimApiMovieProvider(),
+                    NartoDramaMovieProvider(),
                     BiliIntlMovieProvider()
                 )
             )
