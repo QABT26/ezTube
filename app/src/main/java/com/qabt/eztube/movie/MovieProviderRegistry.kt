@@ -116,6 +116,13 @@ class MovieProviderRegistry(
         return provider.resolve(mediaId)
     }
 
+    fun nartoWatchPageUrl(mediaId: String): String? {
+        val provider = providers
+            .firstOrNull { it.id == "narto" } as? NartoDramaMovieProvider
+            ?: return null
+        return provider.watchPageUrl(mediaId)
+    }
+
     fun diagnoseNarto(query: String): String {
         val provider = providers
             .firstOrNull { it.id == "narto" } as? NartoDramaMovieProvider
