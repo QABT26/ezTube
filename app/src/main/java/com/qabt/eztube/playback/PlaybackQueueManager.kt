@@ -372,7 +372,10 @@ class PlaybackQueueManager(
         preferences.saveQueue(saved.first, index)
         preferences.save(saved.first[index], 0L)
         clearAlternateStream()
-        if (!preferences.loadSleepEndCurrent()) {
+        if (
+            !preferences.loadSleepEndCurrent() &&
+            !id.startsWith("movie:narto:")
+        ) {
             ensureNext(saved.first, index)
         }
         warmAlternateStream(saved.first[index])
@@ -390,6 +393,11 @@ class PlaybackQueueManager(
         val items = saved.first
         if (items.isEmpty()) return
         val currentId = player.currentMediaItem?.mediaId
+        if (currentId?.startsWith("movie:narto:") == true) {
+            // Narto requires the user-visible website unlock flow for each episode.
+            // Never auto-resolve the next episode behind that gate.
+            return
+        }
         val current = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
         val target = QueueNavigationPolicy.endedTarget(
             current = current,
@@ -475,6 +483,107 @@ class PlaybackQueueManager(
         )
     }
 
+    fun playDirectMovieHls(
+        hlsUrl: String,
+        referer: String,
+        positionMs: Long,
+        playWhenReady: Boolean,
+        onComplete: (Result<Unit>) -> Unit
+    ) {
+        if (busy) {
+            onComplete(Result.failure(IllegalStateException("Playback resolver is busy")))
+            return
+        }
+        if (!hlsUrl.startsWith("https://stream.narto-drama.com/e/m/")) {
+            onComplete(Result.failure(IllegalArgumentException("Invalid Narto HLS URL")))
+            return
+        }
+
+        val saved = preferences.loadQueue()
+        if (saved == null || saved.first.isEmpty()) {
+            onComplete(Result.failure(IllegalStateException("Playback queue is empty")))
+            return
+        }
+        val target = saved.second
+        val media = saved.first.getOrNull(target)
+        if (media == null || !media.id.startsWith("movie:narto:")) {
+            onComplete(Result.failure(IllegalStateException("Current item is not Narto")))
+            return
+        }
+
+        preferences.networkPolicyBlockReason()?.let { reason ->
+            onComplete(Result.failure(IllegalStateException(reason)))
+            return
+        }
+
+        busy = true
+        invalidatePending()
+        val requestGeneration = generation
+
+        player.stop()
+        player.clearMediaItems()
+
+        scope.launch {
+            runCatching {
+                resolvedMoviePlayback(
+                    media,
+                    MoviePlayback(
+                        mediaId = media.id,
+                        hlsUrl = hlsUrl,
+                        requestHeaders = mapOf(
+                            "User-Agent" to (
+                                "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
+                                    "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
+                                ),
+                            "Referer" to referer,
+                            "Origin" to "https://narto-drama.com"
+                        ),
+                        diagnostic = buildString {
+                            append("Provider: Narto Drama")
+                            append("\nPlayback: interactive website unlock")
+                            append("\nMedia3: signed HLS")
+                        }
+                    )
+                )
+            }.onSuccess { item ->
+                if (requestGeneration != generation) {
+                    onComplete(
+                        Result.failure(
+                            IllegalStateException("Playback request was superseded")
+                        )
+                    )
+                    return@onSuccess
+                }
+
+                val latest = preferences.loadQueue()
+                if (latest == null || latest.first.getOrNull(target)?.id != media.id) {
+                    onComplete(
+                        Result.failure(
+                            IllegalStateException("Playback queue changed during unlock")
+                        )
+                    )
+                    return@onSuccess
+                }
+
+                setResolved(item)
+                player.prepare()
+                if (positionMs > 0L) player.seekTo(positionMs.coerceAtLeast(0L))
+                player.setPlaybackSpeed(preferences.loadSpeed())
+                if (playWhenReady) player.play() else player.pause()
+                preferences.saveQueue(saved.first, target)
+                preferences.saveSession(
+                    media,
+                    positionMs.coerceAtLeast(0L),
+                    playWhenReady
+                )
+                clearAlternateStream()
+                onComplete(Result.success(Unit))
+            }.onFailure(onComplete)
+
+            busy = false
+        }
+    }
+
     fun playSavedCurrent(
         positionMs: Long,
         playWhenReady: Boolean,
@@ -509,6 +618,11 @@ class PlaybackQueueManager(
         val saved = preferences.loadQueue() ?: return
         val items = saved.first
         val currentId = player.currentMediaItem?.mediaId ?: return
+        if (currentId.startsWith("movie:narto:")) {
+            // A failed/expired signed Narto manifest must go through the visible
+            // unlock page again; background retries cannot reproduce that session.
+            return
+        }
         val index = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
         if (index !in items.indices) return
 
@@ -781,6 +895,7 @@ class PlaybackQueueManager(
             !preferences.shouldPreloadOnCurrentNetwork()
         ) return
         val next = items.getOrNull(index + 1) ?: return
+        if (next.id.startsWith("movie:narto:")) return
         val current = player.currentMediaItemIndex
         val loadedNext = if (current >= 0 && current + 1 < player.mediaItemCount) {
             player.getMediaItemAt(current + 1)
