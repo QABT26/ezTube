@@ -222,6 +222,12 @@ class NartoDramaMovieProvider(
         return lines.joinToString("\n")
     }
 
+    fun watchPageUrl(mediaId: String): String? {
+        val parsed = parseMediaId(mediaId) ?: return null
+        return "https://edge.narto-drama.com/detail/watch/" +
+            parsed.first + "/" + parsed.second + "?lang=vi-VN"
+    }
+
     override fun resolve(mediaId: String): MoviePlayback {
         val parsed = parseMediaId(mediaId)
             ?: throw IOException("Unsupported Narto media id")
