@@ -578,7 +578,9 @@ class PlaybackQueueManager(
                 )
                 clearAlternateStream()
                 onComplete(Result.success(Unit))
-            }.onFailure(onComplete)
+            }.onFailure { error ->
+                onComplete(Result.failure(error))
+            }
 
             busy = false
         }
