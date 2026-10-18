@@ -119,6 +119,80 @@ class NartoDramaMovieProvider(
         return MovieDetail(catalog, episodes)
     }
 
+    fun diagnostics(query: String): String {
+        val normalized = query.trim().ifBlank { "tôi có ba bạn gái" }
+        val slug = parseWatchUrl(normalized)?.first
+            ?: slugify(normalized).ifBlank { "toi-co-ba-ban-gai-nho-he-thong" }
+
+        val urls = (catalogUrls() + watchUrls(slug, 1)).distinct()
+        val lines = mutableListOf<String>()
+        lines += "Narto diagnostics"
+        lines += "Query: " + normalized
+        lines += "Slug: " + slug
+        lines += "Targets: " + urls.size
+
+        urls.forEachIndexed { index, url ->
+            val started = System.nanoTime()
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", USER_AGENT)
+                .header(
+                    "Accept",
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                )
+                .header("Accept-Language", "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7")
+                .get()
+                .build()
+
+            runCatching {
+                http.newCall(request).execute().use { response ->
+                    val body = response.body?.string().orEmpty()
+                    val elapsedMs = (System.nanoTime() - started) / 1_000_000L
+                    val finalUrl = response.request.url.toString()
+                    val contentType = response.header("Content-Type").orEmpty()
+                    val challenge = looksLikeChallenge(body, finalUrl, response.code)
+                    val detailLinks = DETAIL_HREF_REGEX.findAll(
+                        normalizeEmbeddedText(body)
+                    ).count()
+                    val parsedCards = runCatching {
+                        extractCatalogItems(body).size
+                    }.getOrDefault(-1)
+                    val queryMatches = runCatching {
+                        val q = normalizeSearchText(normalized)
+                        extractCatalogItems(body).count {
+                            val title = normalizeSearchText(it.title)
+                            title.contains(q) || q.contains(title)
+                        }
+                    }.getOrDefault(-1)
+                    val hasTargetSlug = body.contains(slug, ignoreCase = true)
+                    val hasSignedHls = extractSignedHlsUrl(body) != null
+
+                    lines += ""
+                    lines += "[" + (index + 1) + "] " + url
+                    lines += "HTTP: " + response.code + " · " + elapsedMs + " ms"
+                    lines += "Final: " + finalUrl
+                    lines += "Type: " + contentType.ifBlank { "(none)" }
+                    lines += "Body: " + body.length + " chars"
+                    lines += "Challenge: " + challenge
+                    lines += "detail/watch links: " + detailLinks
+                    lines += "Parsed cards: " + parsedCards
+                    lines += "Query matches: " + queryMatches
+                    lines += "Target slug present: " + hasTargetSlug
+                    lines += "Signed HLS present: " + hasSignedHls
+                }
+            }.onFailure { error ->
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000L
+                lines += ""
+                lines += "[" + (index + 1) + "] " + url
+                lines += "ERROR after " + elapsedMs + " ms"
+                lines += error.javaClass.simpleName + ": " +
+                    (error.message ?: "unknown error")
+            }
+        }
+
+        return lines.joinToString("\n")
+    }
+
     override fun resolve(mediaId: String): MoviePlayback {
         val parsed = parseMediaId(mediaId)
             ?: throw IOException("Unsupported Narto media id")
@@ -376,6 +450,22 @@ class NartoDramaMovieProvider(
             htmlDecode(TAG_REGEX.replace(value, " "))
                 .replace(Regex("""\s+"""), " ")
                 .trim()
+
+        internal fun looksLikeChallenge(
+            body: String,
+            finalUrl: String,
+            statusCode: Int
+        ): Boolean {
+            val text = body.lowercase()
+            val url = finalUrl.lowercase()
+            return statusCode == 403 ||
+                statusCode == 429 ||
+                "challenges.cloudflare.com" in url ||
+                "cf-chl-" in text ||
+                "challenge-platform" in text ||
+                "turnstile" in text ||
+                "just a moment" in text
+        }
 
         internal fun slugify(value: String): String {
             val ascii = Normalizer.normalize(value, Normalizer.Form.NFD)
