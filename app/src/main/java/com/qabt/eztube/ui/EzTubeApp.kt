@@ -2514,6 +2514,17 @@ private fun NartoUnlockScreen(
         }
     }
 
+    fun closePopup() {
+        popupOpenSeen.set(false)
+        addDiagnostic("popup-close", popupWebView?.url)
+        popupWebView?.stopLoading()
+        popupWebView?.destroy()
+        popupWebView = null
+        popupVisible = false
+        popupTitle = "Quảng cáo"
+        notifyMainReturned()
+    }
+
     fun probePopupClosable(reason: String) {
         val popup = popupWebView ?: return
         popup.evaluateJavascript(
@@ -2575,17 +2586,6 @@ private fun NartoUnlockScreen(
                 )
             }
         }
-    }
-
-    fun closePopup() {
-        popupOpenSeen.set(false)
-        addDiagnostic("popup-close", popupWebView?.url)
-        popupWebView?.stopLoading()
-        popupWebView?.destroy()
-        popupWebView = null
-        popupVisible = false
-        popupTitle = "Quảng cáo"
-        notifyMainReturned()
     }
 
     BackHandler {
