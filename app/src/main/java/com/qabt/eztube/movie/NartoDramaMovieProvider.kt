@@ -261,6 +261,10 @@ class NartoDramaMovieProvider(
             """<a\b[^>]*href\s*=\s*["']([^"']*?/detail/watch/([a-z0-9-]+)(?:/\d+)?[^"']*)["'][^>]*>(.*?)</a>""",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
+        private val DETAIL_HREF_REGEX = Regex(
+            """href\s*=\s*["']([^"']*?/detail/watch/([a-z0-9-]+)(?:/\d+)?[^"']*)["']""",
+            RegexOption.IGNORE_CASE
+        )
         private val HEADING_REGEX = Regex(
             """<h[1-6]\b[^>]*>(.*?)</h[1-6]>""",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
@@ -276,44 +280,85 @@ class NartoDramaMovieProvider(
 
         internal fun extractCatalogItems(body: String): List<MovieCatalogItem> {
             val normalizedBody = normalizeEmbeddedText(body)
-            return CATALOG_ANCHOR_REGEX.findAll(normalizedBody)
+
+            val strict = CATALOG_ANCHOR_REGEX.findAll(normalizedBody)
+                .mapNotNull { match ->
+                    catalogItemFromBlock(
+                        slug = match.groupValues.getOrNull(2)?.lowercase().orEmpty(),
+                        block = match.groupValues.getOrNull(3).orEmpty()
+                    )
+                }
+                .toList()
+
+            val relaxed = DETAIL_HREF_REGEX.findAll(normalizedBody)
                 .mapNotNull { match ->
                     val slug = match.groupValues.getOrNull(2)?.lowercase().orEmpty()
                     if (!SLUG_REGEX.matches(slug)) return@mapNotNull null
 
-                    val block = match.groupValues.getOrNull(3).orEmpty()
-                    val heading = HEADING_REGEX.find(block)
-                        ?.groupValues?.getOrNull(1)
-                        ?.let(::stripTags)
-                        ?.trim()
-                        ?.takeIf { it.isNotBlank() }
-                        ?: return@mapNotNull null
+                    // Narto cards do not always wrap the title inside the same <a>.
+                    // Search a bounded neighborhood around the href so sibling
+                    // headings/images/episode labels are still associated.
+                    val start = (match.range.first - 1400).coerceAtLeast(0)
+                    val end = (match.range.last + 2200).coerceAtMost(normalizedBody.lastIndex)
+                    val block = normalizedBody.substring(start, end + 1)
+                    catalogItemFromBlock(slug, block)
+                }
+                .toList()
 
-                    val epCount = EP_COUNT_REGEX.find(stripTags(block))
-                        ?.groupValues?.getOrNull(1)?.toIntOrNull()
-                    val image = IMG_REGEX.find(block)
-                        ?.groupValues?.getOrNull(1)
-                        ?.let(::htmlDecode)
-                        ?.trim()
-                        ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            return (strict + relaxed)
+                .groupBy { it.slug }
+                .mapNotNull { (_, sameSlug) ->
+                    sameSlug.maxByOrNull {
+                        (if (!it.thumbnailUrl.isNullOrBlank()) 2 else 0) +
+                            (if (!it.episodeBadge.isNullOrBlank()) 1 else 0) +
+                            it.title.length.coerceAtMost(80)
+                    }
+                }
+        }
 
-                    MovieCatalogItem(
-                        providerId = "narto",
-                        providerName = "Narto Drama",
-                        slug = slug,
-                        title = heading,
-                        originalTitle = null,
-                        thumbnailUrl = image,
-                        year = null,
-                        language = "Tiếng Việt",
-                        durationText = null,
-                        durationSeconds = null,
-                        episodeBadge = epCount?.let { it.toString() + " tập" },
-                        isSeries = epCount?.let { it > 1 }
+        private fun catalogItemFromBlock(
+            slug: String,
+            block: String
+        ): MovieCatalogItem? {
+            if (!SLUG_REGEX.matches(slug)) return null
+
+            val visible = stripTags(block)
+            val heading = HEADING_REGEX.findAll(block)
+                .mapNotNull { it.groupValues.getOrNull(1)?.let(::stripTags) }
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .minByOrNull { candidate ->
+                    // Prefer the heading that semantically resembles the slug.
+                    kotlin.math.abs(
+                        normalizeSearchText(candidate).length -
+                            normalizeSearchText(slug.replace('-', ' ')).length
                     )
                 }
-                .distinctBy { it.slug }
-                .toList()
+                ?: return null
+
+            val epCount = EP_COUNT_REGEX.find(visible)
+                ?.groupValues?.getOrNull(1)?.toIntOrNull()
+
+            val image = IMG_REGEX.find(block)
+                ?.groupValues?.getOrNull(1)
+                ?.let(::htmlDecode)
+                ?.trim()
+                ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+
+            return MovieCatalogItem(
+                providerId = "narto",
+                providerName = "Narto Drama",
+                slug = slug,
+                title = heading,
+                originalTitle = null,
+                thumbnailUrl = image,
+                year = null,
+                language = "Tiếng Việt",
+                durationText = null,
+                durationSeconds = null,
+                episodeBadge = epCount?.let { it.toString() + " tập" },
+                isSeries = epCount?.let { it > 1 }
+            )
         }
 
         internal fun normalizeSearchText(value: String): String {
