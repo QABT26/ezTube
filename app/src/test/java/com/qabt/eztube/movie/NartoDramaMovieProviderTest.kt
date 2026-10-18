@@ -25,6 +25,27 @@ class NartoDramaMovieProviderTest {
     }
 
     @Test
+    fun parsesCatalogWhenTitleIsSiblingOfWatchLink() {
+        val html = """
+            <article>
+                <a href="/detail/watch/toi-co-ba-ban-gai-nho-he-thong/1?lang=vi-VN">
+                    <img src="https://cdn.example/poster.jpg">
+                </a>
+                <div class="meta">
+                    <h3>Tôi Có Ba Bạn Gái Nhờ Hệ Thống</h3>
+                    <span>Ep: 30</span>
+                </div>
+            </article>
+        """.trimIndent()
+
+        val item = NartoDramaMovieProvider.extractCatalogItems(html).single()
+
+        assertEquals("toi-co-ba-ban-gai-nho-he-thong", item.slug)
+        assertEquals("Tôi Có Ba Bạn Gái Nhờ Hệ Thống", item.title)
+        assertEquals("30 tập", item.episodeBadge)
+    }
+
+    @Test
     fun slugifiesVietnameseTitleForExactTitleLookup() {
         assertEquals(
             "toi-co-ba-ban-gai-nho-he-thong",
