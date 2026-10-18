@@ -2323,6 +2323,9 @@ private fun NartoUnlockScreen(
     val gateUnlockSeen = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
+    val popupOpenSeen = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
     val diagnosticEvents = remember(pageUrl) { mutableStateListOf<String>() }
     var diagnosticSeq by remember(pageUrl) { mutableIntStateOf(0) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
@@ -2575,6 +2578,7 @@ private fun NartoUnlockScreen(
     }
 
     fun closePopup() {
+        popupOpenSeen.set(false)
         addDiagnostic("popup-close", popupWebView?.url)
         popupWebView?.stopLoading()
         popupWebView?.destroy()
@@ -2710,6 +2714,26 @@ private fun NartoUnlockScreen(
                                 }.getOrNull()
                                 val path = uri?.path.orEmpty()
                                 val nartoHost = uri?.host.orEmpty().lowercase()
+
+                                if (
+                                    nartoHost == "edge.narto-drama.com" &&
+                                    path == "/wrapper-guard/report" &&
+                                    popupOpenSeen.compareAndSet(true, false)
+                                ) {
+                                    addDiagnostic("wrapper-guard-confirmed", value)
+                                    mainHandler.postDelayed(
+                                        {
+                                            if (popupVisible) {
+                                                addDiagnostic(
+                                                    "auto-close-popup-after-report",
+                                                    popupWebView?.url
+                                                )
+                                                closePopup()
+                                            }
+                                        },
+                                        250
+                                    )
+                                }
 
                                 if (
                                     nartoHost == "edge.narto-drama.com" &&
@@ -2875,6 +2899,7 @@ private fun NartoUnlockScreen(
                                     }
 
                                     addDiagnostic("popup-open-request")
+                                    popupOpenSeen.set(true)
                                     popupWebView = child
                                     popupVisible = true
                                     transport.webView = child
