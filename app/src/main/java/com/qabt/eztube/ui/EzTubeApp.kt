@@ -821,7 +821,7 @@ fun EzTubeApp(
         }, context.mainExecutor)
     }
 
-    fun playCapturedNartoHls(hlsUrl: String) {
+    fun playCapturedNartoHls(hlsUrl: String, subtitleUrl: String?) {
         val media = nartoUnlockMedia ?: return
         val pageUrl = nartoUnlockPageUrl ?: return
         val active = controller ?: run {
@@ -835,6 +835,9 @@ fun EzTubeApp(
         val args = android.os.Bundle().apply {
             putString(PlaybackService.ARG_HLS_URL, hlsUrl)
             putString(PlaybackService.ARG_REFERER, pageUrl)
+            subtitleUrl?.takeIf { it.isNotBlank() }?.let {
+                putString(PlaybackService.ARG_SUBTITLE_URL, it)
+            }
             putLong(
                 PlaybackService.ARG_POSITION_MS,
                 nartoUnlockStartPositionMs.coerceAtLeast(0L)
@@ -1438,9 +1441,9 @@ fun EzTubeApp(
                 media = requireNotNull(nartoUnlockMedia),
                 pageUrl = requireNotNull(nartoUnlockPageUrl),
                 status = nartoUnlockStatus,
-                onStreamCaptured = { hlsUrl ->
+                onStreamCaptured = { hlsUrl, subtitleUrl ->
                     if (nartoUnlockMedia != null) {
-                        playCapturedNartoHls(hlsUrl)
+                        playCapturedNartoHls(hlsUrl, subtitleUrl)
                     }
                 },
                 onCancel = {
@@ -2306,7 +2309,7 @@ private fun NartoUnlockScreen(
     media: MediaSummary,
     pageUrl: String,
     status: String?,
-    onStreamCaptured: (String) -> Unit,
+    onStreamCaptured: (String, String?) -> Unit,
     onCancel: () -> Unit
 ) {
     var mainWebView by remember(pageUrl) {
@@ -2321,6 +2324,7 @@ private fun NartoUnlockScreen(
     val playbackCaptured = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
+    var capturedSubtitleUrl by remember(pageUrl) { mutableStateOf<String?>(null) }
     val gateUnlockSeen = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
@@ -2416,6 +2420,18 @@ private fun NartoUnlockScreen(
                   out.push(kind + "|" + String(value));
                 };
 
+                document.querySelectorAll('track').forEach((t) => {
+                  const kind = String(t.kind || '').toLowerCase();
+                  const lang = String(t.srclang || t.label || '').toLowerCase();
+                  if (
+                    kind === 'subtitles' ||
+                    kind === 'captions' ||
+                    lang.includes('vi') ||
+                    lang.includes('viet')
+                  ) {
+                    push('track.src', t.src);
+                  }
+                });
                 document.querySelectorAll('video').forEach((v) => {
                   push('video.currentSrc', v.currentSrc);
                   push('video.src', v.src);
@@ -2463,6 +2479,19 @@ private fun NartoUnlockScreen(
                         }.getOrNull()
                         val host = uri?.host.orEmpty().lowercase()
                         val path = uri?.path.orEmpty()
+
+                        if (
+                            kind == "track.src" &&
+                            uri?.scheme == "https" &&
+                            (
+                                host == "edge.narto-drama.com" ||
+                                host == "narto-drama.com"
+                            ) &&
+                            path.startsWith("/e/s/")
+                        ) {
+                            capturedSubtitleUrl = url
+                            addDiagnostic("vietsub-track-detected", url)
+                        }
                         val nartoPlayable =
                             (
                                 host == "stream.narto-drama.com" ||
@@ -2486,7 +2515,7 @@ private fun NartoUnlockScreen(
                             playbackCaptured.compareAndSet(false, true)
                         ) {
                             addDiagnostic("probe-playable-manifest", url)
-                            onStreamCaptured(url)
+                            onStreamCaptured(url, capturedSubtitleUrl)
                         }
                     }
                 }
@@ -2788,7 +2817,7 @@ private fun NartoUnlockScreen(
                                     path.endsWith(".m3u8", ignoreCase = true)
 
                                 if (
-                                    (nartoManifest || unlockedUpstreamManifest) &&
+                                    nartoManifest &&
                                     playbackCaptured.compareAndSet(false, true)
                                 ) {
                                     addDiagnostic("signed-hls-detected", value)
@@ -2796,8 +2825,12 @@ private fun NartoUnlockScreen(
                                         android.os.Looper.getMainLooper()
                                     ).post {
                                         cookieManager.flush()
-                                        onStreamCaptured(value)
+                                        onStreamCaptured(value, capturedSubtitleUrl)
                                     }
+                                } else if (unlockedUpstreamManifest) {
+                                    // The page's <track> element is probed first so Vietsub
+                                    // can be attached to the Media3 item before handoff.
+                                    mainHandler.post { probeMainPlayback("upstream-manifest") }
                                 }
                             }
 
