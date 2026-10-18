@@ -33,6 +33,37 @@ class NartoDramaMovieProviderTest {
     }
 
     @Test
+    fun normalizesRelativeAndProtocolRelativeArtworkUrls() {
+        assertEquals(
+            "https://edge.narto-drama.com/images/poster.webp",
+            NartoDramaMovieProvider.normalizeImageUrl("/images/poster.webp")
+        )
+        assertEquals(
+            "https://cdn.example/poster.webp",
+            NartoDramaMovieProvider.normalizeImageUrl("//cdn.example/poster.webp")
+        )
+    }
+
+    @Test
+    fun doesNotTreatLargeCatalogWithTurnstileScriptAsChallenge() {
+        val body = buildString {
+            append("<html><script>turnstile challenge-platform</script>")
+            append("<h3>Tôi Có Ba Bạn Gái Nhờ Hệ Thống</h3>")
+            append("<a href=\"/detail/watch/toi-co-ba-ban-gai-nho-he-thong/1\">Xem</a>")
+            append("x".repeat(25_000))
+            append("</html>")
+        }
+
+        assertFalse(
+            NartoDramaMovieProvider.looksLikeChallenge(
+                body,
+                "https://edge.narto-drama.com/",
+                200
+            )
+        )
+    }
+
+    @Test
     fun parsesNartoCatalogCardsForPartialTitleSearch() {
         val html = """
             <a href="/detail/watch/toi-co-ba-ban-gai-nho-he-thong/1?lang=vi-VN">
