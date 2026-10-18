@@ -32,6 +32,7 @@ class PlaybackService : MediaSessionService() {
         const val COMMAND_QUEUE_CHANGED = "com.qabt.eztube.QUEUE_CHANGED"
         const val COMMAND_RELOAD_CURRENT = "com.qabt.eztube.RELOAD_CURRENT"
         const val COMMAND_PLAY_CURRENT = "com.qabt.eztube.PLAY_CURRENT"
+        const val COMMAND_PLAY_DIRECT_HLS = "com.qabt.eztube.PLAY_DIRECT_HLS"
         const val COMMAND_SET_VIDEO_QUALITY = "com.qabt.eztube.SET_VIDEO_QUALITY"
         const val COMMAND_GET_SABR_DIAGNOSTIC = "com.qabt.eztube.GET_SABR_DIAGNOSTIC"
         const val COMMAND_SET_SLEEP_END_CURRENT = "com.qabt.eztube.SET_SLEEP_END_CURRENT"
@@ -45,6 +46,8 @@ class PlaybackService : MediaSessionService() {
         const val ARG_POSITION_MS = "position_ms"
         const val ARG_PLAY_WHEN_READY = "play_when_ready"
         const val ARG_ERROR_MESSAGE = "error_message"
+        const val ARG_HLS_URL = "hls_url"
+        const val ARG_REFERER = "referer"
         const val EXTRA_COMPATIBILITY_FALLBACK = "compatibility_fallback"
         const val EXTRA_VIDEO_HEIGHT = "video_height"
         const val EXTRA_PLAYBACK_ENGINE = "playback_engine"
@@ -241,6 +244,7 @@ class PlaybackService : MediaSessionService() {
                         .add(androidx.media3.session.SessionCommand(COMMAND_QUEUE_CHANGED, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_RELOAD_CURRENT, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_PLAY_CURRENT, android.os.Bundle.EMPTY))
+                        .add(androidx.media3.session.SessionCommand(COMMAND_PLAY_DIRECT_HLS, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_SET_VIDEO_QUALITY, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_GET_SABR_DIAGNOSTIC, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_SET_SLEEP_END_CURRENT, android.os.Bundle.EMPTY))
@@ -319,6 +323,36 @@ class PlaybackService : MediaSessionService() {
                                     )
                                 }
                                 future.set(SessionResult(SessionResult.RESULT_ERROR_UNKNOWN, extras))
+                            }
+                        }
+                        return future
+                    }
+                    if (customCommand.customAction == COMMAND_PLAY_DIRECT_HLS) {
+                        val hlsUrl = args.getString(ARG_HLS_URL).orEmpty()
+                        val referer = args.getString(ARG_REFERER).orEmpty()
+                        val future = com.google.common.util.concurrent.SettableFuture.create<SessionResult>()
+                        queueManager.playDirectMovieHls(
+                            hlsUrl = hlsUrl,
+                            referer = referer,
+                            positionMs = args.getLong(ARG_POSITION_MS, 0L),
+                            playWhenReady = args.getBoolean(ARG_PLAY_WHEN_READY, true)
+                        ) { result ->
+                            if (result.isSuccess) {
+                                future.set(SessionResult(SessionResult.RESULT_SUCCESS))
+                            } else {
+                                val extras = android.os.Bundle().apply {
+                                    putString(
+                                        ARG_ERROR_MESSAGE,
+                                        result.exceptionOrNull()?.message
+                                            ?: "Unable to play Narto stream"
+                                    )
+                                }
+                                future.set(
+                                    SessionResult(
+                                        SessionResult.RESULT_ERROR_UNKNOWN,
+                                        extras
+                                    )
+                                )
                             }
                         }
                         return future
