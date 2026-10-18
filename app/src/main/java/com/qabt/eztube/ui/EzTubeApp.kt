@@ -310,9 +310,6 @@ fun EzTubeApp(
     var nartoUnlockStartPositionMs by remember { mutableLongStateOf(0L) }
     var nartoUnlockStatus by remember { mutableStateOf<String?>(null) }
     var nartoSessionUnlocked by remember { mutableStateOf(false) }
-    var nartoSessionWebView by remember {
-        mutableStateOf<android.webkit.WebView?>(null)
-    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -1489,8 +1486,6 @@ fun EzTubeApp(
                 media = requireNotNull(nartoUnlockMedia),
                 pageUrl = requireNotNull(nartoUnlockPageUrl),
                 status = nartoUnlockStatus,
-                sessionWebView = nartoSessionWebView,
-                onSessionWebView = { nartoSessionWebView = it },
                 sessionPreviouslyUnlocked = nartoSessionUnlocked,
                 onSessionUnlocked = { nartoSessionUnlocked = true },
                 onStreamCaptured = { hlsUrl, subtitleUrl ->
@@ -2361,15 +2356,13 @@ private fun NartoUnlockScreen(
     media: MediaSummary,
     pageUrl: String,
     status: String?,
-    sessionWebView: android.webkit.WebView?,
-    onSessionWebView: (android.webkit.WebView) -> Unit,
     sessionPreviouslyUnlocked: Boolean,
     onSessionUnlocked: () -> Unit,
     onStreamCaptured: (String, String?) -> Unit,
     onCancel: () -> Unit
 ) {
-    var mainWebView by remember(sessionWebView) {
-        mutableStateOf(sessionWebView)
+    var mainWebView by remember(pageUrl) {
+        mutableStateOf<android.webkit.WebView?>(null)
     }
     var popupWebView by remember(pageUrl) {
         mutableStateOf<android.webkit.WebView?>(null)
@@ -3378,48 +3371,29 @@ private fun NartoUnlockScreen(
                 }
             }
 
-            AndroidView(
+            key(pageUrl) {
+                AndroidView(
                     factory = { webContext ->
-                        val active = sessionWebView ?: android.webkit.WebView(webContext).also {
-                            onSessionWebView(it)
-                        }
-                        mainWebView = active
-                        configureMainWebView(active, webContext)
-                        active.onResume()
-                        if (!sameEpisodeUrl(active.url, pageUrl)) {
+                        android.webkit.WebView(webContext).apply {
+                            mainWebView = this
+                            configureMainWebView(this, webContext)
                             pageReadyForCapture = false
                             playbackCaptured.set(false)
                             capturedSubtitleUrl = null
                             subtitleWaitArmed.set(false)
-                            addDiagnostic("main-session-navigate", pageUrl)
-                            active.stopLoading()
-                            active.loadUrl(pageUrl)
-                        } else {
-                            notifyMainReturned()
+                            addDiagnostic("main-load", pageUrl)
+                            loadUrl(pageUrl)
                         }
-                        active
                     },
                     update = { active ->
                         mainWebView = active
-                        configureMainWebView(active, active.context)
                         active.onResume()
-                        if (!sameEpisodeUrl(active.url, pageUrl)) {
-                            pageReadyForCapture = false
-                            playbackCaptured.set(false)
-                            capturedSubtitleUrl = null
-                            subtitleWaitArmed.set(false)
-                            addDiagnostic("main-session-navigate", pageUrl)
-                            active.stopLoading()
-                            active.loadUrl(pageUrl)
-                        } else {
-                            // Re-entering the same episode after player/navigation: wake it.
-                            notifyMainReturned()
-                        }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                 )
+            }
         }
 
         if (popupVisible) {
@@ -3493,10 +3467,14 @@ private fun NartoUnlockScreen(
     DisposableEffect(pageUrl) {
         onDispose {
             cookieManager.flush()
+            popupWebView?.stopLoading()
             popupWebView?.destroy()
             popupWebView = null
             popupVisible = false
+            mainWebView?.stopLoading()
             mainWebView?.onPause()
+            mainWebView?.destroy()
+            mainWebView = null
         }
     }
 }
