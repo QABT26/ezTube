@@ -7,6 +7,14 @@ import org.junit.Test
 
 class NartoDramaMovieProviderTest {
     @Test
+    fun slugifiesVietnameseTitleForExactTitleLookup() {
+        assertEquals(
+            "toi-co-ba-ban-gai-nho-he-thong",
+            NartoDramaMovieProvider.slugify("Tôi Có Ba Bạn Gái Nhờ Hệ Thống")
+        )
+    }
+
+    @Test
     fun parsesDirectWatchUrlWithoutPersistingSignedPlayback() {
         val parsed = NartoDramaMovieProvider.parseWatchUrl(
             "https://narto-drama.com/detail/watch/toi-co-ba-ban-gai-nho-he-thong/12?lang=vi-VN"
