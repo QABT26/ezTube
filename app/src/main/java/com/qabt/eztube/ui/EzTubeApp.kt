@@ -3541,7 +3541,7 @@ private fun SearchResult(
                     ),
                     color = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
+                        .align(Alignment.BottomStart)
                         .padding(3.dp)
                         .background(
                             MaterialTheme.colorScheme.scrim.copy(alpha = 0.78f),
@@ -3550,6 +3550,23 @@ private fun SearchResult(
                         .padding(horizontal = 3.dp, vertical = 0.dp)
                 )
             }
+
+            Text(
+                mediaSourceBadge(media),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.72f,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(3.dp)
+                    .background(
+                        MaterialTheme.colorScheme.scrim.copy(alpha = 0.82f),
+                        RoundedCornerShape(4.dp)
+                    )
+                    .padding(horizontal = 4.dp, vertical = 0.dp)
+            )
             progressEntry
                 ?.progress
                 ?.takeIf { it > 0f }
@@ -3849,6 +3866,18 @@ private fun NetworkStatusIcon(
             MaterialTheme.colorScheme.onSurfaceVariant
         }
     )
+}
+
+private fun mediaSourceBadge(media: MediaSummary): String {
+    val id = media.id.lowercase()
+    return when {
+        id.startsWith("movie-title:narto:") || id.startsWith("movie:narto:") -> "NARTO"
+        id.startsWith("movie-title:phimapi:") || id.startsWith("movie:phimapi:") -> "KKPHIM"
+        id.startsWith("movie-title:ophim:") || id.startsWith("movie:ophim:") -> "OPHIM"
+        id.startsWith("movie-title:motphim:") || id.startsWith("movie:motphim:") -> "MOTPHIM"
+        id.startsWith("movie-title:biliintl:") || id.startsWith("movie:biliintl:") -> "BILI"
+        else -> "YT"
+    }
 }
 
 private fun formatBytes(bytes: Long): String {
