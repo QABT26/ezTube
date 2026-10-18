@@ -2344,17 +2344,18 @@ private fun NartoUnlockScreen(
     }
 
     fun addDiagnostic(event: String, rawUrl: String? = null) {
-        val line = buildString {
-            diagnosticSeq += 1
-            append(diagnosticSeq.toString().padStart(3, '0'))
-            append(" · ")
-            append(event)
-            rawUrl?.let {
-                append(" · ")
-                append(sanitizeDiagnosticUrl(it))
-            }
-        }
+        val sanitized = rawUrl?.let(::sanitizeDiagnosticUrl)
         mainHandler.post {
+            diagnosticSeq += 1
+            val line = buildString {
+                append(diagnosticSeq.toString().padStart(3, '0'))
+                append(" · ")
+                append(event)
+                sanitized?.let {
+                    append(" · ")
+                    append(it)
+                }
+            }
             if (diagnosticEvents.size >= 120) {
                 diagnosticEvents.removeRange(0, diagnosticEvents.size - 119)
             }
