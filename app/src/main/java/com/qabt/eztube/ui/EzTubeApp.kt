@@ -371,6 +371,11 @@ fun EzTubeApp(
     var movieDetailError by remember { mutableStateOf<String?>(null) }
     var movieDetailFocusId by remember { mutableStateOf<String?>(null) }
 
+    val currentAutoplay = rememberUpdatedState(autoplay)
+    val currentSleepMinutes = rememberUpdatedState(sleepMinutes)
+    val currentQueue = rememberUpdatedState(queue)
+    val currentQueueIndex = rememberUpdatedState(queueIndex)
+
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
@@ -479,17 +484,19 @@ fun EzTubeApp(
 
                         if (
                             state == Player.STATE_ENDED &&
-                            autoplay &&
-                            sleepMinutes != -1 &&
-                            queueIndex in queue.indices &&
-                            queueIndex < queue.lastIndex
+                            currentAutoplay.value &&
+                            currentSleepMinutes.value != -1 &&
+                            currentQueueIndex.value in currentQueue.value.indices &&
+                            currentQueueIndex.value < currentQueue.value.lastIndex
                         ) {
-                            val nextIndex = queueIndex + 1
-                            val next = queue[nextIndex]
+                            val activeQueue = currentQueue.value
+                            val activeIndex = currentQueueIndex.value
+                            val nextIndex = activeIndex + 1
+                            val next = activeQueue[nextIndex]
 
                             if (next.id.startsWith("movie:narto:")) {
                                 queueIndex = nextIndex
-                                playbackPrefs.saveQueue(queue, queueIndex)
+                                playbackPrefs.saveQueue(activeQueue, nextIndex)
                                 nowPlaying = next
                                 val nextPage = movieProviders.nartoWatchPageUrl(next.id)
                                 if (nextPage != null) {
@@ -2377,12 +2384,13 @@ private fun NartoUnlockScreen(
     val subtitleWaitArmed = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
-    val gateUnlockSeen = remember(pageUrl, sessionPreviouslyUnlocked) {
-        java.util.concurrent.atomic.AtomicBoolean(sessionPreviouslyUnlocked)
+    val gateUnlockSeen = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
     }
     val popupOpenSeen = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
+    var pageReadyForCapture by remember(pageUrl) { mutableStateOf(false) }
     val diagnosticEvents = remember(pageUrl) { mutableStateListOf<String>() }
     var diagnosticSeq by remember(pageUrl) { mutableIntStateOf(0) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
@@ -2458,8 +2466,19 @@ private fun NartoUnlockScreen(
         }
     }
 
+    fun sameEpisodeUrl(a: String?, b: String): Boolean {
+        val left = runCatching { android.net.Uri.parse(a.orEmpty()) }.getOrNull()
+        val right = runCatching { android.net.Uri.parse(b) }.getOrNull()
+        return left?.host.orEmpty().equals(right?.host.orEmpty(), ignoreCase = true) &&
+            left?.path.orEmpty() == right?.path.orEmpty()
+    }
+
     fun probeMainPlayback(reason: String) {
         val active = mainWebView ?: return
+        if (!pageReadyForCapture || !sameEpisodeUrl(active.url, pageUrl)) {
+            addDiagnostic("probe-skip-stale-page:" + reason, active.url)
+            return
+        }
         addDiagnostic("probe-start:" + reason, active.url)
 
         if (gateUnlockSeen.get() && capturedSubtitleUrl == null) {
@@ -2512,6 +2531,16 @@ private fun NartoUnlockScreen(
                         return ax - bx;
                       })
                       .forEach((e) => candidates.push(String(e.name || '')));
+                  } catch (e) {}
+
+                  try {
+                    const html = String(document.documentElement?.innerHTML || '');
+                    const absolute = html.match(/https:\/\/[^"'\\s<>]+\/e\/s\/[^"'\\s<>]+/gi) || [];
+                    absolute.forEach((u) => candidates.push(u.replace(/\\u0026/g, '&')));
+                    const relative = html.match(/\/e\/s\/[^"'\\s<>]+/gi) || [];
+                    relative.forEach((u) => {
+                      try { candidates.push(new URL(u, location.href).href); } catch (e) {}
+                    });
                   } catch (e) {}
 
                   (async () => {
@@ -2763,41 +2792,81 @@ private fun NartoUnlockScreen(
                   .trim()
                   .toLowerCase()
                   .replace(/\\s+/g, ' ');
-                const candidates = Array.from(
-                  document.querySelectorAll('button,a,[role="button"]')
-                );
-                const target = candidates.find((el) => {
-                  const text = norm(el.innerText || el.textContent);
-                  const aria = norm(el.getAttribute('aria-label'));
-                  return (
-                    text === 'mở quảng cáo' ||
-                    text === 'mo quang cao' ||
-                    aria === 'mở quảng cáo' ||
-                    aria === 'mo quang cao'
+
+                const findIn = (doc) => {
+                  const nodes = Array.from(
+                    doc.querySelectorAll('button,a,[role="button"],input[type="button"],input[type="submit"]')
                   );
-                });
+                  for (const el of nodes) {
+                    const text = norm(el.innerText || el.textContent || el.value);
+                    const aria = norm(el.getAttribute && el.getAttribute('aria-label'));
+                    if (
+                      text.includes('mở quảng cáo') ||
+                      text.includes('mo quang cao') ||
+                      aria.includes('mở quảng cáo') ||
+                      aria.includes('mo quang cao')
+                    ) return el;
+                  }
+                  for (const frame of Array.from(doc.querySelectorAll('iframe'))) {
+                    try {
+                      const found = frame.contentDocument && findIn(frame.contentDocument);
+                      if (found) return found;
+                    } catch (e) {}
+                  }
+                  return null;
+                };
+
+                const target = findIn(document);
                 if (!target) return 'not-found';
-                try {
-                  target.scrollIntoView({block:'center', inline:'center'});
-                } catch (e) {}
-                target.click();
-                return 'clicked';
+                try { target.scrollIntoView({block:'center', inline:'center'}); } catch (e) {}
+                const r = target.getBoundingClientRect();
+                return JSON.stringify({
+                  x: r.left + r.width / 2,
+                  y: r.top + r.height / 2
+                });
               } catch (e) {
                 return 'error';
               }
             })();
             """.trimIndent()
         ) { raw ->
-            val result = runCatching {
+            val decoded = runCatching {
                 org.json.JSONTokener(raw).nextValue() as? String
             }.getOrNull().orEmpty()
-            addDiagnostic("header-open-ad-" + result)
-            if (result == "not-found") {
+
+            if (decoded == "not-found" || decoded == "error" || decoded.isBlank()) {
+                addDiagnostic("header-open-ad-" + decoded.ifBlank { "empty" })
                 android.widget.Toast.makeText(
                     context,
                     "Chưa thấy nút Mở quảng cáo",
                     android.widget.Toast.LENGTH_SHORT
                 ).show()
+                return@evaluateJavascript
+            }
+
+            runCatching {
+                val point = org.json.JSONObject(decoded)
+                val scale = active.scale
+                val x = (point.getDouble("x") * scale).toFloat()
+                val y = (point.getDouble("y") * scale).toFloat()
+                val downTime = android.os.SystemClock.uptimeMillis()
+                val down = android.view.MotionEvent.obtain(
+                    downTime, downTime,
+                    android.view.MotionEvent.ACTION_DOWN,
+                    x, y, 0
+                )
+                val up = android.view.MotionEvent.obtain(
+                    downTime, downTime + 60L,
+                    android.view.MotionEvent.ACTION_UP,
+                    x, y, 0
+                )
+                active.dispatchTouchEvent(down)
+                active.dispatchTouchEvent(up)
+                down.recycle()
+                up.recycle()
+                addDiagnostic("header-open-ad-touch-forwarded")
+            }.onFailure {
+                addDiagnostic("header-open-ad-touch-error")
             }
         }
     }
@@ -3094,8 +3163,8 @@ private fun NartoUnlockScreen(
                                 addDiagnostic("popup-page-finish", url)
                                 cookieManager.flush()
                                 mainHandler.postDelayed(
-                                    { probePopupClosable("page+150ms") },
-                                    150
+                                    { probePopupClosable("page+75ms") },
+                                    75
                                 )
                                 mainHandler.postDelayed(
                                     { probePopupClosable("page+2000ms") },
@@ -3137,7 +3206,7 @@ private fun NartoUnlockScreen(
                                 closePopup()
                             }
                         },
-                        1000
+                        700
                     )
                     return true
                 }
@@ -3175,6 +3244,9 @@ private fun NartoUnlockScreen(
                     url: String?,
                     favicon: android.graphics.Bitmap?
                 ) {
+                    if (sameEpisodeUrl(url, pageUrl)) {
+                        pageReadyForCapture = false
+                    }
                     addDiagnostic("main-page-start", url)
                 }
             
@@ -3198,10 +3270,13 @@ private fun NartoUnlockScreen(
                 ) {
                     addDiagnostic("main-page-finish", url)
                     cookieManager.flush()
-                    mainHandler.postDelayed(
-                        { probeMainPlayback("page-finish+500ms") },
-                        500
-                    )
+                    if (sameEpisodeUrl(url, pageUrl)) {
+                        pageReadyForCapture = true
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("page-finish+250ms") },
+                            250
+                        )
+                    }
                 }
             }
             
@@ -3306,8 +3381,13 @@ private fun NartoUnlockScreen(
                         mainWebView = active
                         configureMainWebView(active, webContext)
                         active.onResume()
-                        if (active.url != pageUrl) {
+                        if (!sameEpisodeUrl(active.url, pageUrl)) {
+                            pageReadyForCapture = false
+                            playbackCaptured.set(false)
+                            capturedSubtitleUrl = null
+                            subtitleWaitArmed.set(false)
                             addDiagnostic("main-session-navigate", pageUrl)
+                            active.stopLoading()
                             active.loadUrl(pageUrl)
                         } else {
                             notifyMainReturned()
@@ -3318,8 +3398,13 @@ private fun NartoUnlockScreen(
                         mainWebView = active
                         configureMainWebView(active, active.context)
                         active.onResume()
-                        if (active.url != pageUrl) {
+                        if (!sameEpisodeUrl(active.url, pageUrl)) {
+                            pageReadyForCapture = false
+                            playbackCaptured.set(false)
+                            capturedSubtitleUrl = null
+                            subtitleWaitArmed.set(false)
                             addDiagnostic("main-session-navigate", pageUrl)
+                            active.stopLoading()
                             active.loadUrl(pageUrl)
                         } else {
                             // Re-entering the same episode after player/navigation: wake it.
