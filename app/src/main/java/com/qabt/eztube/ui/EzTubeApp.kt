@@ -2317,6 +2317,9 @@ private fun NartoUnlockScreen(
     }
     var popupVisible by remember(pageUrl) { mutableStateOf(false) }
     var popupTitle by remember(pageUrl) { mutableStateOf("Quảng cáo") }
+    val playbackCaptured = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
     val diagnosticEvents = remember(pageUrl) { mutableStateListOf<String>() }
     var diagnosticSeq by remember(pageUrl) { mutableIntStateOf(0) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
@@ -2390,6 +2393,89 @@ private fun NartoUnlockScreen(
         }
     }
 
+    fun probeMainPlayback(reason: String) {
+        val active = mainWebView ?: return
+        addDiagnostic("probe-start:" + reason, active.url)
+
+        active.evaluateJavascript(
+            """
+            (function() {
+              try {
+                const out = [];
+                const push = (kind, value) => {
+                  if (!value) return;
+                  out.push(kind + "|" + String(value));
+                };
+
+                document.querySelectorAll('video').forEach((v) => {
+                  push('video.currentSrc', v.currentSrc);
+                  push('video.src', v.src);
+                });
+                document.querySelectorAll('source').forEach((s) => {
+                  push('source.src', s.src);
+                });
+
+                try {
+                  performance.getEntriesByType('resource').forEach((e) => {
+                    const u = String(e.name || '');
+                    if (
+                      u.includes('narto-drama.com') ||
+                      u.includes('.m3u8') ||
+                      u.includes('/e/m/') ||
+                      u.includes('/e/s/')
+                    ) {
+                      push('resource', u);
+                    }
+                  });
+                } catch (e) {}
+
+                return out.slice(-80).join('\n');
+              } catch (e) {
+                return 'probe-error|' + String(e);
+              }
+            })();
+            """.trimIndent()
+        ) { raw ->
+            val decoded = runCatching {
+                org.json.JSONTokener(raw).nextValue() as? String
+            }.getOrNull().orEmpty()
+
+            decoded.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .forEach { line ->
+                    val kind = line.substringBefore('|', "probe")
+                    val url = line.substringAfter('|', "")
+                    if (url.isNotBlank()) {
+                        addDiagnostic("probe-" + kind, url)
+
+                        val uri = runCatching {
+                            android.net.Uri.parse(url)
+                        }.getOrNull()
+                        val host = uri?.host.orEmpty().lowercase()
+                        val path = uri?.path.orEmpty()
+                        val playable =
+                            (
+                                host == "stream.narto-drama.com" ||
+                                host == "edge.narto-drama.com"
+                            ) &&
+                            (
+                                path.startsWith("/e/m/") ||
+                                path.endsWith(".m3u8", ignoreCase = true)
+                            )
+
+                        if (
+                            playable &&
+                            playbackCaptured.compareAndSet(false, true)
+                        ) {
+                            addDiagnostic("probe-playable-manifest", url)
+                            onStreamCaptured(url)
+                        }
+                    }
+                }
+        }
+    }
+
     fun notifyMainReturned() {
         addDiagnostic("main-focus-return")
         cookieManager.flush()
@@ -2404,6 +2490,11 @@ private fun NartoUnlockScreen(
                 """.trimIndent(),
                 null
             )
+
+            probeMainPlayback("focus")
+            mainHandler.postDelayed({ probeMainPlayback("focus+750ms") }, 750)
+            mainHandler.postDelayed({ probeMainPlayback("focus+2000ms") }, 2000)
+            mainHandler.postDelayed({ probeMainPlayback("focus+5000ms") }, 5000)
         }
     }
 
@@ -2513,8 +2604,6 @@ private fun NartoUnlockScreen(
             key(pageUrl) {
                 AndroidView(
                     factory = { webContext ->
-                        val captured = java.util.concurrent.atomic.AtomicBoolean(false)
-
                         android.webkit.WebView(webContext).apply {
                             mainWebView = this
 
@@ -2540,11 +2629,24 @@ private fun NartoUnlockScreen(
                                 ) {
                                     addDiagnostic(event, value)
                                 }
-                                if (
-                                    value.startsWith(
-                                        "https://stream.narto-drama.com/e/m/"
+                                val uri = runCatching {
+                                    android.net.Uri.parse(value)
+                                }.getOrNull()
+                                val path = uri?.path.orEmpty()
+                                val nartoHost = uri?.host.orEmpty().lowercase()
+                                val looksLikePlayableManifest =
+                                    (
+                                        nartoHost == "stream.narto-drama.com" ||
+                                        nartoHost == "edge.narto-drama.com"
                                     ) &&
-                                    captured.compareAndSet(false, true)
+                                    (
+                                        path.startsWith("/e/m/") ||
+                                        path.endsWith(".m3u8", ignoreCase = true)
+                                    )
+
+                                if (
+                                    looksLikePlayableManifest &&
+                                    playbackCaptured.compareAndSet(false, true)
                                 ) {
                                     addDiagnostic("signed-hls-detected", value)
                                     android.os.Handler(
@@ -2707,6 +2809,10 @@ private fun NartoUnlockScreen(
                                 ) {
                                     addDiagnostic("main-page-finish", url)
                                     cookieManager.flush()
+                                    mainHandler.postDelayed(
+                                        { probeMainPlayback("page-finish+500ms") },
+                                        500
+                                    )
                                 }
                             }
 
