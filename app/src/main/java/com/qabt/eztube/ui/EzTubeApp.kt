@@ -2976,6 +2976,9 @@ private fun NartoUnlockScreen(
                 }.getOrNull()
                 val path = uri?.path.orEmpty()
                 val nartoHost = uri?.host.orEmpty().lowercase()
+                val currentEpisodeActive =
+                    pageReadyForCapture &&
+                        sameEpisodeUrl(mainWebView?.url, pageUrl)
             
                 if (
                     nartoHost == "edge.narto-drama.com" &&
@@ -2998,6 +3001,7 @@ private fun NartoUnlockScreen(
                 }
             
                 if (
+                    currentEpisodeActive &&
                     nartoHost == "edge.narto-drama.com" &&
                     path == "/player/ads/gate-unlock" &&
                     gateUnlockSeen.compareAndSet(false, true)
@@ -3062,6 +3066,7 @@ private fun NartoUnlockScreen(
                     path.endsWith(".m3u8", ignoreCase = true)
             
                 if (
+                    currentEpisodeActive &&
                     nartoManifest &&
                     playbackCaptured.compareAndSet(false, true)
                 ) {
@@ -3072,7 +3077,7 @@ private fun NartoUnlockScreen(
                         cookieManager.flush()
                         onStreamCaptured(value, capturedSubtitleUrl)
                     }
-                } else if (unlockedUpstreamManifest) {
+                } else if (currentEpisodeActive && unlockedUpstreamManifest) {
                     // The page's <track> element is probed first so Vietsub
                     // can be attached to the Media3 item before handoff.
                     mainHandler.post { probeMainPlayback("upstream-manifest") }
