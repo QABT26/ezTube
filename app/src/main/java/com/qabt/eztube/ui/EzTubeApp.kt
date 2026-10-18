@@ -2312,38 +2312,48 @@ private fun NartoUnlockScreen(
     var mainWebView by remember(pageUrl) {
         mutableStateOf<android.webkit.WebView?>(null)
     }
-    var adWebView by remember(pageUrl) {
+    var popupWebView by remember(pageUrl) {
         mutableStateOf<android.webkit.WebView?>(null)
     }
-    var adUrl by remember(pageUrl) { mutableStateOf<String?>(null) }
-    var adTitle by remember(pageUrl) { mutableStateOf("Quảng cáo") }
+    var popupVisible by remember(pageUrl) { mutableStateOf(false) }
+    var popupTitle by remember(pageUrl) { mutableStateOf("Quảng cáo") }
 
-    fun isInternalNartoUrl(url: String): Boolean {
-        val host = runCatching {
-            android.net.Uri.parse(url).host.orEmpty().lowercase()
-        }.getOrDefault("")
-        return host == "narto-drama.com" ||
-            host.endsWith(".narto-drama.com") ||
-            host == "challenges.cloudflare.com" ||
-            host.endsWith(".challenges.cloudflare.com")
+    val cookieManager = remember {
+        android.webkit.CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+        }
     }
 
-    fun isHttpUrl(url: String): Boolean =
-        url.startsWith("http://") || url.startsWith("https://")
+    fun notifyMainReturned() {
+        cookieManager.flush()
+        mainWebView?.post {
+            mainWebView?.onResume()
+            mainWebView?.evaluateJavascript(
+                """
+                try {
+                  window.dispatchEvent(new Event('focus'));
+                  document.dispatchEvent(new Event('visibilitychange'));
+                } catch (e) {}
+                """.trimIndent(),
+                null
+            )
+        }
+    }
 
-    fun closeAd() {
-        adWebView?.stopLoading()
-        adWebView?.destroy()
-        adWebView = null
-        adUrl = null
-        android.webkit.CookieManager.getInstance().flush()
+    fun closePopup() {
+        popupWebView?.stopLoading()
+        popupWebView?.destroy()
+        popupWebView = null
+        popupVisible = false
+        popupTitle = "Quảng cáo"
+        notifyMainReturned()
     }
 
     BackHandler {
-        val ad = adWebView
+        val popup = popupWebView
         when {
-            adUrl != null && ad?.canGoBack() == true -> ad.goBack()
-            adUrl != null -> closeAd()
+            popupVisible && popup?.canGoBack() == true -> popup.goBack()
+            popupVisible -> closePopup()
             mainWebView?.canGoBack() == true -> mainWebView?.goBack()
             else -> onCancel()
         }
@@ -2394,8 +2404,8 @@ private fun NartoUnlockScreen(
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Text(
-                        "Quảng cáo mở ngay trong ezTube. Trang Narto phía sau vẫn được giữ nguyên, " +
-                            "nên tiến trình mở khóa không bị tải lại.",
+                        "Quảng cáo mở trong ezTube bằng cửa sổ con của chính trang Narto. " +
+                            "Sau khi đóng quảng cáo, phiên mở khóa và tín hiệu quay lại trang chính được giữ nguyên.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     status?.takeIf { it.isNotBlank() }?.let {
@@ -2413,7 +2423,6 @@ private fun NartoUnlockScreen(
                 AndroidView(
                     factory = { webContext ->
                         val captured = java.util.concurrent.atomic.AtomicBoolean(false)
-                        val cookieManager = android.webkit.CookieManager.getInstance()
 
                         android.webkit.WebView(webContext).apply {
                             mainWebView = this
@@ -2424,10 +2433,9 @@ private fun NartoUnlockScreen(
                             settings.loadsImagesAutomatically = true
                             settings.mixedContentMode =
                                 android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                            settings.setSupportMultipleWindows(false)
-                            settings.javaScriptCanOpenWindowsAutomatically = false
+                            settings.setSupportMultipleWindows(true)
+                            settings.javaScriptCanOpenWindowsAutomatically = true
 
-                            cookieManager.setAcceptCookie(true)
                             cookieManager.setAcceptThirdPartyCookies(this, true)
 
                             fun inspect(url: String?) {
@@ -2447,45 +2455,82 @@ private fun NartoUnlockScreen(
                                 }
                             }
 
-                            webChromeClient = android.webkit.WebChromeClient()
+                            webChromeClient = object : android.webkit.WebChromeClient() {
+                                override fun onCreateWindow(
+                                    view: android.webkit.WebView?,
+                                    isDialog: Boolean,
+                                    isUserGesture: Boolean,
+                                    resultMsg: android.os.Message?
+                                ): Boolean {
+                                    val transport =
+                                        resultMsg?.obj as? android.webkit.WebView.WebViewTransport
+                                            ?: return false
+
+                                    popupWebView?.destroy()
+
+                                    val child = android.webkit.WebView(webContext).apply {
+                                        settings.javaScriptEnabled = true
+                                        settings.domStorageEnabled = true
+                                        settings.mediaPlaybackRequiresUserGesture = true
+                                        settings.loadsImagesAutomatically = true
+                                        settings.mixedContentMode =
+                                            android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                                        settings.setSupportMultipleWindows(false)
+                                        settings.javaScriptCanOpenWindowsAutomatically = false
+
+                                        cookieManager.setAcceptThirdPartyCookies(this, true)
+
+                                        webChromeClient = object : android.webkit.WebChromeClient() {
+                                            override fun onReceivedTitle(
+                                                view: android.webkit.WebView?,
+                                                title: String?
+                                            ) {
+                                                popupTitle = title
+                                                    ?.trim()
+                                                    ?.takeIf { it.isNotBlank() }
+                                                    ?: "Quảng cáo"
+                                            }
+
+                                            override fun onCloseWindow(
+                                                window: android.webkit.WebView?
+                                            ) {
+                                                closePopup()
+                                            }
+                                        }
+
+                                        webViewClient = object : android.webkit.WebViewClient() {
+                                            override fun shouldInterceptRequest(
+                                                view: android.webkit.WebView?,
+                                                request: android.webkit.WebResourceRequest?
+                                            ): android.webkit.WebResourceResponse? {
+                                                inspect(request?.url?.toString())
+                                                return super.shouldInterceptRequest(view, request)
+                                            }
+
+                                            override fun onPageFinished(
+                                                view: android.webkit.WebView?,
+                                                url: String?
+                                            ) {
+                                                cookieManager.flush()
+                                            }
+                                        }
+                                    }
+
+                                    popupWebView = child
+                                    popupVisible = true
+                                    transport.webView = child
+                                    resultMsg.sendToTarget()
+                                    return true
+                                }
+
+                                override fun onCloseWindow(
+                                    window: android.webkit.WebView?
+                                ) {
+                                    closePopup()
+                                }
+                            }
 
                             webViewClient = object : android.webkit.WebViewClient() {
-                                override fun shouldOverrideUrlLoading(
-                                    view: android.webkit.WebView?,
-                                    request: android.webkit.WebResourceRequest?
-                                ): Boolean {
-                                    val url = request?.url?.toString().orEmpty()
-                                    inspect(url)
-
-                                    if (
-                                        request?.isForMainFrame == true &&
-                                        isHttpUrl(url) &&
-                                        !isInternalNartoUrl(url)
-                                    ) {
-                                        adUrl = url
-                                        return true
-                                    }
-                                    return false
-                                }
-
-                                @Deprecated("Deprecated in Java")
-                                override fun shouldOverrideUrlLoading(
-                                    view: android.webkit.WebView?,
-                                    url: String?
-                                ): Boolean {
-                                    val value = url.orEmpty()
-                                    inspect(value)
-
-                                    if (
-                                        isHttpUrl(value) &&
-                                        !isInternalNartoUrl(value)
-                                    ) {
-                                        adUrl = value
-                                        return true
-                                    }
-                                    return false
-                                }
-
                                 override fun shouldInterceptRequest(
                                     view: android.webkit.WebView?,
                                     request: android.webkit.WebResourceRequest?
@@ -2524,7 +2569,7 @@ private fun NartoUnlockScreen(
             }
         }
 
-        adUrl?.let { currentAdUrl ->
+        if (popupVisible) {
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background,
@@ -2540,12 +2585,8 @@ private fun NartoUnlockScreen(
                     ) {
                         IconButton(
                             onClick = {
-                                val active = adWebView
-                                if (active?.canGoBack() == true) {
-                                    active.goBack()
-                                } else {
-                                    closeAd()
-                                }
+                                val popup = popupWebView
+                                if (popup?.canGoBack() == true) popup.goBack() else closePopup()
                             }
                         ) {
                             Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
@@ -2553,7 +2594,7 @@ private fun NartoUnlockScreen(
 
                         Column(Modifier.weight(1f)) {
                             Text(
-                                adTitle,
+                                popupTitle,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -2562,7 +2603,7 @@ private fun NartoUnlockScreen(
                             Text(
                                 runCatching {
                                     android.net.Uri.parse(
-                                        adWebView?.url ?: currentAdUrl
+                                        popupWebView?.url.orEmpty()
                                     ).host.orEmpty()
                                 }.getOrDefault(""),
                                 style = MaterialTheme.typography.labelSmall,
@@ -2572,72 +2613,20 @@ private fun NartoUnlockScreen(
                             )
                         }
 
-                        TextButton(onClick = { closeAd() }) {
+                        TextButton(onClick = { closePopup() }) {
                             Text("Đóng")
                         }
                     }
 
                     AndroidView(
-                        factory = { adContext ->
-                            android.webkit.WebView(adContext).apply {
-                                adWebView = this
-
-                                settings.javaScriptEnabled = true
-                                settings.domStorageEnabled = true
-                                settings.mediaPlaybackRequiresUserGesture = true
-                                settings.loadsImagesAutomatically = true
-                                settings.mixedContentMode =
-                                    android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                                settings.setSupportMultipleWindows(false)
-                                settings.javaScriptCanOpenWindowsAutomatically = false
-
-                                val cookieManager =
-                                    android.webkit.CookieManager.getInstance()
-                                cookieManager.setAcceptCookie(true)
-                                cookieManager.setAcceptThirdPartyCookies(this, true)
-
-                                webChromeClient = object : android.webkit.WebChromeClient() {
-                                    override fun onReceivedTitle(
-                                        view: android.webkit.WebView?,
-                                        title: String?
-                                    ) {
-                                        adTitle = title
-                                            ?.trim()
-                                            ?.takeIf { it.isNotBlank() }
-                                            ?: "Quảng cáo"
-                                    }
+                        factory = { popupContext ->
+                            popupWebView
+                                ?: android.webkit.WebView(popupContext).also {
+                                    popupWebView = it
                                 }
-
-                                webViewClient = object : android.webkit.WebViewClient() {
-                                    override fun shouldOverrideUrlLoading(
-                                        view: android.webkit.WebView?,
-                                        request: android.webkit.WebResourceRequest?
-                                    ): Boolean {
-                                        val url = request?.url?.toString().orEmpty()
-                                        return !isHttpUrl(url)
-                                    }
-
-                                    @Deprecated("Deprecated in Java")
-                                    override fun shouldOverrideUrlLoading(
-                                        view: android.webkit.WebView?,
-                                        url: String?
-                                    ): Boolean {
-                                        return !isHttpUrl(url.orEmpty())
-                                    }
-
-                                    override fun onPageFinished(
-                                        view: android.webkit.WebView?,
-                                        url: String?
-                                    ) {
-                                        cookieManager.flush()
-                                    }
-                                }
-
-                                loadUrl(currentAdUrl)
-                            }
                         },
                         update = { active ->
-                            adWebView = active
+                            popupWebView = active
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -2650,10 +2639,10 @@ private fun NartoUnlockScreen(
 
     DisposableEffect(pageUrl) {
         onDispose {
-            android.webkit.CookieManager.getInstance().flush()
-            adWebView?.destroy()
+            cookieManager.flush()
+            popupWebView?.destroy()
             mainWebView?.destroy()
-            adWebView = null
+            popupWebView = null
             mainWebView = null
         }
     }
