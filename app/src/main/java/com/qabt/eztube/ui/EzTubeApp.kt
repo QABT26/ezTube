@@ -2317,6 +2317,7 @@ private fun NartoUnlockScreen(
     }
     var popupVisible by remember(pageUrl) { mutableStateOf(false) }
     var popupTitle by remember(pageUrl) { mutableStateOf("Quảng cáo") }
+    var popupSerial by remember(pageUrl) { mutableIntStateOf(0) }
     val playbackCaptured = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
@@ -2515,6 +2516,7 @@ private fun NartoUnlockScreen(
     }
 
     fun closePopup() {
+        popupSerial += 1
         popupOpenSeen.set(false)
         addDiagnostic("popup-close", popupWebView?.url)
         popupWebView?.stopLoading()
@@ -2900,10 +2902,34 @@ private fun NartoUnlockScreen(
 
                                     addDiagnostic("popup-open-request")
                                     popupOpenSeen.set(true)
+                                    popupSerial += 1
+                                    val openedSerial = popupSerial
                                     popupWebView = child
                                     popupVisible = true
                                     transport.webView = child
                                     resultMsg.sendToTarget()
+
+                                    // Some ad destinations never emit Narto's wrapper report
+                                    // back to the opener. Mimic the user's own ezTube "Đóng"
+                                    // action after a short dwell time so every popup can return
+                                    // to the persistent Narto page. The serial guard prevents an
+                                    // old delayed callback from closing a newer popup.
+                                    mainHandler.postDelayed(
+                                        {
+                                            if (
+                                                popupVisible &&
+                                                popupWebView === child &&
+                                                popupSerial == openedSerial
+                                            ) {
+                                                addDiagnostic(
+                                                    "auto-close-popup-timeout",
+                                                    child.url
+                                                )
+                                                closePopup()
+                                            }
+                                        },
+                                        4500
+                                    )
                                     return true
                                 }
 
