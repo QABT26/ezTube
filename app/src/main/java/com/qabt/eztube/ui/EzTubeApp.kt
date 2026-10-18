@@ -99,6 +99,7 @@ import com.qabt.eztube.youtube.PlaylistDetail
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import com.qabt.eztube.youtube.CommentsPage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -2542,12 +2543,16 @@ private fun NartoUnlockScreen(
                 }.getOrNull()
             }
 
-            val found = kotlinx.coroutines.coroutineScope {
+            val found: String? = kotlinx.coroutines.coroutineScope {
                 snapshots.map { (url, cookie) ->
-                    kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.IO) {
+                    async(kotlinx.coroutines.Dispatchers.IO) {
                         classifyOne(url, cookie)
                     }
-                }.map { it.await() }.firstOrNull { !it.isNullOrBlank() }
+                }.map { deferred ->
+                    deferred.await()
+                }.firstOrNull { candidate ->
+                    !candidate.isNullOrBlank()
+                }
             }
 
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
@@ -2559,7 +2564,6 @@ private fun NartoUnlockScreen(
                 ) {
                     capturedSubtitleUrl = found
                     addDiagnostic("vietsub-native-detected", found)
-                    probeMainPlayback("vietsub-native-detected")
                 } else if (found == null) {
                     addDiagnostic("vietsub-native-none")
                 }
