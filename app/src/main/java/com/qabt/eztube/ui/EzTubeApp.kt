@@ -2317,6 +2317,71 @@ private fun NartoUnlockScreen(
     }
     var popupVisible by remember(pageUrl) { mutableStateOf(false) }
     var popupTitle by remember(pageUrl) { mutableStateOf("Quảng cáo") }
+    val diagnosticEvents = remember(pageUrl) { mutableStateListOf<String>() }
+    var diagnosticSeq by remember(pageUrl) { mutableIntStateOf(0) }
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    val context = LocalContext.current
+
+    fun sanitizeDiagnosticUrl(raw: String?): String {
+        val value = raw.orEmpty()
+        if (value.isBlank()) return "(blank)"
+        return runCatching {
+            val uri = android.net.Uri.parse(value)
+            val host = uri.host.orEmpty().lowercase()
+            var path = uri.path.orEmpty().ifBlank { "/" }
+            path = when {
+                host == "stream.narto-drama.com" && path.startsWith("/e/m/") ->
+                    "/e/m/[redacted]"
+                host.endsWith("narto-drama.com") && path.startsWith("/e/s/") ->
+                    "/e/s/[redacted]"
+                path.length > 160 -> path.take(160) + "…"
+                else -> path
+            }
+            if (host.isBlank()) path else host + path
+        }.getOrElse {
+            value.substringBefore('?').take(180)
+        }
+    }
+
+    fun addDiagnostic(event: String, rawUrl: String? = null) {
+        val line = buildString {
+            diagnosticSeq += 1
+            append(diagnosticSeq.toString().padStart(3, '0'))
+            append(" · ")
+            append(event)
+            rawUrl?.let {
+                append(" · ")
+                append(sanitizeDiagnosticUrl(it))
+            }
+        }
+        mainHandler.post {
+            if (diagnosticEvents.size >= 120) {
+                diagnosticEvents.removeRange(0, diagnosticEvents.size - 119)
+            }
+            diagnosticEvents += line
+        }
+    }
+
+    fun copyDiagnostic() {
+        val text = buildString {
+            appendLine("Narto post-unlock diagnostic V2")
+            appendLine("Media: " + media.title)
+            appendLine("Page: " + sanitizeDiagnosticUrl(pageUrl))
+            appendLine("Events: " + diagnosticEvents.size)
+            diagnosticEvents.forEach(::appendLine)
+        }.trim()
+        val clipboard = context.getSystemService(
+            android.content.Context.CLIPBOARD_SERVICE
+        ) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(
+            android.content.ClipData.newPlainText("Narto diagnostic", text)
+        )
+        android.widget.Toast.makeText(
+            context,
+            "Đã copy Narto diagnostic",
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
+    }
 
     val cookieManager = remember {
         android.webkit.CookieManager.getInstance().apply {
@@ -2325,6 +2390,7 @@ private fun NartoUnlockScreen(
     }
 
     fun notifyMainReturned() {
+        addDiagnostic("main-focus-return")
         cookieManager.flush()
         mainWebView?.post {
             mainWebView?.onResume()
@@ -2341,6 +2407,7 @@ private fun NartoUnlockScreen(
     }
 
     fun closePopup() {
+        addDiagnostic("popup-close", popupWebView?.url)
         popupWebView?.stopLoading()
         popupWebView?.destroy()
         popupWebView = null
@@ -2416,6 +2483,29 @@ private fun NartoUnlockScreen(
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { copyDiagnostic() }) {
+                            Text("Copy diagnostic")
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "events: " + diagnosticEvents.size,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    diagnosticEvents.takeLast(4).forEach { line ->
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
 
@@ -2438,14 +2528,24 @@ private fun NartoUnlockScreen(
 
                             cookieManager.setAcceptThirdPartyCookies(this, true)
 
-                            fun inspect(url: String?) {
+                            fun inspect(url: String?, event: String = "request") {
                                 val value = url.orEmpty()
+                                val host = runCatching {
+                                    android.net.Uri.parse(value).host.orEmpty().lowercase()
+                                }.getOrDefault("")
+                                if (
+                                    host.endsWith("narto-drama.com") ||
+                                    host == "stream.narto-drama.com"
+                                ) {
+                                    addDiagnostic(event, value)
+                                }
                                 if (
                                     value.startsWith(
                                         "https://stream.narto-drama.com/e/m/"
                                     ) &&
                                     captured.compareAndSet(false, true)
                                 ) {
+                                    addDiagnostic("signed-hls-detected", value)
                                     android.os.Handler(
                                         android.os.Looper.getMainLooper()
                                     ).post {
@@ -2503,19 +2603,46 @@ private fun NartoUnlockScreen(
                                                 view: android.webkit.WebView?,
                                                 request: android.webkit.WebResourceRequest?
                                             ): android.webkit.WebResourceResponse? {
-                                                inspect(request?.url?.toString())
+                                                inspect(
+                                                    request?.url?.toString(),
+                                                    "popup-" + (request?.method ?: "GET")
+                                                )
                                                 return super.shouldInterceptRequest(view, request)
+                                            }
+
+                                            override fun onPageStarted(
+                                                view: android.webkit.WebView?,
+                                                url: String?,
+                                                favicon: android.graphics.Bitmap?
+                                            ) {
+                                                addDiagnostic("popup-page-start", url)
+                                            }
+
+                                            override fun onReceivedHttpError(
+                                                view: android.webkit.WebView?,
+                                                request: android.webkit.WebResourceRequest?,
+                                                errorResponse: android.webkit.WebResourceResponse?
+                                            ) {
+                                                if (request?.isForMainFrame == true) {
+                                                    addDiagnostic(
+                                                        "popup-http-" +
+                                                            (errorResponse?.statusCode ?: 0),
+                                                        request.url?.toString()
+                                                    )
+                                                }
                                             }
 
                                             override fun onPageFinished(
                                                 view: android.webkit.WebView?,
                                                 url: String?
                                             ) {
+                                                addDiagnostic("popup-page-finish", url)
                                                 cookieManager.flush()
                                             }
                                         }
                                     }
 
+                                    addDiagnostic("popup-open-request")
                                     popupWebView = child
                                     popupVisible = true
                                     transport.webView = child
@@ -2535,7 +2662,10 @@ private fun NartoUnlockScreen(
                                     view: android.webkit.WebView?,
                                     request: android.webkit.WebResourceRequest?
                                 ): android.webkit.WebResourceResponse? {
-                                    inspect(request?.url?.toString())
+                                    inspect(
+                                        request?.url?.toString(),
+                                        "main-" + (request?.method ?: "GET")
+                                    )
                                     return super.shouldInterceptRequest(view, request)
                                 }
 
@@ -2544,18 +2674,42 @@ private fun NartoUnlockScreen(
                                     view: android.webkit.WebView?,
                                     url: String?
                                 ): android.webkit.WebResourceResponse? {
-                                    inspect(url)
+                                    inspect(url, "main-GET")
                                     return super.shouldInterceptRequest(view, url)
+                                }
+
+                                override fun onPageStarted(
+                                    view: android.webkit.WebView?,
+                                    url: String?,
+                                    favicon: android.graphics.Bitmap?
+                                ) {
+                                    addDiagnostic("main-page-start", url)
+                                }
+
+                                override fun onReceivedHttpError(
+                                    view: android.webkit.WebView?,
+                                    request: android.webkit.WebResourceRequest?,
+                                    errorResponse: android.webkit.WebResourceResponse?
+                                ) {
+                                    if (request?.isForMainFrame == true) {
+                                        addDiagnostic(
+                                            "main-http-" +
+                                                (errorResponse?.statusCode ?: 0),
+                                            request.url?.toString()
+                                        )
+                                    }
                                 }
 
                                 override fun onPageFinished(
                                     view: android.webkit.WebView?,
                                     url: String?
                                 ) {
+                                    addDiagnostic("main-page-finish", url)
                                     cookieManager.flush()
                                 }
                             }
 
+                            addDiagnostic("main-load", pageUrl)
                             loadUrl(pageUrl)
                         }
                     },
