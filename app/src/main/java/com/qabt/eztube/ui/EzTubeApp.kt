@@ -2733,62 +2733,6 @@ private fun NartoUnlockScreen(
         }
     }
 
-    fun notifyMainReturned() {
-        addDiagnostic("main-focus-return")
-        cookieManager.flush()
-        mainWebView?.post {
-            if (gateUnlockSeen.get()) {
-                mainWebView?.settings?.mediaPlaybackRequiresUserGesture = false
-                mainWebView?.evaluateJavascript(
-                    """
-                    (function() {
-                      try {
-                        const v = document.querySelector('video');
-                        if (!v) return 'no-video';
-                        const p = v.play();
-                        if (p && p.catch) p.catch(() => {});
-                        return v.currentSrc || v.src || 'video-woken';
-                      } catch (e) {
-                        return 'wake-error';
-                      }
-                    })();
-                    """.trimIndent(),
-                    null
-                )
-                addDiagnostic("unlocked-video-wake")
-            }
-            mainWebView?.onResume()
-            mainWebView?.evaluateJavascript(
-                """
-                try {
-                  window.dispatchEvent(new Event('focus'));
-                  document.dispatchEvent(new Event('visibilitychange'));
-                } catch (e) {}
-                """.trimIndent(),
-                null
-            )
-
-            pinNartoOpenAdButton("focus")
-            mainHandler.postDelayed({ pinNartoOpenAdButton("focus+250ms") }, 250)
-            probeMainPlayback("focus")
-            mainHandler.postDelayed({ probeMainPlayback("focus+750ms") }, 750)
-            mainHandler.postDelayed({ probeMainPlayback("focus+2000ms") }, 2000)
-            mainHandler.postDelayed({ probeMainPlayback("focus+5000ms") }, 5000)
-        }
-    }
-
-    fun closePopup() {
-        popupSerial += 1
-        popupOpenSeen.set(false)
-        addDiagnostic("popup-close", popupWebView?.url)
-        popupWebView?.stopLoading()
-        popupWebView?.destroy()
-        popupWebView = null
-        popupVisible = false
-        popupTitle = "Quảng cáo"
-        notifyMainReturned()
-    }
-
     fun pinNartoOpenAdButton(reason: String) {
         val active = mainWebView ?: return
         active.evaluateJavascript(
@@ -2860,6 +2804,62 @@ private fun NartoUnlockScreen(
             }.getOrNull().orEmpty()
             addDiagnostic("pin-open-ad:" + reason + ":" + result)
         }
+    }
+
+    fun notifyMainReturned() {
+        addDiagnostic("main-focus-return")
+        cookieManager.flush()
+        mainWebView?.post {
+            if (gateUnlockSeen.get()) {
+                mainWebView?.settings?.mediaPlaybackRequiresUserGesture = false
+                mainWebView?.evaluateJavascript(
+                    """
+                    (function() {
+                      try {
+                        const v = document.querySelector('video');
+                        if (!v) return 'no-video';
+                        const p = v.play();
+                        if (p && p.catch) p.catch(() => {});
+                        return v.currentSrc || v.src || 'video-woken';
+                      } catch (e) {
+                        return 'wake-error';
+                      }
+                    })();
+                    """.trimIndent(),
+                    null
+                )
+                addDiagnostic("unlocked-video-wake")
+            }
+            mainWebView?.onResume()
+            mainWebView?.evaluateJavascript(
+                """
+                try {
+                  window.dispatchEvent(new Event('focus'));
+                  document.dispatchEvent(new Event('visibilitychange'));
+                } catch (e) {}
+                """.trimIndent(),
+                null
+            )
+
+            pinNartoOpenAdButton("focus")
+            mainHandler.postDelayed({ pinNartoOpenAdButton("focus+250ms") }, 250)
+            probeMainPlayback("focus")
+            mainHandler.postDelayed({ probeMainPlayback("focus+750ms") }, 750)
+            mainHandler.postDelayed({ probeMainPlayback("focus+2000ms") }, 2000)
+            mainHandler.postDelayed({ probeMainPlayback("focus+5000ms") }, 5000)
+        }
+    }
+
+    fun closePopup() {
+        popupSerial += 1
+        popupOpenSeen.set(false)
+        addDiagnostic("popup-close", popupWebView?.url)
+        popupWebView?.stopLoading()
+        popupWebView?.destroy()
+        popupWebView = null
+        popupVisible = false
+        popupTitle = "Quảng cáo"
+        notifyMainReturned()
     }
 
     fun probePopupClosable(reason: String) {
