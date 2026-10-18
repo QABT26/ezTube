@@ -58,7 +58,9 @@ class NartoDramaMovieProvider(
                 }
                 .take(8)
             if (ranked.isNotEmpty()) {
-                return ranked.map { hydrateCatalogItem(it) }
+                return ranked.mapIndexed { index, item ->
+                    if (index < 3) hydrateCatalogItem(item) else item
+                }
             }
         }
 
@@ -68,16 +70,12 @@ class NartoDramaMovieProvider(
     }
 
     private fun hydrateCatalogItem(item: MovieCatalogItem): MovieCatalogItem {
-        if (!item.thumbnailUrl.isNullOrBlank() && item.episodeBadge != null) {
-            return item
-        }
-
         val page = runCatching { fetchPage(detailUrls(item.slug)) }.getOrNull()
             ?: return item
 
-        val thumbnail = item.thumbnailUrl
-            ?: extractMeta(page, "og:image")?.let(::normalizeImageUrl)
+        val thumbnail = extractMeta(page, "og:image")?.let(::normalizeImageUrl)
             ?: extractFirstImageUrl(page)
+            ?: item.thumbnailUrl
 
         val episodeCount = item.episodeBadge
             ?.let { Regex("""\d+""").find(it)?.value?.toIntOrNull() }
