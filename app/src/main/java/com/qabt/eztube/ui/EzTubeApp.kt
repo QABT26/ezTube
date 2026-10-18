@@ -2419,8 +2419,12 @@ private fun NartoUnlockScreen(
                         settings.loadsImagesAutomatically = true
                         settings.mixedContentMode =
                             android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                        settings.setSupportMultipleWindows(true)
-                        settings.javaScriptCanOpenWindowsAutomatically = true
+                        // Keep one persistent browsing context. Narto/ad links that
+                        // navigate away are intercepted below and opened externally.
+                        // Multiple-window WebView popups can leave the primary view
+                        // blank on some Android WebView builds.
+                        settings.setSupportMultipleWindows(false)
+                        settings.javaScriptCanOpenWindowsAutomatically = false
 
                         cookieManager.setAcceptCookie(true)
                         cookieManager.setAcceptThirdPartyCookies(this, true)
@@ -2442,22 +2446,9 @@ private fun NartoUnlockScreen(
                             }
                         }
 
-                        webChromeClient = object : android.webkit.WebChromeClient() {
-                            override fun onCreateWindow(
-                                view: android.webkit.WebView?,
-                                isDialog: Boolean,
-                                isUserGesture: Boolean,
-                                resultMsg: android.os.Message?
-                            ): Boolean {
-                                val transport =
-                                    resultMsg?.obj as? android.webkit.WebView.WebViewTransport
-                                        ?: return false
-                                val launched =
-                                    java.util.concurrent.atomic.AtomicBoolean(false)
-                                val popup = android.webkit.WebView(webContext).apply {
-                                    settings.javaScriptEnabled = true
-                                    settings.domStorageEnabled = true
-                                    webViewClient = object : android.webkit.WebViewClient() {
+                        webChromeClient = android.webkit.WebChromeClient()
+
+                        webViewClient = object : android.webkit.WebViewClient() {
                                         private fun open(url: String?) {
                                             val value = url.orEmpty()
                                             if (
@@ -2514,6 +2505,7 @@ private fun NartoUnlockScreen(
                                     url.isNotBlank() &&
                                     !isInternalNartoUrl(url)
                                 ) {
+                                    view?.stopLoading()
                                     launchExternal(url)
                                     return true
                                 }
@@ -2528,6 +2520,7 @@ private fun NartoUnlockScreen(
                                 val value = url.orEmpty()
                                 inspect(value)
                                 if (value.isNotBlank() && !isInternalNartoUrl(value)) {
+                                    view?.stopLoading()
                                     launchExternal(value)
                                     return true
                                 }
@@ -2549,6 +2542,56 @@ private fun NartoUnlockScreen(
                             ): android.webkit.WebResourceResponse? {
                                 inspect(url)
                                 return super.shouldInterceptRequest(view, url)
+                            }
+
+                            override fun onReceivedError(
+                                view: android.webkit.WebView?,
+                                request: android.webkit.WebResourceRequest?,
+                                error: android.webkit.WebResourceError?
+                            ) {
+                                if (request?.isForMainFrame == true) {
+                                    val message = error?.description?.toString()
+                                        ?: "Unable to load Narto page"
+                                    view?.loadDataWithBaseURL(
+                                        pageUrl,
+                                        """
+                                        <html><body style="font-family:sans-serif;padding:24px">
+                                        <h3>Narto page load failed</h3>
+                                        <p>$message</p>
+                                        <p>${request.url}</p>
+                                        </body></html>
+                                        """.trimIndent(),
+                                        "text/html",
+                                        "utf-8",
+                                        null
+                                    )
+                                }
+                            }
+
+                            override fun onReceivedHttpError(
+                                view: android.webkit.WebView?,
+                                request: android.webkit.WebResourceRequest?,
+                                errorResponse: android.webkit.WebResourceResponse?
+                            ) {
+                                if (
+                                    request?.isForMainFrame == true &&
+                                    (errorResponse?.statusCode ?: 0) >= 400
+                                ) {
+                                    val code = errorResponse?.statusCode ?: 0
+                                    view?.loadDataWithBaseURL(
+                                        pageUrl,
+                                        """
+                                        <html><body style="font-family:sans-serif;padding:24px">
+                                        <h3>Narto HTTP error</h3>
+                                        <p>HTTP $code</p>
+                                        <p>${request.url}</p>
+                                        </body></html>
+                                        """.trimIndent(),
+                                        "text/html",
+                                        "utf-8",
+                                        null
+                                    )
+                                }
                             }
 
                             override fun onPageFinished(
