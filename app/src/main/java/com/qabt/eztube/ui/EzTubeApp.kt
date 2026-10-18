@@ -309,6 +309,7 @@ fun EzTubeApp(
     var nartoUnlockPageUrl by remember { mutableStateOf<String?>(null) }
     var nartoUnlockStartPositionMs by remember { mutableLongStateOf(0L) }
     var nartoUnlockStatus by remember { mutableStateOf<String?>(null) }
+    var nartoSessionUnlocked by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -1478,6 +1479,8 @@ fun EzTubeApp(
                 media = requireNotNull(nartoUnlockMedia),
                 pageUrl = requireNotNull(nartoUnlockPageUrl),
                 status = nartoUnlockStatus,
+                sessionPreviouslyUnlocked = nartoSessionUnlocked,
+                onSessionUnlocked = { nartoSessionUnlocked = true },
                 onStreamCaptured = { hlsUrl, subtitleUrl ->
                     if (nartoUnlockMedia != null) {
                         playCapturedNartoHls(hlsUrl, subtitleUrl)
@@ -2346,6 +2349,8 @@ private fun NartoUnlockScreen(
     media: MediaSummary,
     pageUrl: String,
     status: String?,
+    sessionPreviouslyUnlocked: Boolean,
+    onSessionUnlocked: () -> Unit,
     onStreamCaptured: (String, String?) -> Unit,
     onCancel: () -> Unit
 ) {
@@ -2365,8 +2370,8 @@ private fun NartoUnlockScreen(
     val subtitleWaitArmed = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
-    val gateUnlockSeen = remember(pageUrl) {
-        java.util.concurrent.atomic.AtomicBoolean(false)
+    val gateUnlockSeen = remember(pageUrl, sessionPreviouslyUnlocked) {
+        java.util.concurrent.atomic.AtomicBoolean(sessionPreviouslyUnlocked)
     }
     val popupOpenSeen = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
@@ -2474,8 +2479,7 @@ private fun NartoUnlockScreen(
 
                   const candidates = [];
                   try {
-                    push('subtitle.detected', window.__eztubeVietsub || '');
-                document.querySelectorAll('track').forEach((t) => {
+                    document.querySelectorAll('track').forEach((t) => {
                       const lang = String(t.srclang || t.label || '').toLowerCase();
                       const kind = String(t.kind || '').toLowerCase();
                       if (
@@ -2547,6 +2551,8 @@ private fun NartoUnlockScreen(
                   if (!value) return;
                   out.push(kind + "|" + String(value));
                 };
+
+                push('subtitle.detected', window.__eztubeVietsub || '');
 
                 document.querySelectorAll('track').forEach((t) => {
                   const kind = String(t.kind || '').toLowerCase();
@@ -2945,6 +2951,7 @@ private fun NartoUnlockScreen(
                                     gateUnlockSeen.compareAndSet(false, true)
                                 ) {
                                     addDiagnostic("gate-unlock-seen", value)
+                                    mainHandler.post { onSessionUnlocked() }
 
                                     // Narto itself has confirmed that the ad gate is unlocked.
                                     // At this point it is safe to close ezTube's own popup shell
