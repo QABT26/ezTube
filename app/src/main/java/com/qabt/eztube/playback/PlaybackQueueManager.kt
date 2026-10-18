@@ -494,7 +494,22 @@ class PlaybackQueueManager(
             onComplete(Result.failure(IllegalStateException("Playback resolver is busy")))
             return
         }
-        if (!hlsUrl.startsWith("https://stream.narto-drama.com/e/m/")) {
+        val parsedHls = runCatching { Uri.parse(hlsUrl) }.getOrNull()
+        val hlsHost = parsedHls?.host.orEmpty().lowercase()
+        val hlsPath = parsedHls?.path.orEmpty()
+        val isSignedNartoManifest =
+            parsedHls?.scheme == "https" &&
+                hlsHost == "stream.narto-drama.com" &&
+                hlsPath.startsWith("/e/m/")
+        val isUnlockedDramaWaveManifest =
+            parsedHls?.scheme == "https" &&
+                (
+                    hlsHost == "mydramawave.com" ||
+                    hlsHost.endsWith(".mydramawave.com")
+                ) &&
+                hlsPath.endsWith(".m3u8", ignoreCase = true)
+
+        if (!isSignedNartoManifest && !isUnlockedDramaWaveManifest) {
             onComplete(Result.failure(IllegalArgumentException("Invalid Narto HLS URL")))
             return
         }
@@ -536,7 +551,15 @@ class PlaybackQueueManager(
                                     "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
                                 ),
                             "Referer" to referer,
-                            "Origin" to "https://narto-drama.com"
+                            "Origin" to runCatching {
+                                val uri = Uri.parse(referer)
+                                val host = uri.host.orEmpty()
+                                if (uri.scheme == "https" && host.endsWith("narto-drama.com")) {
+                                    "https://" + host
+                                } else {
+                                    "https://narto-drama.com"
+                                }
+                            }.getOrDefault("https://narto-drama.com")
                         ),
                         diagnostic = buildString {
                             append("Provider: Narto Drama")
