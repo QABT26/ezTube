@@ -2384,6 +2384,9 @@ private fun NartoUnlockScreen(
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
     var pageReadyForCapture by remember(pageUrl) { mutableStateOf(false) }
+    val pageCaptureReadyFlag = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
     var webViewGeneration by remember(pageUrl) { mutableIntStateOf(0) }
     var rendererRecoveryCount by remember(pageUrl) { mutableIntStateOf(0) }
     val diagnosticEvents = remember(pageUrl) { mutableStateListOf<String>() }
@@ -2971,9 +2974,9 @@ private fun NartoUnlockScreen(
                 }.getOrNull()
                 val path = uri?.path.orEmpty()
                 val nartoHost = uri?.host.orEmpty().lowercase()
-                val currentEpisodeActive =
-                    pageReadyForCapture &&
-                        sameEpisodeUrl(mainWebView?.url, pageUrl)
+                // shouldInterceptRequest runs on Chromium's background thread.
+                // Never call any WebView method here (including getUrl()).
+                val currentEpisodeActive = pageCaptureReadyFlag.get()
             
                 if (
                     nartoHost == "edge.narto-drama.com" &&
@@ -3274,6 +3277,7 @@ private fun NartoUnlockScreen(
                         }
                         if (mainWebView === view) mainWebView = null
                         pageReadyForCapture = false
+                        pageCaptureReadyFlag.set(false)
                         playbackCaptured.set(false)
                         capturedSubtitleUrl = null
                         subtitleWaitArmed.set(false)
@@ -3300,6 +3304,7 @@ private fun NartoUnlockScreen(
                 ) {
                     if (sameEpisodeUrl(url, pageUrl)) {
                         pageReadyForCapture = false
+                        pageCaptureReadyFlag.set(false)
                     }
                     addDiagnostic("main-page-start", url)
                 }
@@ -3326,6 +3331,7 @@ private fun NartoUnlockScreen(
                     cookieManager.flush()
                     if (sameEpisodeUrl(url, pageUrl)) {
                         pageReadyForCapture = true
+                        pageCaptureReadyFlag.set(true)
                         mainHandler.postDelayed(
                             { probeMainPlayback("page-finish+750ms") },
                             750
@@ -3527,6 +3533,7 @@ private fun NartoUnlockScreen(
             popupWebView?.destroy()
             popupWebView = null
             popupVisible = false
+            pageCaptureReadyFlag.set(false)
             mainWebView?.stopLoading()
             mainWebView?.onPause()
             mainWebView?.destroy()
