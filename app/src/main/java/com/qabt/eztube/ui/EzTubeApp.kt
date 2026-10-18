@@ -2783,7 +2783,7 @@ private fun SettingsScreen(
                                             clipboard?.setPrimaryClip(
                                                 android.content.ClipData.newPlainText(
                                                     "Narto diagnostics",
-                                                    nartoDiagnostic
+                                                    nartoDiagnostic.orEmpty()
                                                 )
                                             )
                                             Toast.makeText(
