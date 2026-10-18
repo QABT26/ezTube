@@ -2309,321 +2309,352 @@ private fun NartoUnlockScreen(
     onStreamCaptured: (String) -> Unit,
     onCancel: () -> Unit
 ) {
-    val context = LocalContext.current
-    var webView by remember(pageUrl) {
+    var mainWebView by remember(pageUrl) {
         mutableStateOf<android.webkit.WebView?>(null)
     }
-    var canGoBack by remember(pageUrl) { mutableStateOf(false) }
-
-    fun launchExternal(url: String) {
-        if (!url.startsWith("http://") && !url.startsWith("https://")) return
-        runCatching {
-            android.webkit.CookieManager.getInstance().flush()
-            context.startActivity(
-                android.content.Intent(
-                    android.content.Intent.ACTION_VIEW,
-                    android.net.Uri.parse(url)
-                )
-            )
-        }
+    var adWebView by remember(pageUrl) {
+        mutableStateOf<android.webkit.WebView?>(null)
     }
+    var adUrl by remember(pageUrl) { mutableStateOf<String?>(null) }
+    var adTitle by remember(pageUrl) { mutableStateOf("Quảng cáo") }
 
     fun isInternalNartoUrl(url: String): Boolean {
-        val host = runCatching { android.net.Uri.parse(url).host.orEmpty().lowercase() }
-            .getOrDefault("")
+        val host = runCatching {
+            android.net.Uri.parse(url).host.orEmpty().lowercase()
+        }.getOrDefault("")
         return host == "narto-drama.com" ||
             host.endsWith(".narto-drama.com") ||
             host == "challenges.cloudflare.com" ||
             host.endsWith(".challenges.cloudflare.com")
     }
 
+    fun isHttpUrl(url: String): Boolean =
+        url.startsWith("http://") || url.startsWith("https://")
+
+    fun closeAd() {
+        adWebView?.stopLoading()
+        adWebView?.destroy()
+        adWebView = null
+        adUrl = null
+        android.webkit.CookieManager.getInstance().flush()
+    }
+
     BackHandler {
-        val active = webView
-        if (active?.canGoBack() == true) {
-            active.goBack()
-        } else {
-            onCancel()
+        val ad = adWebView
+        when {
+            adUrl != null && ad?.canGoBack() == true -> ad.goBack()
+            adUrl != null -> closeAd()
+            mainWebView?.canGoBack() == true -> mainWebView?.goBack()
+            else -> onCancel()
         }
     }
 
-    Column(
+    Box(
         Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                onClick = {
-                    val active = webView
-                    if (active?.canGoBack() == true) active.goBack() else onCancel()
-                }
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
-            }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "Mở khóa Narto",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    media.title,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-        ) {
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                Text(
-                    "Hoàn thành quảng cáo của Narto. Quảng cáo mở ngoài ezTube để " +
-                        "trang mở khóa bên dưới không bị tải lại; quay lại app để tiếp tục.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                status?.takeIf { it.isNotBlank() }?.let {
-                    Spacer(Modifier.height(4.dp))
+                IconButton(
+                    onClick = {
+                        val active = mainWebView
+                        if (active?.canGoBack() == true) active.goBack() else onCancel()
+                    }
+                ) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
+                }
+                Column(Modifier.weight(1f)) {
                     Text(
-                        it,
+                        "Mở khóa Narto",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        media.title,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
-        }
 
-        key(pageUrl) {
-            AndroidView(
-                factory = { webContext ->
-                    val captured = java.util.concurrent.atomic.AtomicBoolean(false)
-                    val cookieManager = android.webkit.CookieManager.getInstance()
-                    android.webkit.WebView(webContext).apply {
-                        webView = this
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.mediaPlaybackRequiresUserGesture = true
-                        settings.loadsImagesAutomatically = true
-                        settings.mixedContentMode =
-                            android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                        // Keep one persistent browsing context. Narto/ad links that
-                        // navigate away are intercepted below and opened externally.
-                        // Multiple-window WebView popups can leave the primary view
-                        // blank on some Android WebView builds.
-                        settings.setSupportMultipleWindows(false)
-                        settings.javaScriptCanOpenWindowsAutomatically = false
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Text(
+                        "Quảng cáo mở ngay trong ezTube. Trang Narto phía sau vẫn được giữ nguyên, " +
+                            "nên tiến trình mở khóa không bị tải lại.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    status?.takeIf { it.isNotBlank() }?.let {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
 
-                        cookieManager.setAcceptCookie(true)
-                        cookieManager.setAcceptThirdPartyCookies(this, true)
+            key(pageUrl) {
+                AndroidView(
+                    factory = { webContext ->
+                        val captured = java.util.concurrent.atomic.AtomicBoolean(false)
+                        val cookieManager = android.webkit.CookieManager.getInstance()
 
-                        fun inspect(url: String?) {
-                            val value = url.orEmpty()
-                            if (
-                                value.startsWith(
-                                    "https://stream.narto-drama.com/e/m/"
-                                ) &&
-                                captured.compareAndSet(false, true)
-                            ) {
-                                android.os.Handler(
-                                    android.os.Looper.getMainLooper()
-                                ).post {
-                                    cookieManager.flush()
-                                    onStreamCaptured(value)
-                                }
-                            }
-                        }
+                        android.webkit.WebView(webContext).apply {
+                            mainWebView = this
 
-                        webChromeClient = android.webkit.WebChromeClient()
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.mediaPlaybackRequiresUserGesture = true
+                            settings.loadsImagesAutomatically = true
+                            settings.mixedContentMode =
+                                android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            settings.setSupportMultipleWindows(false)
+                            settings.javaScriptCanOpenWindowsAutomatically = false
 
-                        webViewClient = object : android.webkit.WebViewClient() {
-                                        private fun open(url: String?) {
-                                            val value = url.orEmpty()
-                                            if (
-                                                value.isNotBlank() &&
-                                                value != "about:blank" &&
-                                                launched.compareAndSet(false, true)
-                                            ) {
-                                                android.os.Handler(
-                                                    android.os.Looper.getMainLooper()
-                                                ).post {
-                                                    launchExternal(value)
-                                                    stopLoading()
-                                                    destroy()
-                                                }
-                                            }
-                                        }
+                            cookieManager.setAcceptCookie(true)
+                            cookieManager.setAcceptThirdPartyCookies(this, true)
 
-                                        override fun shouldOverrideUrlLoading(
-                                            view: android.webkit.WebView?,
-                                            request: android.webkit.WebResourceRequest?
-                                        ): Boolean {
-                                            open(request?.url?.toString())
-                                            return true
-                                        }
-
-                                        override fun onPageStarted(
-                                            view: android.webkit.WebView?,
-                                            url: String?,
-                                            favicon: android.graphics.Bitmap?
-                                        ) {
-                                            open(url)
-                                        }
+                            fun inspect(url: String?) {
+                                val value = url.orEmpty()
+                                if (
+                                    value.startsWith(
+                                        "https://stream.narto-drama.com/e/m/"
+                                    ) &&
+                                    captured.compareAndSet(false, true)
+                                ) {
+                                    android.os.Handler(
+                                        android.os.Looper.getMainLooper()
+                                    ).post {
+                                        cookieManager.flush()
+                                        onStreamCaptured(value)
                                     }
                                 }
-                                transport.webView = popup
-                                resultMsg.sendToTarget()
-                                return true
                             }
+
+                            webChromeClient = android.webkit.WebChromeClient()
+
+                            webViewClient = object : android.webkit.WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: android.webkit.WebView?,
+                                    request: android.webkit.WebResourceRequest?
+                                ): Boolean {
+                                    val url = request?.url?.toString().orEmpty()
+                                    inspect(url)
+
+                                    if (
+                                        request?.isForMainFrame == true &&
+                                        isHttpUrl(url) &&
+                                        !isInternalNartoUrl(url)
+                                    ) {
+                                        adUrl = url
+                                        return true
+                                    }
+                                    return false
+                                }
+
+                                @Deprecated("Deprecated in Java")
+                                override fun shouldOverrideUrlLoading(
+                                    view: android.webkit.WebView?,
+                                    url: String?
+                                ): Boolean {
+                                    val value = url.orEmpty()
+                                    inspect(value)
+
+                                    if (
+                                        isHttpUrl(value) &&
+                                        !isInternalNartoUrl(value)
+                                    ) {
+                                        adUrl = value
+                                        return true
+                                    }
+                                    return false
+                                }
+
+                                override fun shouldInterceptRequest(
+                                    view: android.webkit.WebView?,
+                                    request: android.webkit.WebResourceRequest?
+                                ): android.webkit.WebResourceResponse? {
+                                    inspect(request?.url?.toString())
+                                    return super.shouldInterceptRequest(view, request)
+                                }
+
+                                @Deprecated("Deprecated in Java")
+                                override fun shouldInterceptRequest(
+                                    view: android.webkit.WebView?,
+                                    url: String?
+                                ): android.webkit.WebResourceResponse? {
+                                    inspect(url)
+                                    return super.shouldInterceptRequest(view, url)
+                                }
+
+                                override fun onPageFinished(
+                                    view: android.webkit.WebView?,
+                                    url: String?
+                                ) {
+                                    cookieManager.flush()
+                                }
+                            }
+
+                            loadUrl(pageUrl)
+                        }
+                    },
+                    update = { active ->
+                        mainWebView = active
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                )
+            }
+        }
+
+        adUrl?.let { currentAdUrl ->
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+                tonalElevation = 8.dp
+            ) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = {
+                                val active = adWebView
+                                if (active?.canGoBack() == true) {
+                                    active.goBack()
+                                } else {
+                                    closeAd()
+                                }
+                            }
+                        ) {
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
                         }
 
-                        webViewClient = object : android.webkit.WebViewClient() {
-                            override fun shouldOverrideUrlLoading(
-                                view: android.webkit.WebView?,
-                                request: android.webkit.WebResourceRequest?
-                            ): Boolean {
-                                val url = request?.url?.toString().orEmpty()
-                                inspect(url)
-
-                                // Keep the Narto/Cloudflare unlock flow inside this
-                                // persistent WebView. Ad destinations leave the app,
-                                // so returning does not recreate/reset Narto state.
-                                if (
-                                    request?.isForMainFrame == true &&
-                                    url.isNotBlank() &&
-                                    !isInternalNartoUrl(url)
-                                ) {
-                                    view?.stopLoading()
-                                    launchExternal(url)
-                                    return true
-                                }
-                                return false
-                            }
-
-                            @Deprecated("Deprecated in Java")
-                            override fun shouldOverrideUrlLoading(
-                                view: android.webkit.WebView?,
-                                url: String?
-                            ): Boolean {
-                                val value = url.orEmpty()
-                                inspect(value)
-                                if (value.isNotBlank() && !isInternalNartoUrl(value)) {
-                                    view?.stopLoading()
-                                    launchExternal(value)
-                                    return true
-                                }
-                                return false
-                            }
-
-                            override fun shouldInterceptRequest(
-                                view: android.webkit.WebView?,
-                                request: android.webkit.WebResourceRequest?
-                            ): android.webkit.WebResourceResponse? {
-                                inspect(request?.url?.toString())
-                                return super.shouldInterceptRequest(view, request)
-                            }
-
-                            @Deprecated("Deprecated in Java")
-                            override fun shouldInterceptRequest(
-                                view: android.webkit.WebView?,
-                                url: String?
-                            ): android.webkit.WebResourceResponse? {
-                                inspect(url)
-                                return super.shouldInterceptRequest(view, url)
-                            }
-
-                            override fun onReceivedError(
-                                view: android.webkit.WebView?,
-                                request: android.webkit.WebResourceRequest?,
-                                error: android.webkit.WebResourceError?
-                            ) {
-                                if (request?.isForMainFrame == true) {
-                                    val message = error?.description?.toString()
-                                        ?: "Unable to load Narto page"
-                                    view?.loadDataWithBaseURL(
-                                        pageUrl,
-                                        """
-                                        <html><body style="font-family:sans-serif;padding:24px">
-                                        <h3>Narto page load failed</h3>
-                                        <p>$message</p>
-                                        <p>${request.url}</p>
-                                        </body></html>
-                                        """.trimIndent(),
-                                        "text/html",
-                                        "utf-8",
-                                        null
-                                    )
-                                }
-                            }
-
-                            override fun onReceivedHttpError(
-                                view: android.webkit.WebView?,
-                                request: android.webkit.WebResourceRequest?,
-                                errorResponse: android.webkit.WebResourceResponse?
-                            ) {
-                                if (
-                                    request?.isForMainFrame == true &&
-                                    (errorResponse?.statusCode ?: 0) >= 400
-                                ) {
-                                    val code = errorResponse?.statusCode ?: 0
-                                    view?.loadDataWithBaseURL(
-                                        pageUrl,
-                                        """
-                                        <html><body style="font-family:sans-serif;padding:24px">
-                                        <h3>Narto HTTP error</h3>
-                                        <p>HTTP $code</p>
-                                        <p>${request.url}</p>
-                                        </body></html>
-                                        """.trimIndent(),
-                                        "text/html",
-                                        "utf-8",
-                                        null
-                                    )
-                                }
-                            }
-
-                            override fun onPageFinished(
-                                view: android.webkit.WebView?,
-                                url: String?
-                            ) {
-                                cookieManager.flush()
-                                canGoBack = view?.canGoBack() == true
-                            }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                adTitle,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                runCatching {
+                                    android.net.Uri.parse(
+                                        adWebView?.url ?: currentAdUrl
+                                    ).host.orEmpty()
+                                }.getOrDefault(""),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
 
-                        loadUrl(pageUrl)
+                        TextButton(onClick = { closeAd() }) {
+                            Text("Đóng")
+                        }
                     }
-                },
-                update = { active ->
-                    webView = active
-                    canGoBack = active.canGoBack()
-                    // Do not reload pageUrl on recomposition or after an external
-                    // ad. Keeping the same WebView preserves sessionStorage,
-                    // localStorage, cookies and Narto's in-page progress.
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-            )
+
+                    AndroidView(
+                        factory = { adContext ->
+                            android.webkit.WebView(adContext).apply {
+                                adWebView = this
+
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.mediaPlaybackRequiresUserGesture = true
+                                settings.loadsImagesAutomatically = true
+                                settings.mixedContentMode =
+                                    android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                                settings.setSupportMultipleWindows(false)
+                                settings.javaScriptCanOpenWindowsAutomatically = false
+
+                                val cookieManager =
+                                    android.webkit.CookieManager.getInstance()
+                                cookieManager.setAcceptCookie(true)
+                                cookieManager.setAcceptThirdPartyCookies(this, true)
+
+                                webChromeClient = object : android.webkit.WebChromeClient() {
+                                    override fun onReceivedTitle(
+                                        view: android.webkit.WebView?,
+                                        title: String?
+                                    ) {
+                                        adTitle = title
+                                            ?.trim()
+                                            ?.takeIf { it.isNotBlank() }
+                                            ?: "Quảng cáo"
+                                    }
+                                }
+
+                                webViewClient = object : android.webkit.WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(
+                                        view: android.webkit.WebView?,
+                                        request: android.webkit.WebResourceRequest?
+                                    ): Boolean {
+                                        val url = request?.url?.toString().orEmpty()
+                                        return !isHttpUrl(url)
+                                    }
+
+                                    @Deprecated("Deprecated in Java")
+                                    override fun shouldOverrideUrlLoading(
+                                        view: android.webkit.WebView?,
+                                        url: String?
+                                    ): Boolean {
+                                        return !isHttpUrl(url.orEmpty())
+                                    }
+
+                                    override fun onPageFinished(
+                                        view: android.webkit.WebView?,
+                                        url: String?
+                                    ) {
+                                        cookieManager.flush()
+                                    }
+                                }
+
+                                loadUrl(currentAdUrl)
+                            }
+                        },
+                        update = { active ->
+                            adWebView = active
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    )
+                }
+            }
         }
     }
 
     DisposableEffect(pageUrl) {
         onDispose {
             android.webkit.CookieManager.getInstance().flush()
-            webView = null
+            adWebView?.destroy()
+            mainWebView?.destroy()
+            adWebView = null
+            mainWebView = null
         }
     }
 }
