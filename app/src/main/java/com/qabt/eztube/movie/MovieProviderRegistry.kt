@@ -116,6 +116,13 @@ class MovieProviderRegistry(
         return provider.resolve(mediaId)
     }
 
+    fun diagnoseNarto(query: String): String {
+        val provider = providers
+            .firstOrNull { it.id == "narto" } as? NartoDramaMovieProvider
+            ?: return "Narto provider is not installed"
+        return provider.diagnostics(query)
+    }
+
     fun reportPlaybackFailure(mediaId: String) {
         // Diagnostic build: keep MotPhim isolated and let Media3 retry the same
         // exact source. Do not redirect to another provider.
