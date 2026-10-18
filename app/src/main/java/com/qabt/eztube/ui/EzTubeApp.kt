@@ -2380,6 +2380,10 @@ private fun NartoUnlockScreen(
     val subtitleGraceStartedAtMs = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicLong(0L)
     }
+    val subtitleClassifierRunning = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
+    val nartoScope = rememberCoroutineScope()
     val gateUnlockSeen = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
@@ -2472,6 +2476,95 @@ private fun NartoUnlockScreen(
         val right = runCatching { android.net.Uri.parse(b) }.getOrNull()
         return left?.host.orEmpty().equals(right?.host.orEmpty(), ignoreCase = true) &&
             left?.path.orEmpty() == right?.path.orEmpty()
+    }
+
+    fun classifyNartoSubtitleCandidates(urls: List<String>) {
+        if (capturedSubtitleUrl != null || urls.isEmpty()) return
+        if (!subtitleClassifierRunning.compareAndSet(false, true)) return
+
+        val snapshots = urls
+            .distinct()
+            .take(32)
+            .map { url -> url to cookieManager.getCookie(url).orEmpty() }
+
+        addDiagnostic("vietsub-native-scan-start")
+
+        nartoScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            suspend fun classifyOne(url: String, cookie: String): String? {
+                return runCatching {
+                    val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    try {
+                        connection.instanceFollowRedirects = true
+                        connection.connectTimeout = 1200
+                        connection.readTimeout = 1200
+                        connection.requestMethod = "GET"
+                        connection.setRequestProperty(
+                            "User-Agent",
+                            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
+                                "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
+                        )
+                        connection.setRequestProperty("Referer", pageUrl)
+                        connection.setRequestProperty("Origin", "https://edge.narto-drama.com")
+                        connection.setRequestProperty("Range", "bytes=0-511")
+                        if (cookie.isNotBlank()) {
+                            connection.setRequestProperty("Cookie", cookie)
+                        }
+
+                        val code = connection.responseCode
+                        if (code !in 200..299) return@runCatching null
+
+                        val contentType = connection.contentType.orEmpty().lowercase()
+                        if (
+                            contentType.contains("text/vtt") ||
+                            contentType.contains("application/vtt")
+                        ) {
+                            return@runCatching url
+                        }
+
+                        val input = connection.inputStream
+                        val buffer = ByteArray(512)
+                        val count = input.use { it.read(buffer) }
+                        if (count <= 0) return@runCatching null
+
+                        val head = String(
+                            buffer,
+                            0,
+                            count,
+                            java.nio.charset.StandardCharsets.UTF_8
+                        )
+                            .removePrefix("\uFEFF")
+                            .trimStart()
+
+                        if (head.startsWith("WEBVTT")) url else null
+                    } finally {
+                        connection.disconnect()
+                    }
+                }.getOrNull()
+            }
+
+            val found = kotlinx.coroutines.coroutineScope {
+                snapshots.map { (url, cookie) ->
+                    kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.IO) {
+                        classifyOne(url, cookie)
+                    }
+                }.map { it.await() }.firstOrNull { !it.isNullOrBlank() }
+            }
+
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                subtitleClassifierRunning.set(false)
+                if (
+                    found != null &&
+                    capturedSubtitleUrl == null &&
+                    pageReadyForCapture
+                ) {
+                    capturedSubtitleUrl = found
+                    addDiagnostic("vietsub-native-detected", found)
+                    probeMainPlayback("vietsub-native-detected")
+                } else if (found == null) {
+                    addDiagnostic("vietsub-native-none")
+                }
+            }
+        }
     }
 
     fun probeMainPlayback(reason: String) {
@@ -2665,6 +2758,26 @@ private fun NartoUnlockScreen(
                 .filter { it.second.isNotBlank() }
                 .toList()
 
+            val nativeSubtitleCandidates = probeLines
+                .map { it.second }
+                .filter { url ->
+                    val uri = runCatching { android.net.Uri.parse(url) }.getOrNull()
+                    val host = uri?.host.orEmpty().lowercase()
+                    val path = uri?.path.orEmpty()
+                    uri?.scheme == "https" &&
+                        (
+                            host == "edge.narto-drama.com" ||
+                            host == "narto-drama.com" ||
+                            host == "stream.narto-drama.com"
+                        ) &&
+                        path.startsWith("/e/s/")
+                }
+                .distinct()
+
+            if (capturedSubtitleUrl == null && nativeSubtitleCandidates.isNotEmpty()) {
+                classifyNartoSubtitleCandidates(nativeSubtitleCandidates)
+            }
+
             // First pass: capture the subtitle before the video manifest handoff.
             probeLines.forEach { (kind, url) ->
                 addDiagnostic("probe-" + kind, url)
@@ -2720,7 +2833,12 @@ private fun NartoUnlockScreen(
                     path.endsWith(".m3u8", ignoreCase = true)
 
                 if (nartoPlayable || unlockedUpstreamPlayable) {
-                    val waitingForSubtitle = capturedSubtitleUrl == null
+                    val waitingForSubtitle =
+                        capturedSubtitleUrl == null &&
+                            (
+                                subtitleClassifierRunning.get() ||
+                                nativeSubtitleCandidates.isNotEmpty()
+                            )
 
                     if (
                         waitingForSubtitle &&
@@ -2744,6 +2862,10 @@ private fun NartoUnlockScreen(
                             { probeMainPlayback("vietsub-grace+1700ms") },
                             1700
                         )
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("vietsub-grace+2900ms") },
+                            2900
+                        )
                     } else {
                         val graceElapsedMs =
                             android.os.SystemClock.elapsedRealtime() -
@@ -2753,7 +2875,7 @@ private fun NartoUnlockScreen(
                             !waitingForSubtitle ||
                                 (
                                     subtitleWaitArmed.get() &&
-                                    graceElapsedMs >= 1600L
+                                    graceElapsedMs >= 2800L
                                 )
 
                         if (
@@ -3311,6 +3433,7 @@ private fun NartoUnlockScreen(
                         capturedSubtitleUrl = null
                         subtitleWaitArmed.set(false)
                         subtitleGraceStartedAtMs.set(0L)
+                        subtitleClassifierRunning.set(false)
 
                         rendererRecoveryCount += 1
                         if (rendererRecoveryCount <= 2) {
@@ -3470,6 +3593,7 @@ private fun NartoUnlockScreen(
                             capturedSubtitleUrl = null
                             subtitleWaitArmed.set(false)
                         subtitleGraceStartedAtMs.set(0L)
+                        subtitleClassifierRunning.set(false)
                             addDiagnostic("main-load", pageUrl)
                             loadUrl(pageUrl)
                         }
