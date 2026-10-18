@@ -48,6 +48,7 @@ class PlaybackService : MediaSessionService() {
         const val ARG_ERROR_MESSAGE = "error_message"
         const val ARG_HLS_URL = "hls_url"
         const val ARG_REFERER = "referer"
+        const val ARG_SUBTITLE_URL = "subtitle_url"
         const val EXTRA_COMPATIBILITY_FALLBACK = "compatibility_fallback"
         const val EXTRA_VIDEO_HEIGHT = "video_height"
         const val EXTRA_PLAYBACK_ENGINE = "playback_engine"
@@ -330,10 +331,12 @@ class PlaybackService : MediaSessionService() {
                     if (customCommand.customAction == COMMAND_PLAY_DIRECT_HLS) {
                         val hlsUrl = args.getString(ARG_HLS_URL).orEmpty()
                         val referer = args.getString(ARG_REFERER).orEmpty()
+                        val subtitleUrl = args.getString(ARG_SUBTITLE_URL)
                         val future = com.google.common.util.concurrent.SettableFuture.create<SessionResult>()
                         queueManager.playDirectMovieHls(
                             hlsUrl = hlsUrl,
                             referer = referer,
+                            subtitleUrl = subtitleUrl,
                             positionMs = args.getLong(ARG_POSITION_MS, 0L),
                             playWhenReady = args.getBoolean(ARG_PLAY_WHEN_READY, true)
                         ) { result ->
