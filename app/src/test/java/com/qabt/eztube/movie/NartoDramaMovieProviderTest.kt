@@ -34,9 +34,9 @@ class NartoDramaMovieProviderTest {
     fun extractsSignedHlsFromAbsoluteOrEscapedRelativePageData() {
         val token = "eyJ2IjoxLCJ0IjoicHJvdiJ9.signature"
         val absolute =
-            """{"stream":"https://stream.narto-drama.com/e/m/""" + token + """"}"""
+            "{\\\"stream\\\":\\\"https://stream.narto-drama.com/e/m/" + token + "\\\"}"
         val relative =
-            """{"stream":"\/e\/m\/""" + token + """"}"""
+            "{\\\"stream\\\":\\\"\\\\/e\\\\/m\\\\/" + token + "\\\"}"
 
         assertEquals(
             "https://stream.narto-drama.com/e/m/" + token,
