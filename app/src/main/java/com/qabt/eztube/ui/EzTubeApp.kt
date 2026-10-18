@@ -2384,6 +2384,8 @@ private fun NartoUnlockScreen(
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
     var pageReadyForCapture by remember(pageUrl) { mutableStateOf(false) }
+    var webViewGeneration by remember(pageUrl) { mutableIntStateOf(0) }
+    var rendererRecoveryCount by remember(pageUrl) { mutableIntStateOf(0) }
     val diagnosticEvents = remember(pageUrl) { mutableStateListOf<String>() }
     var diagnosticSeq by remember(pageUrl) { mutableIntStateOf(0) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
@@ -2611,7 +2613,7 @@ private fun NartoUnlockScreen(
                 });
 
                 try {
-                  performance.getEntriesByType('resource').forEach((e) => {
+                  performance.getEntriesByType('resource').slice(-120).forEach((e) => {
                     const u = String(e.name || '');
                     if (
                       u.includes('narto-drama.com') ||
@@ -3132,6 +3134,26 @@ private fun NartoUnlockScreen(
                                 return super.shouldInterceptRequest(view, request)
                             }
             
+                            override fun onRenderProcessGone(
+                                view: android.webkit.WebView?,
+                                detail: android.webkit.RenderProcessGoneDetail?
+                            ): Boolean {
+                                addDiagnostic(
+                                    if (detail?.didCrash() == true) "popup-renderer-crash" else "popup-renderer-gone",
+                                    view?.url
+                                )
+                                mainHandler.post {
+                                    if (popupWebView === view) {
+                                        popupWebView = null
+                                        popupVisible = false
+                                        popupOpenSeen.set(false)
+                                    }
+                                    runCatching { view?.destroy() }
+                                    notifyMainReturned()
+                                }
+                                return true
+                            }
+
                             override fun onPageStarted(
                                 view: android.webkit.WebView?,
                                 url: String?,
@@ -3237,6 +3259,40 @@ private fun NartoUnlockScreen(
                     return super.shouldInterceptRequest(view, url)
                 }
             
+                override fun onRenderProcessGone(
+                    view: android.webkit.WebView?,
+                    detail: android.webkit.RenderProcessGoneDetail?
+                ): Boolean {
+                    addDiagnostic(
+                        if (detail?.didCrash() == true) "main-renderer-crash" else "main-renderer-gone",
+                        view?.url
+                    )
+                    mainHandler.post {
+                        runCatching {
+                            view?.stopLoading()
+                            view?.destroy()
+                        }
+                        if (mainWebView === view) mainWebView = null
+                        pageReadyForCapture = false
+                        playbackCaptured.set(false)
+                        capturedSubtitleUrl = null
+                        subtitleWaitArmed.set(false)
+
+                        rendererRecoveryCount += 1
+                        if (rendererRecoveryCount <= 2) {
+                            webViewGeneration += 1
+                        } else {
+                            android.widget.Toast.makeText(
+                                context,
+                                "WebView bị lỗi nhiều lần. Hãy thoát màn Narto và mở lại.",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                            onCancel()
+                        }
+                    }
+                    return true
+                }
+
                 override fun onPageStarted(
                     view: android.webkit.WebView?,
                     url: String?,
@@ -3271,8 +3327,8 @@ private fun NartoUnlockScreen(
                     if (sameEpisodeUrl(url, pageUrl)) {
                         pageReadyForCapture = true
                         mainHandler.postDelayed(
-                            { probeMainPlayback("page-finish+250ms") },
-                            250
+                            { probeMainPlayback("page-finish+750ms") },
+                            750
                         )
                     }
                 }
@@ -3371,7 +3427,7 @@ private fun NartoUnlockScreen(
                 }
             }
 
-            key(pageUrl) {
+            key(pageUrl, webViewGeneration) {
                 AndroidView(
                     factory = { webContext ->
                         android.webkit.WebView(webContext).apply {
