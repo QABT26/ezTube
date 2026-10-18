@@ -2511,6 +2511,69 @@ private fun NartoUnlockScreen(
         }
     }
 
+    fun probePopupClosable(reason: String) {
+        val popup = popupWebView ?: return
+        popup.evaluateJavascript(
+            """
+            (function() {
+              try {
+                const candidates = Array.from(
+                  document.querySelectorAll('button,a,[role="button"]')
+                );
+                const visible = (el) => {
+                  const r = el.getBoundingClientRect();
+                  const s = getComputedStyle(el);
+                  return r.width > 0 && r.height > 0 &&
+                    s.display !== 'none' &&
+                    s.visibility !== 'hidden' &&
+                    Number(s.opacity || 1) > 0;
+                };
+                const norm = (s) => String(s || '')
+                  .trim()
+                  .toLowerCase()
+                  .replace(/\\s+/g, ' ');
+                const exact = new Set([
+                  'x','×','close','đóng','skip','bỏ qua','dismiss'
+                ]);
+                for (const el of candidates) {
+                  if (!visible(el)) continue;
+                  const text = norm(el.innerText || el.textContent);
+                  const aria = norm(el.getAttribute('aria-label'));
+                  const title = norm(el.getAttribute('title'));
+                  if (
+                    exact.has(text) ||
+                    exact.has(aria) ||
+                    exact.has(title)
+                  ) {
+                    return 'closable';
+                  }
+                }
+                return '';
+              } catch (e) {
+                return '';
+              }
+            })();
+            """.trimIndent()
+        ) { raw ->
+            val closable = runCatching {
+                org.json.JSONTokener(raw).nextValue() as? String
+            }.getOrNull() == "closable"
+
+            if (closable && popupVisible) {
+                addDiagnostic("popup-close-control-visible:" + reason, popup.url)
+                mainHandler.postDelayed(
+                    {
+                        if (popupVisible && popupWebView === popup) {
+                            addDiagnostic("auto-close-popup-shell", popup.url)
+                            closePopup()
+                        }
+                    },
+                    350
+                )
+            }
+        }
+    }
+
     fun closePopup() {
         addDiagnostic("popup-close", popupWebView?.url)
         popupWebView?.stopLoading()
@@ -2795,6 +2858,18 @@ private fun NartoUnlockScreen(
                                             ) {
                                                 addDiagnostic("popup-page-finish", url)
                                                 cookieManager.flush()
+                                                mainHandler.postDelayed(
+                                                    { probePopupClosable("page+750ms") },
+                                                    750
+                                                )
+                                                mainHandler.postDelayed(
+                                                    { probePopupClosable("page+2000ms") },
+                                                    2000
+                                                )
+                                                mainHandler.postDelayed(
+                                                    { probePopupClosable("page+5000ms") },
+                                                    5000
+                                                )
                                             }
                                         }
                                     }
