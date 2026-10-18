@@ -7,6 +7,31 @@ import org.junit.Test
 
 class NartoDramaMovieProviderTest {
     @Test
+    fun detectsCloudflareChallengeResponses() {
+        assertTrue(
+            NartoDramaMovieProvider.looksLikeChallenge(
+                "<html><script src=\"/cdn-cgi/challenge-platform/x\"></script></html>",
+                "https://narto-drama.com/",
+                200
+            )
+        )
+        assertTrue(
+            NartoDramaMovieProvider.looksLikeChallenge(
+                "ok",
+                "https://challenges.cloudflare.com/turnstile",
+                200
+            )
+        )
+        assertFalse(
+            NartoDramaMovieProvider.looksLikeChallenge(
+                "<html><body>movie catalog</body></html>",
+                "https://edge.narto-drama.com/",
+                200
+            )
+        )
+    }
+
+    @Test
     fun parsesNartoCatalogCardsForPartialTitleSearch() {
         val html = """
             <a href="/detail/watch/toi-co-ba-ban-gai-nho-he-thong/1?lang=vi-VN">
