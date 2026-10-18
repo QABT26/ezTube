@@ -2449,7 +2449,7 @@ private fun NartoUnlockScreen(
                       u.includes('/e/m/') ||
                       u.includes('/e/s/')
                     ) {
-                      push('resource', u);
+                      push('resource.' + String(e.initiatorType || 'unknown'), u);
                     }
                   });
                 } catch (e) {}
@@ -2465,60 +2465,75 @@ private fun NartoUnlockScreen(
                 org.json.JSONTokener(raw).nextValue() as? String
             }.getOrNull().orEmpty()
 
-            decoded.lineSequence()
+            val probeLines = decoded.lineSequence()
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
-                .forEach { line ->
-                    val kind = line.substringBefore('|', "probe")
-                    val url = line.substringAfter('|', "")
-                    if (url.isNotBlank()) {
-                        addDiagnostic("probe-" + kind, url)
-
-                        val uri = runCatching {
-                            android.net.Uri.parse(url)
-                        }.getOrNull()
-                        val host = uri?.host.orEmpty().lowercase()
-                        val path = uri?.path.orEmpty()
-
-                        if (
-                            kind == "track.src" &&
-                            uri?.scheme == "https" &&
-                            (
-                                host == "edge.narto-drama.com" ||
-                                host == "narto-drama.com"
-                            ) &&
-                            path.startsWith("/e/s/")
-                        ) {
-                            capturedSubtitleUrl = url
-                            addDiagnostic("vietsub-track-detected", url)
-                        }
-                        val nartoPlayable =
-                            (
-                                host == "stream.narto-drama.com" ||
-                                host == "edge.narto-drama.com"
-                            ) &&
-                            (
-                                path.startsWith("/e/m/") ||
-                                path.endsWith(".m3u8", ignoreCase = true)
-                            )
-
-                        val unlockedUpstreamPlayable =
-                            gateUnlockSeen.get() &&
-                            (
-                                host == "mydramawave.com" ||
-                                host.endsWith(".mydramawave.com")
-                            ) &&
-                            path.endsWith(".m3u8", ignoreCase = true)
-
-                        if (
-                            (nartoPlayable || unlockedUpstreamPlayable) &&
-                            playbackCaptured.compareAndSet(false, true)
-                        ) {
-                            addDiagnostic("probe-playable-manifest", url)
-                            onStreamCaptured(url, capturedSubtitleUrl)
-                        }
-                    }
+                .map { line ->
+                    line.substringBefore('|', "probe") to line.substringAfter('|', "")
                 }
+                .filter { it.second.isNotBlank() }
+                .toList()
+
+            // First pass: capture the subtitle before the video manifest handoff.
+            probeLines.forEach { (kind, url) ->
+                addDiagnostic("probe-" + kind, url)
+
+                val uri = runCatching {
+                    android.net.Uri.parse(url)
+                }.getOrNull()
+                val host = uri?.host.orEmpty().lowercase()
+                val path = uri?.path.orEmpty()
+                val isNartoSideResource =
+                    uri?.scheme == "https" &&
+                        (
+                            host == "edge.narto-drama.com" ||
+                            host == "narto-drama.com"
+                        ) &&
+                        path.startsWith("/e/s/")
+                val isSubtitleCandidate =
+                    kind == "track.src" ||
+                        kind == "resource.track"
+
+                if (isNartoSideResource && isSubtitleCandidate) {
+                    capturedSubtitleUrl = url
+                    addDiagnostic("vietsub-track-detected", url)
+                }
+            }
+
+            // Second pass: only after subtitle discovery do we hand the stream to Media3.
+            probeLines.forEach { (_, url) ->
+                val uri = runCatching {
+                    android.net.Uri.parse(url)
+                }.getOrNull()
+                val host = uri?.host.orEmpty().lowercase()
+                val path = uri?.path.orEmpty()
+
+                val nartoPlayable =
+                    (
+                        host == "stream.narto-drama.com" ||
+                        host == "edge.narto-drama.com"
+                    ) &&
+                    (
+                        path.startsWith("/e/m/") ||
+                        path.endsWith(".m3u8", ignoreCase = true)
+                    )
+
+                val unlockedUpstreamPlayable =
+                    gateUnlockSeen.get() &&
+                    (
+                        host == "mydramawave.com" ||
+                        host.endsWith(".mydramawave.com")
+                    ) &&
+                    path.endsWith(".m3u8", ignoreCase = true)
+
+                if (
+                    (nartoPlayable || unlockedUpstreamPlayable) &&
+                    playbackCaptured.compareAndSet(false, true)
+                ) {
+                    addDiagnostic("probe-playable-manifest", url)
+                    onStreamCaptured(url, capturedSubtitleUrl)
+                }
+            }
         }
     }
 
@@ -2961,7 +2976,7 @@ private fun NartoUnlockScreen(
                                                 closePopup()
                                             }
                                         },
-                                        4500
+                                        3000
                                     )
                                     return true
                                 }
