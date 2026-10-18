@@ -148,7 +148,9 @@ class NartoDramaMovieProvider(
     }
 
     private fun detailUrls(slug: String) = WEB_BASES.map {
-        it + "/detail/watch/" + slug + "?lang=vi-VN"
+        // Narto's watch route is episode-scoped; episode 1 is the canonical
+        // detail entry used to obtain title/poster/episode metadata.
+        it + "/detail/watch/" + slug + "/1?lang=vi-VN"
     }
 
     private fun watchUrls(slug: String, episode: Int) = WEB_BASES.map {
