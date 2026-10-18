@@ -2325,6 +2325,9 @@ private fun NartoUnlockScreen(
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
     var capturedSubtitleUrl by remember(pageUrl) { mutableStateOf<String?>(null) }
+    val subtitleWaitArmed = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
     val gateUnlockSeen = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
@@ -2410,6 +2413,82 @@ private fun NartoUnlockScreen(
         val active = mainWebView ?: return
         addDiagnostic("probe-start:" + reason, active.url)
 
+        if (gateUnlockSeen.get() && capturedSubtitleUrl == null) {
+            active.evaluateJavascript(
+                """
+                (function() {
+                  if (window.__eztubeSubtitleScanRunning) return;
+                  window.__eztubeSubtitleScanRunning = true;
+
+                  const save = (u) => {
+                    if (!u) return;
+                    try {
+                      const x = new URL(String(u), location.href);
+                      if (
+                        x.protocol === 'https:' &&
+                        (x.hostname === 'edge.narto-drama.com' ||
+                         x.hostname === 'narto-drama.com') &&
+                        x.pathname.startsWith('/e/s/')
+                      ) {
+                        window.__eztubeVietsub = x.href;
+                      }
+                    } catch (e) {}
+                  };
+
+                  const candidates = [];
+                  try {
+                    push('subtitle.detected', window.__eztubeVietsub || '');
+                document.querySelectorAll('track').forEach((t) => {
+                      const lang = String(t.srclang || t.label || '').toLowerCase();
+                      const kind = String(t.kind || '').toLowerCase();
+                      if (
+                        kind === 'subtitles' ||
+                        kind === 'captions' ||
+                        lang.includes('vi') ||
+                        lang.includes('viet')
+                      ) {
+                        save(t.src);
+                      }
+                    });
+                  } catch (e) {}
+
+                  try {
+                    performance.getEntriesByType('resource').forEach((e) => {
+                      const u = String(e.name || '');
+                      if (u.includes('narto-drama.com/e/s/')) candidates.push(u);
+                    });
+                  } catch (e) {}
+
+                  (async () => {
+                    for (const u of Array.from(new Set(candidates)).slice(-8)) {
+                      if (window.__eztubeVietsub) break;
+                      try {
+                        const r = await fetch(u, {
+                          credentials: 'include',
+                          cache: 'no-store'
+                        });
+                        const type = String(r.headers.get('content-type') || '').toLowerCase();
+                        if (type.includes('text/vtt') || type.includes('application/vtt')) {
+                          save(u);
+                          break;
+                        }
+                        if (type.includes('text/plain')) {
+                          const text = await r.text();
+                          if (text.trimStart().startsWith('WEBVTT')) {
+                            save(u);
+                            break;
+                          }
+                        }
+                      } catch (e) {}
+                    }
+                    window.__eztubeSubtitleScanRunning = false;
+                  })();
+                })();
+                """.trimIndent(),
+                null
+            )
+        }
+
         active.evaluateJavascript(
             """
             (function() {
@@ -2491,7 +2570,8 @@ private fun NartoUnlockScreen(
                         ) &&
                         path.startsWith("/e/s/")
                 val isSubtitleCandidate =
-                    kind == "track.src" ||
+                    kind == "subtitle.detected" ||
+                        kind == "track.src" ||
                         kind == "resource.track"
 
                 if (isNartoSideResource && isSubtitleCandidate) {
@@ -2526,12 +2606,21 @@ private fun NartoUnlockScreen(
                     ) &&
                     path.endsWith(".m3u8", ignoreCase = true)
 
-                if (
-                    (nartoPlayable || unlockedUpstreamPlayable) &&
-                    playbackCaptured.compareAndSet(false, true)
-                ) {
-                    addDiagnostic("probe-playable-manifest", url)
-                    onStreamCaptured(url, capturedSubtitleUrl)
+                if (nartoPlayable || unlockedUpstreamPlayable) {
+                    if (
+                        capturedSubtitleUrl == null &&
+                        gateUnlockSeen.get() &&
+                        subtitleWaitArmed.compareAndSet(false, true)
+                    ) {
+                        addDiagnostic("vietsub-grace-wait")
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("vietsub-grace+450ms") },
+                            450
+                        )
+                    } else if (playbackCaptured.compareAndSet(false, true)) {
+                        addDiagnostic("probe-playable-manifest", url)
+                        onStreamCaptured(url, capturedSubtitleUrl)
+                    }
                 }
             }
         }
@@ -2541,6 +2630,26 @@ private fun NartoUnlockScreen(
         addDiagnostic("main-focus-return")
         cookieManager.flush()
         mainWebView?.post {
+            if (gateUnlockSeen.get()) {
+                mainWebView?.settings?.mediaPlaybackRequiresUserGesture = false
+                mainWebView?.evaluateJavascript(
+                    """
+                    (function() {
+                      try {
+                        const v = document.querySelector('video');
+                        if (!v) return 'no-video';
+                        const p = v.play();
+                        if (p && p.catch) p.catch(() => {});
+                        return v.currentSrc || v.src || 'video-woken';
+                      } catch (e) {
+                        return 'wake-error';
+                      }
+                    })();
+                    """.trimIndent(),
+                    null
+                )
+                addDiagnostic("unlocked-video-wake")
+            }
             mainWebView?.onResume()
             mainWebView?.evaluateJavascript(
                 """
@@ -2792,6 +2901,19 @@ private fun NartoUnlockScreen(
                                     // At this point it is safe to close ezTube's own popup shell
                                     // automatically; we do not click or fake any third-party ad UI.
                                     mainHandler.post {
+                                        mainWebView?.settings?.mediaPlaybackRequiresUserGesture = false
+                                        mainWebView?.evaluateJavascript(
+                                            """
+                                            try {
+                                              const v = document.querySelector('video');
+                                              if (v) {
+                                                const p = v.play();
+                                                if (p && p.catch) p.catch(() => {});
+                                              }
+                                            } catch (e) {}
+                                            """.trimIndent(),
+                                            null
+                                        )
                                         if (popupVisible) {
                                             addDiagnostic("auto-close-popup-after-unlock", popupWebView?.url)
                                             closePopup()
@@ -2800,16 +2922,16 @@ private fun NartoUnlockScreen(
                                         }
                                     }
                                     mainHandler.postDelayed(
+                                        { probeMainPlayback("gate-unlock+250ms") },
+                                        250
+                                    )
+                                    mainHandler.postDelayed(
                                         { probeMainPlayback("gate-unlock+750ms") },
                                         750
                                     )
                                     mainHandler.postDelayed(
-                                        { probeMainPlayback("gate-unlock+2000ms") },
-                                        2000
-                                    )
-                                    mainHandler.postDelayed(
-                                        { probeMainPlayback("gate-unlock+5000ms") },
-                                        5000
+                                        { probeMainPlayback("gate-unlock+1500ms") },
+                                        1500
                                     )
                                 }
 
@@ -2976,7 +3098,7 @@ private fun NartoUnlockScreen(
                                                 closePopup()
                                             }
                                         },
-                                        3000
+                                        1800
                                     )
                                     return true
                                 }
