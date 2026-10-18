@@ -32,22 +32,57 @@ class NartoDramaMovieProvider(
         val normalized = query.trim()
         if (normalized.isBlank()) return emptyList()
 
-        val slug = parseWatchUrl(normalized)?.first
-            ?: slugify(normalized).takeIf { it.isNotBlank() }
-            ?: return emptyList()
+        parseWatchUrl(normalized)?.first?.let { slug ->
+            return runCatching { listOf(detail(slug).catalog) }
+                .getOrDefault(emptyList())
+        }
 
-        val item = runCatching { detail(slug).catalog }.getOrNull()
-            ?: return emptyList()
-        return listOf(item)
+        val catalogPage = runCatching { fetchPage(catalogUrls()) }.getOrNull()
+        if (catalogPage != null) {
+            val hits = extractCatalogItems(catalogPage)
+            val q = normalizeSearchText(normalized)
+            val ranked = hits
+                .filter {
+                    val title = normalizeSearchText(it.title)
+                    title.contains(q) || q.contains(title) ||
+                        q.split(' ').filter { token -> token.length >= 2 }
+                            .count { token -> title.contains(token) } >= 2
+                }
+                .sortedByDescending {
+                    val title = normalizeSearchText(it.title)
+                    when {
+                        title == q -> 3
+                        title.startsWith(q) || q.startsWith(title) -> 2
+                        else -> 1
+                    }
+                }
+                .take(8)
+            if (ranked.isNotEmpty()) return ranked
+        }
+
+        val slug = slugify(normalized).takeIf { it.isNotBlank() } ?: return emptyList()
+        return runCatching { listOf(detail(slug).catalog) }
+            .getOrDefault(emptyList())
     }
 
     override fun detail(slug: String): MovieDetail {
         requireSlug(slug)
-        val page = fetchPage(detailUrls(slug))
-        val title = extractTitle(page)
+        val page = runCatching { fetchPage(detailUrls(slug)) }.getOrNull()
+        val catalogFallback = if (page == null) {
+            runCatching {
+                extractCatalogItems(fetchPage(catalogUrls()))
+                    .firstOrNull { it.slug == slug }
+            }.getOrNull()
+        } else null
+
+        val title = page?.let(::extractTitle)
+            ?: catalogFallback?.title
             ?: slug.replace('-', ' ').replaceFirstChar { it.uppercase() }
-        val thumbnail = extractMeta(page, "og:image")
-        val episodeCount = extractEpisodeCount(page, slug)
+        val thumbnail = page?.let { extractMeta(it, "og:image") }
+            ?: catalogFallback?.thumbnailUrl
+        val episodeCount = page?.let { extractEpisodeCount(it, slug) }
+            ?: catalogFallback?.episodeBadge
+                ?.let { Regex("""\d+""").find(it)?.value?.toIntOrNull() }
             ?: throw IOException("Narto detail page has no episode list")
 
         val catalog = MovieCatalogItem(
@@ -147,6 +182,14 @@ class NartoDramaMovieProvider(
         throw IOException(lastError?.message ?: "Narto page unavailable", lastError)
     }
 
+    private fun catalogUrls(): List<String> =
+        WEB_BASES.flatMap { base ->
+            listOf(
+                base + "/?lang=vi-VN&tab-provider=bibishort",
+                base + "/?category=urban&lang=vi-VN&tab-provider=bibishort"
+            )
+        }
+
     private fun detailUrls(slug: String) = WEB_BASES.map {
         // Narto's watch route is episode-scoped; episode 1 is the canonical
         // detail entry used to obtain title/poster/episode metadata.
@@ -181,8 +224,8 @@ class NartoDramaMovieProvider(
     companion object {
         private const val WEB_BASE = "https://narto-drama.com"
         private val WEB_BASES = listOf(
-            "https://narto-drama.com",
-            "https://edge.narto-drama.com"
+            "https://edge.narto-drama.com",
+            "https://narto-drama.com"
         )
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
@@ -212,6 +255,82 @@ class NartoDramaMovieProvider(
             Regex("""(?<![A-Za-z0-9])(/e/m/[A-Za-z0-9._~-]+)""")
         private val SUBTITLE_REGEX =
             Regex("""https://narto-drama\.com/e/s/[A-Za-z0-9._~-]+""")
+
+
+        private val CATALOG_ANCHOR_REGEX = Regex(
+            """<a\b[^>]*href\s*=\s*["']([^"']*?/detail/watch/([a-z0-9-]+)(?:/\d+)?[^"']*)["'][^>]*>(.*?)</a>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        private val HEADING_REGEX = Regex(
+            """<h[1-6]\b[^>]*>(.*?)</h[1-6]>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        private val IMG_REGEX = Regex(
+            """<img\b[^>]*(?:src|data-src)\s*=\s*["']([^"']+)["'][^>]*>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        private val EP_COUNT_REGEX = Regex(
+            """(?i)\bEp(?:isode)?\s*[:.]?\s*(\d+)\b"""
+        )
+        private val TAG_REGEX = Regex("""<[^>]+>""")
+
+        internal fun extractCatalogItems(body: String): List<MovieCatalogItem> {
+            val normalizedBody = normalizeEmbeddedText(body)
+            return CATALOG_ANCHOR_REGEX.findAll(normalizedBody)
+                .mapNotNull { match ->
+                    val slug = match.groupValues.getOrNull(2)?.lowercase().orEmpty()
+                    if (!SLUG_REGEX.matches(slug)) return@mapNotNull null
+
+                    val block = match.groupValues.getOrNull(3).orEmpty()
+                    val heading = HEADING_REGEX.find(block)
+                        ?.groupValues?.getOrNull(1)
+                        ?.let(::stripTags)
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                        ?: return@mapNotNull null
+
+                    val epCount = EP_COUNT_REGEX.find(stripTags(block))
+                        ?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    val image = IMG_REGEX.find(block)
+                        ?.groupValues?.getOrNull(1)
+                        ?.let(::htmlDecode)
+                        ?.trim()
+                        ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+
+                    MovieCatalogItem(
+                        providerId = "narto",
+                        providerName = "Narto Drama",
+                        slug = slug,
+                        title = heading,
+                        originalTitle = null,
+                        thumbnailUrl = image,
+                        year = null,
+                        language = "Tiếng Việt",
+                        durationText = null,
+                        durationSeconds = null,
+                        episodeBadge = epCount?.let { it.toString() + " tập" },
+                        isSeries = epCount?.let { it > 1 }
+                    )
+                }
+                .distinctBy { it.slug }
+                .toList()
+        }
+
+        internal fun normalizeSearchText(value: String): String {
+            val ascii = Normalizer.normalize(value, Normalizer.Form.NFD)
+                .replace(Regex("""\p{M}+"""), "")
+                .replace('đ', 'd')
+                .replace('Đ', 'D')
+                .lowercase()
+            return ascii.replace(Regex("""[^a-z0-9]+"""), " ")
+                .trim()
+                .replace(Regex("""\s+"""), " ")
+        }
+
+        private fun stripTags(value: String): String =
+            htmlDecode(TAG_REGEX.replace(value, " "))
+                .replace(Regex("""\s+"""), " ")
+                .trim()
 
         internal fun slugify(value: String): String {
             val ascii = Normalizer.normalize(value, Normalizer.Form.NFD)
