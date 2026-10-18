@@ -104,9 +104,10 @@ class NartoDramaMovieProvider(
         val title = catalogFallback?.title
             ?: page?.let(::extractTitle)
             ?: slug.replace('-', ' ').replaceFirstChar { it.uppercase() }
-        val thumbnail = catalogFallback?.thumbnailUrl
-            ?: page?.let { extractMeta(it, "og:image") }
-                ?.let(::normalizeImageUrl)
+        val thumbnail = page?.let { extractMeta(it, "og:image") }
+            ?.let(::normalizeImageUrl)
+            ?: page?.let(::extractFirstImageUrl)
+            ?: catalogFallback?.thumbnailUrl
         val episodeCount = page?.let { extractEpisodeCount(it, slug) }
             ?: catalogFallback?.episodeBadge
                 ?.let { Regex("""\d+""").find(it)?.value?.toIntOrNull() }
