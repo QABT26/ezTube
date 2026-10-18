@@ -3,6 +3,7 @@ package com.qabt.eztube.movie
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.text.Normalizer
 import java.util.concurrent.TimeUnit
 
 /**
@@ -21,20 +22,28 @@ class NartoDramaMovieProvider(
     override val displayName = "Narto Drama"
 
     private val http = client ?: OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
 
     override fun search(query: String): List<MovieCatalogItem> {
-        val parsed = parseWatchUrl(query.trim()) ?: return emptyList()
-        return listOf(detail(parsed.first).catalog)
+        val normalized = query.trim()
+        if (normalized.isBlank()) return emptyList()
+
+        val slug = parseWatchUrl(normalized)?.first
+            ?: slugify(normalized).takeIf { it.isNotBlank() }
+            ?: return emptyList()
+
+        val item = runCatching { detail(slug).catalog }.getOrNull()
+            ?: return emptyList()
+        return listOf(item)
     }
 
     override fun detail(slug: String): MovieDetail {
         requireSlug(slug)
-        val page = fetchPage(detailUrl(slug))
+        val page = fetchPage(detailUrls(slug))
         val title = extractTitle(page)
             ?: slug.replace('-', ' ').replaceFirstChar { it.uppercase() }
         val thumbnail = extractMeta(page, "og:image")
@@ -78,8 +87,9 @@ class NartoDramaMovieProvider(
     override fun resolve(mediaId: String): MoviePlayback {
         val parsed = parseMediaId(mediaId)
             ?: throw IOException("Unsupported Narto media id")
-        val pageUrl = watchUrl(parsed.first, parsed.second)
-        val page = fetchPage(pageUrl)
+        val pageUrls = watchUrls(parsed.first, parsed.second)
+        val pageUrl = pageUrls.first()
+        val page = fetchPage(pageUrls)
 
         val hls = extractSignedHlsUrl(page)
             ?: throw IOException(
@@ -110,30 +120,40 @@ class NartoDramaMovieProvider(
         )
     }
 
-    private fun fetchPage(url: String): String {
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", USER_AGENT)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .header("Accept-Language", "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7")
-            .get()
-            .build()
+    private fun fetchPage(urls: List<String>): String {
+        var lastError: Throwable? = null
+        urls.forEach { url ->
+            val result = runCatching {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7")
+                    .get()
+                    .build()
 
-        return http.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                throw IOException("Narto page HTTP " + response.code)
+                http.newCall(request).execute().use { response ->
+                    val body = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) {
+                        throw IOException("Narto page HTTP " + response.code)
+                    }
+                    if (body.isBlank()) throw IOException("Narto returned empty page")
+                    body
+                }
             }
-            if (body.isBlank()) throw IOException("Narto returned empty page")
-            body
+            if (result.isSuccess) return result.getOrThrow()
+            lastError = result.exceptionOrNull()
         }
+        throw IOException(lastError?.message ?: "Narto page unavailable", lastError)
     }
 
-    private fun detailUrl(slug: String) =
-        WEB_BASE + "/detail/watch/" + slug + "?lang=vi-VN"
+    private fun detailUrls(slug: String) = WEB_BASES.map {
+        it + "/detail/watch/" + slug + "?lang=vi-VN"
+    }
 
-    private fun watchUrl(slug: String, episode: Int) =
-        WEB_BASE + "/detail/watch/" + slug + "/" + episode + "?lang=vi-VN"
+    private fun watchUrls(slug: String, episode: Int) = WEB_BASES.map {
+        it + "/detail/watch/" + slug + "/" + episode + "?lang=vi-VN"
+    }
 
     private fun requireSlug(value: String) {
         if (!SLUG_REGEX.matches(value)) throw IOException("Invalid Narto movie slug")
@@ -158,6 +178,10 @@ class NartoDramaMovieProvider(
 
     companion object {
         private const val WEB_BASE = "https://narto-drama.com"
+        private val WEB_BASES = listOf(
+            "https://narto-drama.com",
+            "https://edge.narto-drama.com"
+        )
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
@@ -186,6 +210,16 @@ class NartoDramaMovieProvider(
             Regex("""(?<![A-Za-z0-9])(/e/m/[A-Za-z0-9._~-]+)""")
         private val SUBTITLE_REGEX =
             Regex("""https://narto-drama\.com/e/s/[A-Za-z0-9._~-]+""")
+
+        internal fun slugify(value: String): String {
+            val ascii = Normalizer.normalize(value, Normalizer.Form.NFD)
+                .replace(Regex("""\p{M}+"""), "")
+                .replace('đ', 'd')
+                .replace('Đ', 'D')
+                .lowercase()
+            return ascii.replace(Regex("""[^a-z0-9]+"""), "-")
+                .trim('-')
+        }
 
         internal fun parseWatchUrl(value: String): Pair<String, Int?>? {
             val match = WATCH_URL_REGEX.find(value.trim()) ?: return null
