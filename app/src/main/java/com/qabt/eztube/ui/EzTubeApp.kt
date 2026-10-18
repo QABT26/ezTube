@@ -472,6 +472,43 @@ fun EzTubeApp(
                             // stay highlighted after playback has stopped.
                             sleepMinutes = null
                         }
+
+                        if (
+                            state == Player.STATE_ENDED &&
+                            autoplay &&
+                            sleepMinutes != -1 &&
+                            queueIndex in queue.indices &&
+                            queueIndex < queue.lastIndex
+                        ) {
+                            val nextIndex = queueIndex + 1
+                            val next = queue[nextIndex]
+
+                            if (next.id.startsWith("movie:narto:")) {
+                                queueIndex = nextIndex
+                                playbackPrefs.saveQueue(queue, queueIndex)
+                                nowPlaying = next
+                                val nextPage = movieProviders.nartoWatchPageUrl(next.id)
+                                if (nextPage != null) {
+                                    nartoUnlockMedia = next
+                                    nartoUnlockPageUrl = nextPage
+                                    nartoUnlockStartPositionMs = 0L
+                                    nartoUnlockStatus = null
+                                    showPlayer = false
+                                } else {
+                                    errorMessage = "Unable to open next Narto episode"
+                                }
+                            } else {
+                                mediaController.sendCustomCommand(
+                                    androidx.media3.session.SessionCommand(
+                                        PlaybackService.COMMAND_MOVE_QUEUE,
+                                        android.os.Bundle.EMPTY
+                                    ),
+                                    android.os.Bundle().apply {
+                                        putInt(PlaybackService.ARG_DELTA, 1)
+                                    }
+                                )
+                            }
+                        }
                     }
                     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                         isPlaying = mediaController.isPlaying
@@ -2472,11 +2509,23 @@ private fun NartoUnlockScreen(
                           save(u);
                           break;
                         }
-                        if (type.includes('text/plain')) {
-                          const text = await r.text();
-                          if (text.trimStart().startsWith('WEBVTT')) {
-                            save(u);
-                            break;
+
+                        // Narto may serve VTT through a generic content type. Read only
+                        // the first response chunk, then cancel, so fMP4 /e/s/ segments
+                        // are not downloaded just to classify them.
+                        const reader = r.body && r.body.getReader ? r.body.getReader() : null;
+                        if (reader) {
+                          const first = await reader.read();
+                          try { await reader.cancel(); } catch (e) {}
+                          if (first && first.value) {
+                            const head = new TextDecoder('utf-8')
+                              .decode(first.value.slice(0, 512))
+                              .replace(/^\uFEFF/, '')
+                              .trimStart();
+                            if (head.startsWith('WEBVTT')) {
+                              save(u);
+                              break;
+                            }
                           }
                         }
                       } catch (e) {}
@@ -2614,8 +2663,8 @@ private fun NartoUnlockScreen(
                     ) {
                         addDiagnostic("vietsub-grace-wait")
                         mainHandler.postDelayed(
-                            { probeMainPlayback("vietsub-grace+450ms") },
-                            450
+                            { probeMainPlayback("vietsub-grace+900ms") },
+                            900
                         )
                     } else if (playbackCaptured.compareAndSet(false, true)) {
                         addDiagnostic("probe-playable-manifest", url)
@@ -2737,7 +2786,7 @@ private fun NartoUnlockScreen(
                             closePopup()
                         }
                     },
-                    350
+                    100
                 )
             }
         }
@@ -2886,7 +2935,7 @@ private fun NartoUnlockScreen(
                                                 closePopup()
                                             }
                                         },
-                                        250
+                                        50
                                     )
                                 }
 
