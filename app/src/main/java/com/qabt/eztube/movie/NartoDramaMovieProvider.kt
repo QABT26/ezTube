@@ -248,6 +248,9 @@ class NartoDramaMovieProvider(
             val explicit = listOf(
                 Regex("""(?i)episode\s+\d+\s+(?:dari|of)\s+(\d+)"""),
                 Regex("""(?i)(?:total\s+episodes?|episodes?)\s*[:=]\s*(\d+)"""),
+                Regex("""(?i)episodes?\s*\(\s*(\d+)\s*\)"""),
+                Regex("""(?i)(\d+)\s+episodes?"""),
+                Regex("""(?i)playable\s*:\s*(\d+)"""),
                 Regex("""(?i)ep\s*[:.]?\s*(\d+)""")
             ).asSequence()
                 .mapNotNull { it.find(normalized)?.groupValues?.getOrNull(1)?.toIntOrNull() }
@@ -294,11 +297,26 @@ class NartoDramaMovieProvider(
             value.replace(Regex("""\s+"""), " ")
                 .replace(
                     Regex(
-                        """\s*(?:[-|·]\s*)?(?:Episode\s+\d+\s*[-|·]?\s*)?(?:Free Streaming\s*[-|·]?\s*)?Narto Drama\s*$""",
+                        """\s*(?:[-|·]\s*)?Episode\s+\d+\s*(?:[-|·]\s*)?Free Streaming\s*$""",
                         RegexOption.IGNORE_CASE
                     ),
                     ""
-                ).trim()
+                )
+                .replace(
+                    Regex(
+                        """\s*(?:[-|·]\s*)?Free Streaming\s*$""",
+                        RegexOption.IGNORE_CASE
+                    ),
+                    ""
+                )
+                .replace(
+                    Regex(
+                        """\s*(?:[-|·]\s*)?Narto Drama\s*$""",
+                        RegexOption.IGNORE_CASE
+                    ),
+                    ""
+                )
+                .trim()
 
         private fun htmlDecode(value: String) =
             value.replace("&quot;", "\"")
