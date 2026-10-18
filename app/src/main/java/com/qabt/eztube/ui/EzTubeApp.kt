@@ -2841,8 +2841,8 @@ private fun NartoUnlockScreen(
                 null
             )
 
-            pinNartoOpenAdButton("focus")
-            mainHandler.postDelayed({ pinNartoOpenAdButton("focus+250ms") }, 250)
+            mainHandler.postDelayed({ pinNartoOpenAdButton("focus+450ms") }, 450)
+            mainHandler.postDelayed({ pinNartoOpenAdButton("focus+900ms") }, 900)
             probeMainPlayback("focus")
             mainHandler.postDelayed({ probeMainPlayback("focus+750ms") }, 750)
             mainHandler.postDelayed({ probeMainPlayback("focus+2000ms") }, 2000)
@@ -3213,7 +3213,7 @@ private fun NartoUnlockScreen(
                                 closePopup()
                             }
                         },
-                        500
+                        900
                     )
                     return true
                 }
