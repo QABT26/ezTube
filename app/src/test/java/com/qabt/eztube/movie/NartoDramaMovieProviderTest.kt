@@ -7,6 +7,25 @@ import org.junit.Test
 
 class NartoDramaMovieProviderTest {
     @Test
+    fun parsesNartoCatalogCardsForPartialTitleSearch() {
+        val html = """
+            <a href="/detail/watch/toi-co-ba-ban-gai-nho-he-thong/1?lang=vi-VN">
+                <img src="https://cdn.example/poster.jpg">
+                <h3>Tôi Có Ba Bạn Gái Nhờ Hệ Thống</h3>
+                <span>Ep: 30</span>
+            </a>
+        """.trimIndent()
+
+        val items = NartoDramaMovieProvider.extractCatalogItems(html)
+
+        assertEquals(1, items.size)
+        assertEquals("toi-co-ba-ban-gai-nho-he-thong", items.single().slug)
+        assertEquals("Tôi Có Ba Bạn Gái Nhờ Hệ Thống", items.single().title)
+        assertEquals("30 tập", items.single().episodeBadge)
+    }
+
+    @Test
+    @Test
     fun slugifiesVietnameseTitleForExactTitleLookup() {
         assertEquals(
             "toi-co-ba-ban-gai-nho-he-thong",
