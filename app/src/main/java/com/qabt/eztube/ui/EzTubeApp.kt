@@ -310,6 +310,9 @@ fun EzTubeApp(
     var nartoUnlockStartPositionMs by remember { mutableLongStateOf(0L) }
     var nartoUnlockStatus by remember { mutableStateOf<String?>(null) }
     var nartoSessionUnlocked by remember { mutableStateOf(false) }
+    var nartoSessionWebView by remember {
+        mutableStateOf<android.webkit.WebView?>(null)
+    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -1479,6 +1482,8 @@ fun EzTubeApp(
                 media = requireNotNull(nartoUnlockMedia),
                 pageUrl = requireNotNull(nartoUnlockPageUrl),
                 status = nartoUnlockStatus,
+                sessionWebView = nartoSessionWebView,
+                onSessionWebView = { nartoSessionWebView = it },
                 sessionPreviouslyUnlocked = nartoSessionUnlocked,
                 onSessionUnlocked = { nartoSessionUnlocked = true },
                 onStreamCaptured = { hlsUrl, subtitleUrl ->
@@ -2349,13 +2354,15 @@ private fun NartoUnlockScreen(
     media: MediaSummary,
     pageUrl: String,
     status: String?,
+    sessionWebView: android.webkit.WebView?,
+    onSessionWebView: (android.webkit.WebView) -> Unit,
     sessionPreviouslyUnlocked: Boolean,
     onSessionUnlocked: () -> Unit,
     onStreamCaptured: (String, String?) -> Unit,
     onCancel: () -> Unit
 ) {
-    var mainWebView by remember(pageUrl) {
-        mutableStateOf<android.webkit.WebView?>(null)
+    var mainWebView by remember(sessionWebView) {
+        mutableStateOf(sessionWebView)
     }
     var popupWebView by remember(pageUrl) {
         mutableStateOf<android.webkit.WebView?>(null)
@@ -2469,7 +2476,8 @@ private fun NartoUnlockScreen(
                       if (
                         x.protocol === 'https:' &&
                         (x.hostname === 'edge.narto-drama.com' ||
-                         x.hostname === 'narto-drama.com') &&
+                         x.hostname === 'narto-drama.com' ||
+                         x.hostname === 'stream.narto-drama.com') &&
                         x.pathname.startsWith('/e/s/')
                       ) {
                         window.__eztubeVietsub = x.href;
@@ -2505,7 +2513,7 @@ private fun NartoUnlockScreen(
                       if (window.__eztubeVietsub) break;
                       try {
                         const r = await fetch(u, {
-                          credentials: 'include',
+                          credentials: 'omit',
                           cache: 'no-store'
                         });
                         const type = String(r.headers.get('content-type') || '').toLowerCase();
@@ -2621,7 +2629,8 @@ private fun NartoUnlockScreen(
                     uri?.scheme == "https" &&
                         (
                             host == "edge.narto-drama.com" ||
-                            host == "narto-drama.com"
+                            host == "narto-drama.com" ||
+                            host == "stream.narto-drama.com"
                         ) &&
                         path.startsWith("/e/s/")
                 val isSubtitleCandidate =
@@ -2894,8 +2903,14 @@ private fun NartoUnlockScreen(
             key(pageUrl) {
                 AndroidView(
                     factory = { webContext ->
-                        android.webkit.WebView(webContext).apply {
+                        val existing = sessionWebView
+                        if (existing != null) {
+                            mainWebView = existing
+                            existing.onResume()
+                            existing
+                        } else android.webkit.WebView(webContext).apply {
                             mainWebView = this
+                            onSessionWebView(this)
 
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
@@ -3228,6 +3243,14 @@ private fun NartoUnlockScreen(
                     },
                     update = { active ->
                         mainWebView = active
+                        active.onResume()
+                        if (active.url != pageUrl) {
+                            addDiagnostic("main-session-navigate", pageUrl)
+                            active.loadUrl(pageUrl)
+                        } else {
+                            // Re-entering the same episode after player/navigation: wake it.
+                            notifyMainReturned()
+                        }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3308,9 +3331,9 @@ private fun NartoUnlockScreen(
         onDispose {
             cookieManager.flush()
             popupWebView?.destroy()
-            mainWebView?.destroy()
             popupWebView = null
-            mainWebView = null
+            popupVisible = false
+            mainWebView?.onPause()
         }
     }
 }
