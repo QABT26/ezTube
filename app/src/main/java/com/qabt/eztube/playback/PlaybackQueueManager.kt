@@ -486,6 +486,7 @@ class PlaybackQueueManager(
     fun playDirectMovieHls(
         hlsUrl: String,
         referer: String,
+        subtitleUrl: String?,
         positionMs: Long,
         playWhenReady: Boolean,
         onComplete: (Result<Unit>) -> Unit
@@ -513,6 +514,20 @@ class PlaybackQueueManager(
             onComplete(Result.failure(IllegalArgumentException("Invalid Narto HLS URL")))
             return
         }
+
+        val safeSubtitleUrl = subtitleUrl
+            ?.takeIf { it.isNotBlank() }
+            ?.takeIf { value ->
+                val uri = runCatching { Uri.parse(value) }.getOrNull()
+                val host = uri?.host.orEmpty().lowercase()
+                val path = uri?.path.orEmpty()
+                uri?.scheme == "https" &&
+                    (
+                        host == "edge.narto-drama.com" ||
+                        host == "narto-drama.com"
+                    ) &&
+                    path.startsWith("/e/s/")
+            }
 
         val saved = preferences.loadQueue()
         if (saved == null || saved.first.isEmpty()) {
@@ -545,6 +560,18 @@ class PlaybackQueueManager(
                     MoviePlayback(
                         mediaId = media.id,
                         hlsUrl = hlsUrl,
+                        subtitles = safeSubtitleUrl
+                            ?.let {
+                                listOf(
+                                    com.qabt.eztube.movie.MovieSubtitle(
+                                        language = "vi",
+                                        label = "Tiếng Việt",
+                                        url = it,
+                                        mimeType = "text/vtt"
+                                    )
+                                )
+                            }
+                            .orEmpty(),
                         requestHeaders = mapOf(
                             "User-Agent" to (
                                 "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
