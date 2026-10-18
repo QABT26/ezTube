@@ -2502,14 +2502,20 @@ private fun NartoUnlockScreen(
                   } catch (e) {}
 
                   try {
-                    performance.getEntriesByType('resource').forEach((e) => {
-                      const u = String(e.name || '');
-                      if (u.includes('narto-drama.com/e/s/')) candidates.push(u);
-                    });
+                    performance.getEntriesByType('resource')
+                      .filter((e) => String(e.name || '').includes('narto-drama.com/e/s/'))
+                      .sort((a, b) => {
+                        const ax = Number(a.decodedBodySize || a.transferSize || 0);
+                        const bx = Number(b.decodedBodySize || b.transferSize || 0);
+                        if (ax === 0 && bx !== 0) return 1;
+                        if (bx === 0 && ax !== 0) return -1;
+                        return ax - bx;
+                      })
+                      .forEach((e) => candidates.push(String(e.name || '')));
                   } catch (e) {}
 
                   (async () => {
-                    for (const u of Array.from(new Set(candidates)).slice(-8)) {
+                    for (const u of Array.from(new Set(candidates)).slice(0, 32)) {
                       if (window.__eztubeVietsub) break;
                       try {
                         const r = await fetch(u, {
@@ -2678,8 +2684,8 @@ private fun NartoUnlockScreen(
                     ) {
                         addDiagnostic("vietsub-grace-wait")
                         mainHandler.postDelayed(
-                            { probeMainPlayback("vietsub-grace+900ms") },
-                            900
+                            { probeMainPlayback("vietsub-grace+1200ms") },
+                            1200
                         )
                     } else if (playbackCaptured.compareAndSet(false, true)) {
                         addDiagnostic("probe-playable-manifest", url)
@@ -2742,6 +2748,58 @@ private fun NartoUnlockScreen(
         popupVisible = false
         popupTitle = "Quảng cáo"
         notifyMainReturned()
+    }
+
+    fun clickNartoOpenAdFromHeader() {
+        val active = mainWebView ?: return
+        if (popupVisible) return
+
+        addDiagnostic("header-open-ad-tap")
+        active.evaluateJavascript(
+            """
+            (function() {
+              try {
+                const norm = (s) => String(s || '')
+                  .trim()
+                  .toLowerCase()
+                  .replace(/\\s+/g, ' ');
+                const candidates = Array.from(
+                  document.querySelectorAll('button,a,[role="button"]')
+                );
+                const target = candidates.find((el) => {
+                  const text = norm(el.innerText || el.textContent);
+                  const aria = norm(el.getAttribute('aria-label'));
+                  return (
+                    text === 'mở quảng cáo' ||
+                    text === 'mo quang cao' ||
+                    aria === 'mở quảng cáo' ||
+                    aria === 'mo quang cao'
+                  );
+                });
+                if (!target) return 'not-found';
+                try {
+                  target.scrollIntoView({block:'center', inline:'center'});
+                } catch (e) {}
+                target.click();
+                return 'clicked';
+              } catch (e) {
+                return 'error';
+              }
+            })();
+            """.trimIndent()
+        ) { raw ->
+            val result = runCatching {
+                org.json.JSONTokener(raw).nextValue() as? String
+            }.getOrNull().orEmpty()
+            addDiagnostic("header-open-ad-" + result)
+            if (result == "not-found") {
+                android.widget.Toast.makeText(
+                    context,
+                    "Chưa thấy nút Mở quảng cáo",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
     }
 
     fun probePopupClosable(reason: String) {
@@ -3036,8 +3094,8 @@ private fun NartoUnlockScreen(
                                 addDiagnostic("popup-page-finish", url)
                                 cookieManager.flush()
                                 mainHandler.postDelayed(
-                                    { probePopupClosable("page+750ms") },
-                                    750
+                                    { probePopupClosable("page+150ms") },
+                                    150
                                 )
                                 mainHandler.postDelayed(
                                     { probePopupClosable("page+2000ms") },
@@ -3079,7 +3137,7 @@ private fun NartoUnlockScreen(
                                 closePopup()
                             }
                         },
-                        1800
+                        1000
                     )
                     return true
                 }
@@ -3187,6 +3245,12 @@ private fun NartoUnlockScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                }
+                TextButton(
+                    enabled = !popupVisible,
+                    onClick = { clickNartoOpenAdFromHeader() }
+                ) {
+                    Text(if (popupVisible) "Đang mở QC" else "Mở QC")
                 }
             }
 
