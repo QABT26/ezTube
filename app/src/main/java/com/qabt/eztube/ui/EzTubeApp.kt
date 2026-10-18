@@ -2817,6 +2817,340 @@ private fun NartoUnlockScreen(
         }
     }
 
+    fun configureMainWebView(
+        active: android.webkit.WebView,
+        webContext: android.content.Context
+    ) {
+        with(active) {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.mediaPlaybackRequiresUserGesture = true
+            settings.loadsImagesAutomatically = true
+            settings.mixedContentMode =
+                android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            settings.setSupportMultipleWindows(true)
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            
+            cookieManager.setAcceptThirdPartyCookies(this, true)
+            
+            fun inspect(url: String?, event: String = "request") {
+                val value = url.orEmpty()
+                val host = runCatching {
+                    android.net.Uri.parse(value).host.orEmpty().lowercase()
+                }.getOrDefault("")
+                if (
+                    host.endsWith("narto-drama.com") ||
+                    host == "stream.narto-drama.com"
+                ) {
+                    addDiagnostic(event, value)
+                }
+                val uri = runCatching {
+                    android.net.Uri.parse(value)
+                }.getOrNull()
+                val path = uri?.path.orEmpty()
+                val nartoHost = uri?.host.orEmpty().lowercase()
+            
+                if (
+                    nartoHost == "edge.narto-drama.com" &&
+                    path == "/wrapper-guard/report" &&
+                    popupOpenSeen.compareAndSet(true, false)
+                ) {
+                    addDiagnostic("wrapper-guard-confirmed", value)
+                    mainHandler.postDelayed(
+                        {
+                            if (popupVisible) {
+                                addDiagnostic(
+                                    "auto-close-popup-after-report",
+                                    popupWebView?.url
+                                )
+                                closePopup()
+                            }
+                        },
+                        50
+                    )
+                }
+            
+                if (
+                    nartoHost == "edge.narto-drama.com" &&
+                    path == "/player/ads/gate-unlock" &&
+                    gateUnlockSeen.compareAndSet(false, true)
+                ) {
+                    addDiagnostic("gate-unlock-seen", value)
+                    mainHandler.post { onSessionUnlocked() }
+            
+                    // Narto itself has confirmed that the ad gate is unlocked.
+                    // At this point it is safe to close ezTube's own popup shell
+                    // automatically; we do not click or fake any third-party ad UI.
+                    mainHandler.post {
+                        mainWebView?.settings?.mediaPlaybackRequiresUserGesture = false
+                        mainWebView?.evaluateJavascript(
+                            """
+                            try {
+                              const v = document.querySelector('video');
+                              if (v) {
+                                const p = v.play();
+                                if (p && p.catch) p.catch(() => {});
+                              }
+                            } catch (e) {}
+                            """.trimIndent(),
+                            null
+                        )
+                        if (popupVisible) {
+                            addDiagnostic("auto-close-popup-after-unlock", popupWebView?.url)
+                            closePopup()
+                        } else {
+                            probeMainPlayback("gate-unlock")
+                        }
+                    }
+                    mainHandler.postDelayed(
+                        { probeMainPlayback("gate-unlock+250ms") },
+                        250
+                    )
+                    mainHandler.postDelayed(
+                        { probeMainPlayback("gate-unlock+750ms") },
+                        750
+                    )
+                    mainHandler.postDelayed(
+                        { probeMainPlayback("gate-unlock+1500ms") },
+                        1500
+                    )
+                }
+            
+                val nartoManifest =
+                    (
+                        nartoHost == "stream.narto-drama.com" ||
+                        nartoHost == "edge.narto-drama.com"
+                    ) &&
+                    (
+                        path.startsWith("/e/m/") ||
+                        path.endsWith(".m3u8", ignoreCase = true)
+                    )
+            
+                val unlockedUpstreamManifest =
+                    gateUnlockSeen.get() &&
+                    (
+                        nartoHost == "mydramawave.com" ||
+                        nartoHost.endsWith(".mydramawave.com")
+                    ) &&
+                    path.endsWith(".m3u8", ignoreCase = true)
+            
+                if (
+                    nartoManifest &&
+                    playbackCaptured.compareAndSet(false, true)
+                ) {
+                    addDiagnostic("signed-hls-detected", value)
+                    android.os.Handler(
+                        android.os.Looper.getMainLooper()
+                    ).post {
+                        cookieManager.flush()
+                        onStreamCaptured(value, capturedSubtitleUrl)
+                    }
+                } else if (unlockedUpstreamManifest) {
+                    // The page's <track> element is probed first so Vietsub
+                    // can be attached to the Media3 item before handoff.
+                    mainHandler.post { probeMainPlayback("upstream-manifest") }
+                }
+            }
+            
+            webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onCreateWindow(
+                    view: android.webkit.WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: android.os.Message?
+                ): Boolean {
+                    val transport =
+                        resultMsg?.obj as? android.webkit.WebView.WebViewTransport
+                            ?: return false
+            
+                    popupWebView?.destroy()
+            
+                    val child = android.webkit.WebView(webContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.mediaPlaybackRequiresUserGesture = true
+                        settings.loadsImagesAutomatically = true
+                        settings.mixedContentMode =
+                            android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                        settings.setSupportMultipleWindows(false)
+                        settings.javaScriptCanOpenWindowsAutomatically = false
+            
+                        cookieManager.setAcceptThirdPartyCookies(this, true)
+            
+                        webChromeClient = object : android.webkit.WebChromeClient() {
+                            override fun onReceivedTitle(
+                                view: android.webkit.WebView?,
+                                title: String?
+                            ) {
+                                popupTitle = title
+                                    ?.trim()
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: "Quảng cáo"
+                            }
+            
+                            override fun onCloseWindow(
+                                window: android.webkit.WebView?
+                            ) {
+                                closePopup()
+                            }
+                        }
+            
+                        webViewClient = object : android.webkit.WebViewClient() {
+                            override fun shouldInterceptRequest(
+                                view: android.webkit.WebView?,
+                                request: android.webkit.WebResourceRequest?
+                            ): android.webkit.WebResourceResponse? {
+                                inspect(
+                                    request?.url?.toString(),
+                                    "popup-" + (request?.method ?: "GET")
+                                )
+                                return super.shouldInterceptRequest(view, request)
+                            }
+            
+                            override fun onPageStarted(
+                                view: android.webkit.WebView?,
+                                url: String?,
+                                favicon: android.graphics.Bitmap?
+                            ) {
+                                addDiagnostic("popup-page-start", url)
+                            }
+            
+                            override fun onReceivedHttpError(
+                                view: android.webkit.WebView?,
+                                request: android.webkit.WebResourceRequest?,
+                                errorResponse: android.webkit.WebResourceResponse?
+                            ) {
+                                if (request?.isForMainFrame == true) {
+                                    addDiagnostic(
+                                        "popup-http-" +
+                                            (errorResponse?.statusCode ?: 0),
+                                        request.url?.toString()
+                                    )
+                                }
+                            }
+            
+                            override fun onPageFinished(
+                                view: android.webkit.WebView?,
+                                url: String?
+                            ) {
+                                addDiagnostic("popup-page-finish", url)
+                                cookieManager.flush()
+                                mainHandler.postDelayed(
+                                    { probePopupClosable("page+750ms") },
+                                    750
+                                )
+                                mainHandler.postDelayed(
+                                    { probePopupClosable("page+2000ms") },
+                                    2000
+                                )
+                                mainHandler.postDelayed(
+                                    { probePopupClosable("page+5000ms") },
+                                    5000
+                                )
+                            }
+                        }
+                    }
+            
+                    addDiagnostic("popup-open-request")
+                    popupOpenSeen.set(true)
+                    popupSerial += 1
+                    val openedSerial = popupSerial
+                    popupWebView = child
+                    popupVisible = true
+                    transport.webView = child
+                    resultMsg.sendToTarget()
+            
+                    // Some ad destinations never emit Narto's wrapper report
+                    // back to the opener. Mimic the user's own ezTube "Đóng"
+                    // action after a short dwell time so every popup can return
+                    // to the persistent Narto page. The serial guard prevents an
+                    // old delayed callback from closing a newer popup.
+                    mainHandler.postDelayed(
+                        {
+                            if (
+                                popupVisible &&
+                                popupWebView === child &&
+                                popupSerial == openedSerial
+                            ) {
+                                addDiagnostic(
+                                    "auto-close-popup-timeout",
+                                    child.url
+                                )
+                                closePopup()
+                            }
+                        },
+                        1800
+                    )
+                    return true
+                }
+            
+                override fun onCloseWindow(
+                    window: android.webkit.WebView?
+                ) {
+                    closePopup()
+                }
+            }
+            
+            webViewClient = object : android.webkit.WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: android.webkit.WebView?,
+                    request: android.webkit.WebResourceRequest?
+                ): android.webkit.WebResourceResponse? {
+                    inspect(
+                        request?.url?.toString(),
+                        "main-" + (request?.method ?: "GET")
+                    )
+                    return super.shouldInterceptRequest(view, request)
+                }
+            
+                @Deprecated("Deprecated in Java")
+                override fun shouldInterceptRequest(
+                    view: android.webkit.WebView?,
+                    url: String?
+                ): android.webkit.WebResourceResponse? {
+                    inspect(url, "main-GET")
+                    return super.shouldInterceptRequest(view, url)
+                }
+            
+                override fun onPageStarted(
+                    view: android.webkit.WebView?,
+                    url: String?,
+                    favicon: android.graphics.Bitmap?
+                ) {
+                    addDiagnostic("main-page-start", url)
+                }
+            
+                override fun onReceivedHttpError(
+                    view: android.webkit.WebView?,
+                    request: android.webkit.WebResourceRequest?,
+                    errorResponse: android.webkit.WebResourceResponse?
+                ) {
+                    if (request?.isForMainFrame == true) {
+                        addDiagnostic(
+                            "main-http-" +
+                                (errorResponse?.statusCode ?: 0),
+                            request.url?.toString()
+                        )
+                    }
+                }
+            
+                override fun onPageFinished(
+                    view: android.webkit.WebView?,
+                    url: String?
+                ) {
+                    addDiagnostic("main-page-finish", url)
+                    cookieManager.flush()
+                    mainHandler.postDelayed(
+                        { probeMainPlayback("page-finish+500ms") },
+                        500
+                    )
+                }
+            }
+            
+            
+        }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -2900,349 +3234,25 @@ private fun NartoUnlockScreen(
                 }
             }
 
-            key(pageUrl) {
-                AndroidView(
+            AndroidView(
                     factory = { webContext ->
-                        val existing = sessionWebView
-                        if (existing != null) {
-                            mainWebView = existing
-                            existing.onResume()
-                            existing
-                        } else android.webkit.WebView(webContext).apply {
-                            mainWebView = this
-                            onSessionWebView(this)
-
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            settings.mediaPlaybackRequiresUserGesture = true
-                            settings.loadsImagesAutomatically = true
-                            settings.mixedContentMode =
-                                android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                            settings.setSupportMultipleWindows(true)
-                            settings.javaScriptCanOpenWindowsAutomatically = true
-
-                            cookieManager.setAcceptThirdPartyCookies(this, true)
-
-                            fun inspect(url: String?, event: String = "request") {
-                                val value = url.orEmpty()
-                                val host = runCatching {
-                                    android.net.Uri.parse(value).host.orEmpty().lowercase()
-                                }.getOrDefault("")
-                                if (
-                                    host.endsWith("narto-drama.com") ||
-                                    host == "stream.narto-drama.com"
-                                ) {
-                                    addDiagnostic(event, value)
-                                }
-                                val uri = runCatching {
-                                    android.net.Uri.parse(value)
-                                }.getOrNull()
-                                val path = uri?.path.orEmpty()
-                                val nartoHost = uri?.host.orEmpty().lowercase()
-
-                                if (
-                                    nartoHost == "edge.narto-drama.com" &&
-                                    path == "/wrapper-guard/report" &&
-                                    popupOpenSeen.compareAndSet(true, false)
-                                ) {
-                                    addDiagnostic("wrapper-guard-confirmed", value)
-                                    mainHandler.postDelayed(
-                                        {
-                                            if (popupVisible) {
-                                                addDiagnostic(
-                                                    "auto-close-popup-after-report",
-                                                    popupWebView?.url
-                                                )
-                                                closePopup()
-                                            }
-                                        },
-                                        50
-                                    )
-                                }
-
-                                if (
-                                    nartoHost == "edge.narto-drama.com" &&
-                                    path == "/player/ads/gate-unlock" &&
-                                    gateUnlockSeen.compareAndSet(false, true)
-                                ) {
-                                    addDiagnostic("gate-unlock-seen", value)
-                                    mainHandler.post { onSessionUnlocked() }
-
-                                    // Narto itself has confirmed that the ad gate is unlocked.
-                                    // At this point it is safe to close ezTube's own popup shell
-                                    // automatically; we do not click or fake any third-party ad UI.
-                                    mainHandler.post {
-                                        mainWebView?.settings?.mediaPlaybackRequiresUserGesture = false
-                                        mainWebView?.evaluateJavascript(
-                                            """
-                                            try {
-                                              const v = document.querySelector('video');
-                                              if (v) {
-                                                const p = v.play();
-                                                if (p && p.catch) p.catch(() => {});
-                                              }
-                                            } catch (e) {}
-                                            """.trimIndent(),
-                                            null
-                                        )
-                                        if (popupVisible) {
-                                            addDiagnostic("auto-close-popup-after-unlock", popupWebView?.url)
-                                            closePopup()
-                                        } else {
-                                            probeMainPlayback("gate-unlock")
-                                        }
-                                    }
-                                    mainHandler.postDelayed(
-                                        { probeMainPlayback("gate-unlock+250ms") },
-                                        250
-                                    )
-                                    mainHandler.postDelayed(
-                                        { probeMainPlayback("gate-unlock+750ms") },
-                                        750
-                                    )
-                                    mainHandler.postDelayed(
-                                        { probeMainPlayback("gate-unlock+1500ms") },
-                                        1500
-                                    )
-                                }
-
-                                val nartoManifest =
-                                    (
-                                        nartoHost == "stream.narto-drama.com" ||
-                                        nartoHost == "edge.narto-drama.com"
-                                    ) &&
-                                    (
-                                        path.startsWith("/e/m/") ||
-                                        path.endsWith(".m3u8", ignoreCase = true)
-                                    )
-
-                                val unlockedUpstreamManifest =
-                                    gateUnlockSeen.get() &&
-                                    (
-                                        nartoHost == "mydramawave.com" ||
-                                        nartoHost.endsWith(".mydramawave.com")
-                                    ) &&
-                                    path.endsWith(".m3u8", ignoreCase = true)
-
-                                if (
-                                    nartoManifest &&
-                                    playbackCaptured.compareAndSet(false, true)
-                                ) {
-                                    addDiagnostic("signed-hls-detected", value)
-                                    android.os.Handler(
-                                        android.os.Looper.getMainLooper()
-                                    ).post {
-                                        cookieManager.flush()
-                                        onStreamCaptured(value, capturedSubtitleUrl)
-                                    }
-                                } else if (unlockedUpstreamManifest) {
-                                    // The page's <track> element is probed first so Vietsub
-                                    // can be attached to the Media3 item before handoff.
-                                    mainHandler.post { probeMainPlayback("upstream-manifest") }
-                                }
-                            }
-
-                            webChromeClient = object : android.webkit.WebChromeClient() {
-                                override fun onCreateWindow(
-                                    view: android.webkit.WebView?,
-                                    isDialog: Boolean,
-                                    isUserGesture: Boolean,
-                                    resultMsg: android.os.Message?
-                                ): Boolean {
-                                    val transport =
-                                        resultMsg?.obj as? android.webkit.WebView.WebViewTransport
-                                            ?: return false
-
-                                    popupWebView?.destroy()
-
-                                    val child = android.webkit.WebView(webContext).apply {
-                                        settings.javaScriptEnabled = true
-                                        settings.domStorageEnabled = true
-                                        settings.mediaPlaybackRequiresUserGesture = true
-                                        settings.loadsImagesAutomatically = true
-                                        settings.mixedContentMode =
-                                            android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                                        settings.setSupportMultipleWindows(false)
-                                        settings.javaScriptCanOpenWindowsAutomatically = false
-
-                                        cookieManager.setAcceptThirdPartyCookies(this, true)
-
-                                        webChromeClient = object : android.webkit.WebChromeClient() {
-                                            override fun onReceivedTitle(
-                                                view: android.webkit.WebView?,
-                                                title: String?
-                                            ) {
-                                                popupTitle = title
-                                                    ?.trim()
-                                                    ?.takeIf { it.isNotBlank() }
-                                                    ?: "Quảng cáo"
-                                            }
-
-                                            override fun onCloseWindow(
-                                                window: android.webkit.WebView?
-                                            ) {
-                                                closePopup()
-                                            }
-                                        }
-
-                                        webViewClient = object : android.webkit.WebViewClient() {
-                                            override fun shouldInterceptRequest(
-                                                view: android.webkit.WebView?,
-                                                request: android.webkit.WebResourceRequest?
-                                            ): android.webkit.WebResourceResponse? {
-                                                inspect(
-                                                    request?.url?.toString(),
-                                                    "popup-" + (request?.method ?: "GET")
-                                                )
-                                                return super.shouldInterceptRequest(view, request)
-                                            }
-
-                                            override fun onPageStarted(
-                                                view: android.webkit.WebView?,
-                                                url: String?,
-                                                favicon: android.graphics.Bitmap?
-                                            ) {
-                                                addDiagnostic("popup-page-start", url)
-                                            }
-
-                                            override fun onReceivedHttpError(
-                                                view: android.webkit.WebView?,
-                                                request: android.webkit.WebResourceRequest?,
-                                                errorResponse: android.webkit.WebResourceResponse?
-                                            ) {
-                                                if (request?.isForMainFrame == true) {
-                                                    addDiagnostic(
-                                                        "popup-http-" +
-                                                            (errorResponse?.statusCode ?: 0),
-                                                        request.url?.toString()
-                                                    )
-                                                }
-                                            }
-
-                                            override fun onPageFinished(
-                                                view: android.webkit.WebView?,
-                                                url: String?
-                                            ) {
-                                                addDiagnostic("popup-page-finish", url)
-                                                cookieManager.flush()
-                                                mainHandler.postDelayed(
-                                                    { probePopupClosable("page+750ms") },
-                                                    750
-                                                )
-                                                mainHandler.postDelayed(
-                                                    { probePopupClosable("page+2000ms") },
-                                                    2000
-                                                )
-                                                mainHandler.postDelayed(
-                                                    { probePopupClosable("page+5000ms") },
-                                                    5000
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    addDiagnostic("popup-open-request")
-                                    popupOpenSeen.set(true)
-                                    popupSerial += 1
-                                    val openedSerial = popupSerial
-                                    popupWebView = child
-                                    popupVisible = true
-                                    transport.webView = child
-                                    resultMsg.sendToTarget()
-
-                                    // Some ad destinations never emit Narto's wrapper report
-                                    // back to the opener. Mimic the user's own ezTube "Đóng"
-                                    // action after a short dwell time so every popup can return
-                                    // to the persistent Narto page. The serial guard prevents an
-                                    // old delayed callback from closing a newer popup.
-                                    mainHandler.postDelayed(
-                                        {
-                                            if (
-                                                popupVisible &&
-                                                popupWebView === child &&
-                                                popupSerial == openedSerial
-                                            ) {
-                                                addDiagnostic(
-                                                    "auto-close-popup-timeout",
-                                                    child.url
-                                                )
-                                                closePopup()
-                                            }
-                                        },
-                                        1800
-                                    )
-                                    return true
-                                }
-
-                                override fun onCloseWindow(
-                                    window: android.webkit.WebView?
-                                ) {
-                                    closePopup()
-                                }
-                            }
-
-                            webViewClient = object : android.webkit.WebViewClient() {
-                                override fun shouldInterceptRequest(
-                                    view: android.webkit.WebView?,
-                                    request: android.webkit.WebResourceRequest?
-                                ): android.webkit.WebResourceResponse? {
-                                    inspect(
-                                        request?.url?.toString(),
-                                        "main-" + (request?.method ?: "GET")
-                                    )
-                                    return super.shouldInterceptRequest(view, request)
-                                }
-
-                                @Deprecated("Deprecated in Java")
-                                override fun shouldInterceptRequest(
-                                    view: android.webkit.WebView?,
-                                    url: String?
-                                ): android.webkit.WebResourceResponse? {
-                                    inspect(url, "main-GET")
-                                    return super.shouldInterceptRequest(view, url)
-                                }
-
-                                override fun onPageStarted(
-                                    view: android.webkit.WebView?,
-                                    url: String?,
-                                    favicon: android.graphics.Bitmap?
-                                ) {
-                                    addDiagnostic("main-page-start", url)
-                                }
-
-                                override fun onReceivedHttpError(
-                                    view: android.webkit.WebView?,
-                                    request: android.webkit.WebResourceRequest?,
-                                    errorResponse: android.webkit.WebResourceResponse?
-                                ) {
-                                    if (request?.isForMainFrame == true) {
-                                        addDiagnostic(
-                                            "main-http-" +
-                                                (errorResponse?.statusCode ?: 0),
-                                            request.url?.toString()
-                                        )
-                                    }
-                                }
-
-                                override fun onPageFinished(
-                                    view: android.webkit.WebView?,
-                                    url: String?
-                                ) {
-                                    addDiagnostic("main-page-finish", url)
-                                    cookieManager.flush()
-                                    mainHandler.postDelayed(
-                                        { probeMainPlayback("page-finish+500ms") },
-                                        500
-                                    )
-                                }
-                            }
-
-                            addDiagnostic("main-load", pageUrl)
-                            loadUrl(pageUrl)
+                        val active = sessionWebView ?: android.webkit.WebView(webContext).also {
+                            onSessionWebView(it)
                         }
-                    },
-                    update = { active ->
                         mainWebView = active
+                        configureMainWebView(active, webContext)
+                        active.onResume()
+                        if (active.url != pageUrl) {
+                            addDiagnostic("main-session-navigate", pageUrl)
+                            active.loadUrl(pageUrl)
+                        } else {
+                            notifyMainReturned()
+                        }
+                        active
+                    },
+                    update = { active ->                    update = { active ->
+                        mainWebView = active
+                        configureMainWebView(active, active.context)
                         active.onResume()
                         if (active.url != pageUrl) {
                             addDiagnostic("main-session-navigate", pageUrl)
@@ -3256,7 +3266,6 @@ private fun NartoUnlockScreen(
                         .fillMaxWidth()
                         .weight(1f)
                 )
-            }
         }
 
         if (popupVisible) {
