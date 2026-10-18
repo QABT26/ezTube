@@ -288,7 +288,8 @@ class NartoDramaMovieProvider(
         }
 
         private fun normalizeEmbeddedText(value: String) =
-            value.replace("\\/", "/")
+            value.replace("\\\\/", "/")
+                .replace("\\/", "/")
                 .replace("\\u002F", "/", ignoreCase = true)
                 .replace("\\u003A", ":", ignoreCase = true)
                 .replace("&amp;", "&")
