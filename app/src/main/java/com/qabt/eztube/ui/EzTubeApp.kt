@@ -84,6 +84,7 @@ import com.qabt.eztube.playback.QueueLimitPolicy
 import com.qabt.eztube.playback.NetworkType
 import com.qabt.eztube.playback.NetworkEnvironment
 import com.qabt.eztube.playback.NetworkUsageTracker
+import com.qabt.eztube.playback.NartoPlaybackGuard
 import com.qabt.eztube.playback.DataUsageSnapshot
 import com.qabt.eztube.playback.StorageSnapshot
 import com.qabt.eztube.playback.StorageUsage
@@ -655,7 +656,7 @@ fun EzTubeApp(
 
         val targetIndex = queueIndex + delta
         val target = queue.getOrNull(targetIndex)
-        if (target?.id?.startsWith("movie:narto:") == true) {
+        if (target?.id?.let(NartoPlaybackGuard::isNartoMediaId) == true) {
             queueIndex = targetIndex
             playbackPrefs.saveQueue(queue, queueIndex)
             nowPlaying = target
@@ -818,7 +819,7 @@ fun EzTubeApp(
         }
         playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
 
-        if (media.id.startsWith("movie:narto:")) {
+        if (NartoPlaybackGuard.isNartoMediaId(media.id)) {
             val pageUrl = movieProviders.nartoWatchPageUrl(media.id)
             if (pageUrl == null) {
                 errorMessage = "Unable to open Narto episode"
