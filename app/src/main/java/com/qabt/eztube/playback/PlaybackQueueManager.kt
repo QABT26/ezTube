@@ -524,7 +524,8 @@ class PlaybackQueueManager(
                 uri?.scheme == "https" &&
                     (
                         host == "edge.narto-drama.com" ||
-                        host == "narto-drama.com"
+                        host == "narto-drama.com" ||
+                        host == "stream.narto-drama.com"
                     ) &&
                     path.startsWith("/e/s/")
             }
