@@ -2377,6 +2377,9 @@ private fun NartoUnlockScreen(
     val subtitleWaitArmed = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
+    val subtitleGraceStartedAtMs = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicLong(0L)
+    }
     val gateUnlockSeen = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
@@ -2706,11 +2709,14 @@ private fun NartoUnlockScreen(
                     path.endsWith(".m3u8", ignoreCase = true)
 
                 if (nartoPlayable || unlockedUpstreamPlayable) {
+                    val waitingForSubtitle =
+                        capturedSubtitleUrl == null && gateUnlockSeen.get()
+
                     if (
-                        capturedSubtitleUrl == null &&
-                        gateUnlockSeen.get() &&
+                        waitingForSubtitle &&
                         subtitleWaitArmed.compareAndSet(false, true)
                     ) {
+                        subtitleGraceStartedAtMs.set(android.os.SystemClock.elapsedRealtime())
                         addDiagnostic("vietsub-grace-wait")
                         mainHandler.postDelayed(
                             { probeMainPlayback("vietsub-grace+350ms") },
@@ -2724,9 +2730,34 @@ private fun NartoUnlockScreen(
                             { probeMainPlayback("vietsub-grace+1300ms") },
                             1300
                         )
-                    } else if (playbackCaptured.compareAndSet(false, true)) {
-                        addDiagnostic("probe-playable-manifest", url)
-                        onStreamCaptured(url, capturedSubtitleUrl)
+                    } else {
+                        val graceElapsedMs =
+                            android.os.SystemClock.elapsedRealtime() -
+                                subtitleGraceStartedAtMs.get()
+                        val subtitleReady = capturedSubtitleUrl != null
+                        val graceExpired =
+                            !waitingForSubtitle ||
+                                (
+                                    subtitleWaitArmed.get() &&
+                                    graceElapsedMs >= 1200L
+                                )
+
+                        if (
+                            (subtitleReady || graceExpired) &&
+                            playbackCaptured.compareAndSet(false, true)
+                        ) {
+                            addDiagnostic(
+                                if (subtitleReady) {
+                                    "probe-playable-manifest-with-sub"
+                                } else {
+                                    "probe-playable-manifest-no-sub"
+                                },
+                                url
+                            )
+                            onStreamCaptured(url, capturedSubtitleUrl)
+                        } else if (waitingForSubtitle) {
+                            addDiagnostic("vietsub-still-waiting")
+                        }
                     }
                 }
             }
@@ -3265,6 +3296,7 @@ private fun NartoUnlockScreen(
                         playbackCaptured.set(false)
                         capturedSubtitleUrl = null
                         subtitleWaitArmed.set(false)
+                        subtitleGraceStartedAtMs.set(0L)
 
                         rendererRecoveryCount += 1
                         if (rendererRecoveryCount <= 2) {
@@ -3423,6 +3455,7 @@ private fun NartoUnlockScreen(
                             playbackCaptured.set(false)
                             capturedSubtitleUrl = null
                             subtitleWaitArmed.set(false)
+                        subtitleGraceStartedAtMs.set(0L)
                             addDiagnostic("main-load", pageUrl)
                             loadUrl(pageUrl)
                         }
