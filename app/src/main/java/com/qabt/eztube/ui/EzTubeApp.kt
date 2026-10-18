@@ -305,6 +305,10 @@ fun EzTubeApp(
         mutableStateOf(RepeatMode.entries.getOrElse(playbackPrefs.loadRepeatMode()) { RepeatMode.OFF })
     }
     var showSettings by remember { mutableStateOf(false) }
+    var nartoUnlockMedia by remember { mutableStateOf<MediaSummary?>(null) }
+    var nartoUnlockPageUrl by remember { mutableStateOf<String?>(null) }
+    var nartoUnlockStartPositionMs by remember { mutableLongStateOf(0L) }
+    var nartoUnlockStatus by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -602,6 +606,26 @@ fun EzTubeApp(
     fun moveQueue(delta: Int) {
         val active = controller ?: return
         if (delta == 0) return
+
+        val targetIndex = queueIndex + delta
+        val target = queue.getOrNull(targetIndex)
+        if (target?.id?.startsWith("movie:narto:") == true) {
+            queueIndex = targetIndex
+            playbackPrefs.saveQueue(queue, queueIndex)
+            nowPlaying = target
+            val pageUrl = movieProviders.nartoWatchPageUrl(target.id)
+            if (pageUrl == null) {
+                errorMessage = "Unable to open Narto episode"
+                return
+            }
+            nartoUnlockMedia = target
+            nartoUnlockPageUrl = pageUrl
+            nartoUnlockStartPositionMs = 0L
+            nartoUnlockStatus = null
+            showPlayer = false
+            return
+        }
+
         active.sendCustomCommand(
             androidx.media3.session.SessionCommand(
                 PlaybackService.COMMAND_MOVE_QUEUE,
@@ -748,6 +772,22 @@ fun EzTubeApp(
         }
         playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
 
+        if (media.id.startsWith("movie:narto:")) {
+            val pageUrl = movieProviders.nartoWatchPageUrl(media.id)
+            if (pageUrl == null) {
+                errorMessage = "Unable to open Narto episode"
+                resolvingId = null
+                return
+            }
+            nartoUnlockMedia = media
+            nartoUnlockPageUrl = pageUrl
+            nartoUnlockStartPositionMs = startPositionMs.coerceAtLeast(0L)
+            nartoUnlockStatus = null
+            resolvingId = null
+            showPlayer = false
+            return
+        }
+
         val args = android.os.Bundle().apply {
             putLong(PlaybackService.ARG_POSITION_MS, startPositionMs.coerceAtLeast(0L))
             putBoolean(PlaybackService.ARG_PLAY_WHEN_READY, true)
@@ -776,6 +816,77 @@ fun EzTubeApp(
                 }
                 .onFailure {
                     errorMessage = it.message ?: "Unable to play this item"
+                }
+            if (resolvingId == media.id) resolvingId = null
+        }, context.mainExecutor)
+    }
+
+    fun playCapturedNartoHls(hlsUrl: String) {
+        val media = nartoUnlockMedia ?: return
+        val pageUrl = nartoUnlockPageUrl ?: return
+        val active = controller ?: run {
+            nartoUnlockStatus = "Playback service is not ready yet"
+            return
+        }
+
+        nartoUnlockStatus = "Starting Narto stream…"
+        resolvingId = media.id
+
+        val args = android.os.Bundle().apply {
+            putString(PlaybackService.ARG_HLS_URL, hlsUrl)
+            putString(PlaybackService.ARG_REFERER, pageUrl)
+            putLong(
+                PlaybackService.ARG_POSITION_MS,
+                nartoUnlockStartPositionMs.coerceAtLeast(0L)
+            )
+            putBoolean(PlaybackService.ARG_PLAY_WHEN_READY, true)
+        }
+
+        val future = active.sendCustomCommand(
+            androidx.media3.session.SessionCommand(
+                PlaybackService.COMMAND_PLAY_DIRECT_HLS,
+                android.os.Bundle.EMPTY
+            ),
+            args
+        )
+
+        future.addListener({
+            runCatching { future.get() }
+                .onSuccess { result ->
+                    if (
+                        result.resultCode ==
+                        androidx.media3.session.SessionResult.RESULT_SUCCESS
+                    ) {
+                        playerError = null
+                        errorMessage = null
+                        movieDiagnostic =
+                            "Provider: Narto Drama\nPlayback: interactive website unlock\nMedia3: signed HLS"
+                        playbackPrefs.save(
+                            media,
+                            nartoUnlockStartPositionMs.coerceAtLeast(0L)
+                        )
+                        scope.launch(Dispatchers.IO) {
+                            history.record(
+                                media,
+                                nartoUnlockStartPositionMs.coerceAtLeast(0L),
+                                0L
+                            )
+                        }
+                        nartoUnlockMedia = null
+                        nartoUnlockPageUrl = null
+                        nartoUnlockStartPositionMs = 0L
+                        nartoUnlockStatus = null
+                        showPlayer = true
+                    } else {
+                        nartoUnlockStatus =
+                            result.extras.getString(
+                                PlaybackService.ARG_ERROR_MESSAGE
+                            ) ?: "Unable to start Narto stream"
+                    }
+                }
+                .onFailure { error ->
+                    nartoUnlockStatus =
+                        error.message ?: "Unable to start Narto stream"
                 }
             if (resolvingId == media.id) resolvingId = null
         }, context.mainExecutor)
@@ -1262,12 +1373,20 @@ fun EzTubeApp(
     }
 
     BackHandler(
-        enabled = movieDetail != null || movieDetailLoading || movieDetailError != null ||
+        enabled = nartoUnlockMedia != null ||
+            movieDetail != null || movieDetailLoading || movieDetailError != null ||
             playlistDetail != null || playlistLoading || playlistError != null ||
             channelDetail != null || channelLoading || channelError != null ||
             showSettings || showPlayer
     ) {
         when {
+            nartoUnlockMedia != null -> {
+                nartoUnlockMedia = null
+                nartoUnlockPageUrl = null
+                nartoUnlockStartPositionMs = 0L
+                nartoUnlockStatus = null
+                resolvingId = null
+            }
             movieDetail != null || movieDetailLoading || movieDetailError != null -> {
                 movieDetail = null
                 movieDetailError = null
@@ -1322,7 +1441,25 @@ fun EzTubeApp(
             }
         } else {
         Box(Modifier.fillMaxSize()) {
-        if (movieDetail != null || movieDetailLoading || movieDetailError != null) {
+        if (nartoUnlockMedia != null && nartoUnlockPageUrl != null) {
+            NartoUnlockScreen(
+                media = requireNotNull(nartoUnlockMedia),
+                pageUrl = requireNotNull(nartoUnlockPageUrl),
+                status = nartoUnlockStatus,
+                onStreamCaptured = { hlsUrl ->
+                    if (nartoUnlockMedia != null) {
+                        playCapturedNartoHls(hlsUrl)
+                    }
+                },
+                onCancel = {
+                    nartoUnlockMedia = null
+                    nartoUnlockPageUrl = null
+                    nartoUnlockStartPositionMs = 0L
+                    nartoUnlockStatus = null
+                    resolvingId = null
+                }
+            )
+        } else if (movieDetail != null || movieDetailLoading || movieDetailError != null) {
             Scaffold(bottomBar = {
                 nowPlaying?.let { media -> MiniPlayer(
                     media = media,
@@ -2168,6 +2305,136 @@ private fun AppHeader(onSettings: () -> Unit, onDoubleTapCenter: () -> Unit) {
             IconButton(onClick = onSettings) {
                 Icon(Icons.Outlined.Settings, "Settings")
             }
+        }
+    }
+}
+
+@Composable
+private fun NartoUnlockScreen(
+    media: MediaSummary,
+    pageUrl: String,
+    status: String?,
+    onStreamCaptured: (String) -> Unit,
+    onCancel: () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onCancel) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Narto unlock",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    media.title,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+        ) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Text(
+                    "Complete Narto's normal unlock on the page below. " +
+                        "ezTube will return to the player automatically when the signed stream appears.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                status?.takeIf { it.isNotBlank() }?.let {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+
+        key(pageUrl) {
+            AndroidView(
+                factory = { webContext ->
+                    val captured = java.util.concurrent.atomic.AtomicBoolean(false)
+                    android.webkit.WebView(webContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.mediaPlaybackRequiresUserGesture = true
+                        settings.loadsImagesAutomatically = true
+                        settings.mixedContentMode =
+                            android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                        android.webkit.CookieManager.getInstance()
+                            .setAcceptCookie(true)
+                        android.webkit.CookieManager.getInstance()
+                            .setAcceptThirdPartyCookies(this, true)
+
+                        webChromeClient = android.webkit.WebChromeClient()
+                        webViewClient = object : android.webkit.WebViewClient() {
+                            private fun inspect(url: String?) {
+                                val value = url.orEmpty()
+                                if (
+                                    value.startsWith(
+                                        "https://stream.narto-drama.com/e/m/"
+                                    ) &&
+                                    captured.compareAndSet(false, true)
+                                ) {
+                                    android.os.Handler(
+                                        android.os.Looper.getMainLooper()
+                                    ).post {
+                                        onStreamCaptured(value)
+                                    }
+                                }
+                            }
+
+                            override fun shouldInterceptRequest(
+                                view: android.webkit.WebView?,
+                                request: android.webkit.WebResourceRequest?
+                            ): android.webkit.WebResourceResponse? {
+                                inspect(request?.url?.toString())
+                                return super.shouldInterceptRequest(view, request)
+                            }
+
+                            @Deprecated("Deprecated in Java")
+                            override fun shouldInterceptRequest(
+                                view: android.webkit.WebView?,
+                                url: String?
+                            ): android.webkit.WebResourceResponse? {
+                                inspect(url)
+                                return super.shouldInterceptRequest(view, url)
+                            }
+                        }
+                        loadUrl(pageUrl)
+                    }
+                },
+                update = { webView ->
+                    if (webView.url != pageUrl && !webView.canGoBack()) {
+                        webView.loadUrl(pageUrl)
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            )
         }
     }
 }
