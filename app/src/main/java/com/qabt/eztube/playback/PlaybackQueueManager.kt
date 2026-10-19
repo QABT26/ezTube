@@ -139,12 +139,7 @@ class PlaybackQueueManager(
             }
 
         val isSplit = splitVideo != null && !playback.audioUrl.isNullOrBlank()
-        val isDirect = !playback.directUrl.isNullOrBlank()
-        val engine = if (isSplit || isDirect) {
-            PlaybackService.ENGINE_DIRECT
-        } else {
-            PlaybackService.ENGINE_HLS
-        }
+        val engine = if (isSplit) PlaybackService.ENGINE_DIRECT else PlaybackService.ENGINE_HLS
         val selectedHeight = splitVideo?.height ?: 0
 
         val diagnostic = buildString {
@@ -217,24 +212,6 @@ class PlaybackQueueManager(
                     videoMimeType = video.mimeType,
                     audioUrl = audioUrl,
                     audioMimeType = playback.audioMimeType,
-                    headers = playback.requestHeaders
-                )
-            )
-        }
-
-        playback.directUrl?.takeIf { it.isNotBlank() }?.let { directUrl ->
-            val mediaItem = MediaItem.Builder()
-                .setMediaId(media.id)
-                .setUri(directUrl)
-                .setSubtitleConfigurations(subtitleConfigurations)
-                .setMediaMetadata(metadata)
-                .build()
-
-            return ResolvedPlayback(
-                mediaItem = mediaItem,
-                mediaSource = mediaSourceFactory.createMovieDirect(
-                    mediaItem = mediaItem,
-                    url = directUrl,
                     headers = playback.requestHeaders
                 )
             )
@@ -518,13 +495,40 @@ class PlaybackQueueManager(
             onComplete(Result.failure(IllegalStateException("Playback resolver is busy")))
             return
         }
-        if (!NartoPlaybackGuard.isAllowedManifest(hlsUrl)) {
+        val parsedHls = runCatching { Uri.parse(hlsUrl) }.getOrNull()
+        val hlsHost = parsedHls?.host.orEmpty().lowercase()
+        val hlsPath = parsedHls?.path.orEmpty()
+        val isSignedNartoManifest =
+            parsedHls?.scheme == "https" &&
+                hlsHost == "stream.narto-drama.com" &&
+                hlsPath.startsWith("/e/m/")
+        val isUnlockedDramaWaveManifest =
+            parsedHls?.scheme == "https" &&
+                (
+                    hlsHost == "mydramawave.com" ||
+                    hlsHost.endsWith(".mydramawave.com")
+                ) &&
+                hlsPath.endsWith(".m3u8", ignoreCase = true)
+
+        if (!isSignedNartoManifest && !isUnlockedDramaWaveManifest) {
             onComplete(Result.failure(IllegalArgumentException("Invalid Narto HLS URL")))
             return
         }
 
-        val safeSubtitleUrl = NartoPlaybackGuard.allowedSubtitleUrl(subtitleUrl)
-        val safePositionMs = NartoPlaybackGuard.safePositionMs(positionMs)
+        val safeSubtitleUrl = subtitleUrl
+            ?.takeIf { it.isNotBlank() }
+            ?.takeIf { value ->
+                val uri = runCatching { Uri.parse(value) }.getOrNull()
+                val host = uri?.host.orEmpty().lowercase()
+                val path = uri?.path.orEmpty()
+                uri?.scheme == "https" &&
+                    (
+                        host == "edge.narto-drama.com" ||
+                        host == "narto-drama.com" ||
+                        host == "stream.narto-drama.com"
+                    ) &&
+                    path.startsWith("/e/s/")
+            }
 
         val saved = preferences.loadQueue()
         if (saved == null || saved.first.isEmpty()) {
@@ -533,7 +537,7 @@ class PlaybackQueueManager(
         }
         val target = saved.second
         val media = saved.first.getOrNull(target)
-        if (media == null || !NartoPlaybackGuard.isNartoMediaId(media.id)) {
+        if (media == null || !media.id.startsWith("movie:narto:")) {
             onComplete(Result.failure(IllegalStateException("Current item is not Narto")))
             return
         }
@@ -556,12 +560,7 @@ class PlaybackQueueManager(
                     media,
                     MoviePlayback(
                         mediaId = media.id,
-                        hlsUrl = hlsUrl.takeUnless(
-                            NartoPlaybackGuard::isDirectDramaBoxStream
-                        ),
-                        directUrl = hlsUrl.takeIf(
-                            NartoPlaybackGuard::isDirectDramaBoxStream
-                        ),
+                        hlsUrl = hlsUrl,
                         subtitles = safeSubtitleUrl
                             ?.let {
                                 listOf(
@@ -619,13 +618,13 @@ class PlaybackQueueManager(
 
                 setResolved(item)
                 player.prepare()
-                if (safePositionMs > 0L) player.seekTo(safePositionMs)
+                if (positionMs > 0L) player.seekTo(positionMs.coerceAtLeast(0L))
                 player.setPlaybackSpeed(preferences.loadSpeed())
                 if (playWhenReady) player.play() else player.pause()
                 preferences.saveQueue(saved.first, target)
                 preferences.saveSession(
                     media,
-                    safePositionMs,
+                    positionMs.coerceAtLeast(0L),
                     playWhenReady
                 )
                 clearAlternateStream()
