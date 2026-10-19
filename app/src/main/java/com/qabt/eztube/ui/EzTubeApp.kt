@@ -2919,7 +2919,8 @@ private fun NartoUnlockScreen(
                       bottom: auto !important;
                       z-index: 2147483647 !important;
                       width: auto !important;
-                      min-width: 132px !important;
+                      min-width: 88px !important;
+                      min-height: 44px !important;
                       max-width: 48vw !important;
                       margin: 0 !important;
                       padding: 12px 20px !important;
@@ -2936,6 +2937,28 @@ private fun NartoUnlockScreen(
 
                 target.classList.add('eztube-narto-open-ad');
                 target.style.display = '';
+
+                // Keep Narto's own element and event handlers. Only normalize the
+                // visible label so the ezTube shell stays compact and predictable.
+                if (target.tagName === 'INPUT') {
+                  target.value = 'Mở';
+                } else {
+                  target.textContent = 'Mở';
+                }
+                target.setAttribute('aria-label', 'Mở');
+                target.setAttribute('title', 'Mở');
+
+                // Some Narto builds put an overlay/child node above the clickable
+                // element. Make all descendants transparent to pointer hit-testing
+                // so the tap always lands on the original control and its own
+                // website click handler.
+                try {
+                  target.querySelectorAll('*').forEach((child) => {
+                    child.style.pointerEvents = 'none';
+                  });
+                } catch (e) {}
+
+                target.style.pointerEvents = 'auto';
                 return 'pinned';
               } catch (e) {
                 return 'error';
