@@ -43,6 +43,20 @@ class NartoPlaybackGuardTest {
     }
 
     @Test
+    fun classifiesObservedDramaBoxVideoAsDirectPlayback() {
+        val url =
+            "https://dramabox-stream.narto-drama.com/tokenized-video-path"
+
+        assertTrue(NartoPlaybackGuard.isAllowedManifest(url))
+        assertTrue(NartoPlaybackGuard.isDirectDramaBoxStream(url))
+        assertFalse(
+            NartoPlaybackGuard.isDirectDramaBoxStream(
+                "https://stream.narto-drama.com/e/m/signed-token"
+            )
+        )
+    }
+
+    @Test
     fun keepsOnlyNativeNartoVietsubEndpoints() {
         val subtitle = "https://edge.narto-drama.com/e/s/vi-native-token"
         assertEquals(subtitle, NartoPlaybackGuard.allowedSubtitleUrl(subtitle))
