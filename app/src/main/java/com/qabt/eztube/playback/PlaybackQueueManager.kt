@@ -139,7 +139,12 @@ class PlaybackQueueManager(
             }
 
         val isSplit = splitVideo != null && !playback.audioUrl.isNullOrBlank()
-        val engine = if (isSplit) PlaybackService.ENGINE_DIRECT else PlaybackService.ENGINE_HLS
+        val isDirect = !playback.directUrl.isNullOrBlank()
+        val engine = if (isSplit || isDirect) {
+            PlaybackService.ENGINE_DIRECT
+        } else {
+            PlaybackService.ENGINE_HLS
+        }
         val selectedHeight = splitVideo?.height ?: 0
 
         val diagnostic = buildString {
@@ -212,6 +217,24 @@ class PlaybackQueueManager(
                     videoMimeType = video.mimeType,
                     audioUrl = audioUrl,
                     audioMimeType = playback.audioMimeType,
+                    headers = playback.requestHeaders
+                )
+            )
+        }
+
+        playback.directUrl?.takeIf { it.isNotBlank() }?.let { directUrl ->
+            val mediaItem = MediaItem.Builder()
+                .setMediaId(media.id)
+                .setUri(directUrl)
+                .setSubtitleConfigurations(subtitleConfigurations)
+                .setMediaMetadata(metadata)
+                .build()
+
+            return ResolvedPlayback(
+                mediaItem = mediaItem,
+                mediaSource = mediaSourceFactory.createMovieDirect(
+                    mediaItem = mediaItem,
+                    url = directUrl,
                     headers = playback.requestHeaders
                 )
             )
@@ -533,7 +556,12 @@ class PlaybackQueueManager(
                     media,
                     MoviePlayback(
                         mediaId = media.id,
-                        hlsUrl = hlsUrl,
+                        hlsUrl = hlsUrl.takeUnless(
+                            NartoPlaybackGuard::isDirectDramaBoxStream
+                        ),
+                        directUrl = hlsUrl.takeIf(
+                            NartoPlaybackGuard::isDirectDramaBoxStream
+                        ),
                         subtitles = safeSubtitleUrl
                             ?.let {
                                 listOf(
