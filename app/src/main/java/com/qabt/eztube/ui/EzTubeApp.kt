@@ -2674,7 +2674,9 @@ private fun NartoUnlockScreen(
                   out.push(kind + "|" + String(value));
                 };
 
-                push('open.proxy', window.__eztubeOpenProxyStatus || '');
+                push('open.proxy', window.__eztubeOpenProxyState || '');
+                push('open.tap', window.__eztubeOpenProxyLastTap || '');
+                push('open.tree', window.__eztubeOpenTreeMeta || '');
                 push('open.target', window.__eztubeOpenTargetMeta || '');
                 push('subtitle.detected', window.__eztubeVietsub || '');
                 try {
@@ -2890,37 +2892,87 @@ private fun NartoUnlockScreen(
                   .toLowerCase()
                   .replace(/\\s+/g, ' ');
 
-                const findOriginal = () => {
-                  const nodes = Array.from(
-                    document.querySelectorAll(
-                      'button,a,[role="button"],input[type="button"],input[type="submit"]'
-                    )
-                  ).filter((el) => el.id !== 'eztube-narto-open-proxy');
+                const roots = [];
+                const seen = new Set();
+                const walkRoot = (root, label) => {
+                  if (!root || seen.has(root)) return;
+                  seen.add(root);
+                  roots.push({ root, label });
 
-                  return nodes.find((el) => {
-                    const text = norm(el.innerText || el.textContent || el.value);
-                    const aria = norm(el.getAttribute && el.getAttribute('aria-label'));
-                    return (
-                      text.includes('mở quảng cáo') ||
-                      text.includes('mo quang cao') ||
-                      aria.includes('mở quảng cáo') ||
-                      aria.includes('mo quang cao')
-                    );
-                  }) || null;
+                  try {
+                    root.querySelectorAll('*').forEach((el) => {
+                      if (el.shadowRoot) {
+                        walkRoot(el.shadowRoot, label + '>shadow:' + String(el.tagName || ''));
+                      }
+                    });
+                  } catch (e) {}
+
+                  try {
+                    root.querySelectorAll('iframe,frame').forEach((frame, index) => {
+                      try {
+                        const doc = frame.contentDocument;
+                        if (doc) {
+                          walkRoot(doc, label + '>frame:' + index);
+                        }
+                      } catch (e) {}
+                    });
+                  } catch (e) {}
+                };
+                walkRoot(document, 'main');
+
+                const isOpenAdText = (el) => {
+                  const text = norm(el.innerText || el.textContent || el.value);
+                  const aria = norm(el.getAttribute && el.getAttribute('aria-label'));
+                  const title = norm(el.getAttribute && el.getAttribute('title'));
+                  return (
+                    text.includes('mở quảng cáo') ||
+                    text.includes('mo quang cao') ||
+                    aria.includes('mở quảng cáo') ||
+                    aria.includes('mo quang cao') ||
+                    title.includes('mở quảng cáo') ||
+                    title.includes('mo quang cao')
+                  );
                 };
 
-                const original = findOriginal();
-                if (!original) {
-                  window.__eztubeOpenProxyStatus = 'target-not-found';
+                const findOriginal = () => {
+                  for (const entry of roots) {
+                    let nodes = [];
+                    try {
+                      nodes = Array.from(
+                        entry.root.querySelectorAll(
+                          'button,a,[role="button"],input[type="button"],input[type="submit"],div,span'
+                        )
+                      ).filter((el) => el.id !== 'eztube-narto-open-proxy');
+                    } catch (e) {}
+                    const found = nodes.find(isOpenAdText);
+                    if (found) return { target: found, rootLabel: entry.label };
+                  }
+                  return null;
+                };
+
+                const match = findOriginal();
+                const proxyExisting = document.getElementById('eztube-narto-open-proxy');
+
+                window.__eztubeOpenTreeMeta = [
+                  'roots=' + roots.length,
+                  'iframes=' + document.querySelectorAll('iframe,frame').length,
+                  'shadowHosts=' + Array.from(document.querySelectorAll('*')).filter((el) => !!el.shadowRoot).length
+                ].join(';');
+
+                if (!match) {
+                  window.__eztubeOpenProxyState = 'target-not-found';
                   window.__eztubeOpenTargetMeta = 'not-found';
+                  if (proxyExisting) proxyExisting.style.display = 'none';
                   return 'not-found';
                 }
 
+                const original = match.target;
                 try {
                   const rect = original.getBoundingClientRect();
                   const parent = original.parentElement;
                   const style = getComputedStyle(original);
                   window.__eztubeOpenTargetMeta = [
+                    'root=' + match.rootLabel,
                     'tag=' + String(original.tagName || ''),
                     'id=' + String(original.id || ''),
                     'class=' + String(original.className || '').slice(0, 80),
@@ -2972,7 +3024,7 @@ private fun NartoUnlockScreen(
                   document.head.appendChild(style);
                 }
 
-                let proxy = document.getElementById('eztube-narto-open-proxy');
+                let proxy = proxyExisting;
                 if (!proxy) {
                   proxy = document.createElement('button');
                   proxy.id = 'eztube-narto-open-proxy';
@@ -2985,19 +3037,20 @@ private fun NartoUnlockScreen(
                     event.preventDefault();
                     event.stopPropagation();
 
-                    const target = findOriginal();
-                    if (!target) {
-                      window.__eztubeOpenProxyStatus = 'tap:no-target';
-                      return;
-                    }
-                    if (target.disabled || target.getAttribute('aria-disabled') === 'true') {
-                      window.__eztubeOpenProxyStatus = 'tap:target-disabled';
+                    const latest = findOriginal();
+                    if (!latest || !latest.target) {
+                      window.__eztubeOpenProxyLastTap = 'no-target';
                       return;
                     }
 
-                    window.__eztubeOpenProxyStatus = 'tap:forwarded';
-                    // Run synchronously inside the real WebView user gesture so
-                    // Narto's own click handler retains transient user activation.
+                    const target = latest.target;
+                    if (target.disabled || target.getAttribute('aria-disabled') === 'true') {
+                      window.__eztubeOpenProxyLastTap = 'target-disabled';
+                      return;
+                    }
+
+                    window.__eztubeOpenProxyLastTap =
+                      'forwarded:' + String(latest.rootLabel || 'unknown');
                     target.click();
                   }, true);
 
@@ -3006,10 +3059,13 @@ private fun NartoUnlockScreen(
 
                 proxy.textContent = 'Mở';
                 proxy.style.display = '';
-                window.__eztubeOpenProxyStatus = 'ready';
-                return 'proxy-ready';
+                window.__eztubeOpenProxyState = 'ready';
+                if (!window.__eztubeOpenProxyLastTap) {
+                  window.__eztubeOpenProxyLastTap = 'none';
+                }
+                return 'proxy-ready:' + match.rootLabel;
               } catch (e) {
-                window.__eztubeOpenProxyStatus = 'error:' + String(e);
+                window.__eztubeOpenProxyState = 'error:' + String(e);
                 return 'error';
               }
             })();
