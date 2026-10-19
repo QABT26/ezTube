@@ -2736,6 +2736,46 @@ private fun NartoUnlockScreen(
                       }
                     } catch (e) {}
                   });
+
+                  const dumpScripts = (root, label) => {
+                    let scripts = [];
+                    try {
+                      scripts = Array.from(root.querySelectorAll('script'));
+                    } catch (e) {}
+
+                    scripts.forEach((script, index) => {
+                      const src = String(script.src || '');
+                      const body = String(script.textContent || '');
+                      const lower = body.toLowerCase();
+                      const interesting =
+                        lower.includes('gate-unlock') ||
+                        lower.includes('wrapper-guard') ||
+                        lower.includes('window.open') ||
+                        lower.includes('open(') ||
+                        lower.includes('/ads/') ||
+                        lower.includes('advert');
+                      if (src || interesting) {
+                        push(
+                          'open.script',
+                          [
+                            'root=' + label,
+                            'i=' + index,
+                            'src=' + src.slice(0, 180),
+                            'inline=' + (interesting ? body.replace(/\\s+/g, ' ').slice(0, 260) : '')
+                          ].join(';')
+                        );
+                      }
+                    });
+                  };
+
+                  dumpScripts(document, 'main');
+                  document.querySelectorAll('iframe,frame').forEach((frame, index) => {
+                    try {
+                      if (frame.contentDocument) {
+                        dumpScripts(frame.contentDocument, 'frame:' + index);
+                      }
+                    } catch (e) {}
+                  });
                 } catch (e) {}
                 push('subtitle.detected', window.__eztubeVietsub || '');
                 try {
