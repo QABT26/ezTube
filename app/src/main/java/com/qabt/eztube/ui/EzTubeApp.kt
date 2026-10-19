@@ -2385,6 +2385,9 @@ private fun NartoUnlockScreen(
     val subtitleClassifierRunning = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
+    val subtitleClassifierAttempts = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicInteger(0)
+    }
     val nartoScope = rememberCoroutineScope()
     val gateUnlockSeen = remember(pageUrl) {
         java.util.concurrent.atomic.AtomicBoolean(false)
@@ -2483,6 +2486,12 @@ private fun NartoUnlockScreen(
     fun classifyNartoSubtitleCandidates(urls: List<String>) {
         if (capturedSubtitleUrl != null || urls.isEmpty()) return
         if (!subtitleClassifierRunning.compareAndSet(false, true)) return
+
+        val attempt = subtitleClassifierAttempts.incrementAndGet()
+        if (attempt > 2) {
+            subtitleClassifierRunning.set(false)
+            return
+        }
 
         val snapshots = urls
             .distinct()
@@ -2584,11 +2593,12 @@ private fun NartoUnlockScreen(
             active.evaluateJavascript(
                 """
                 (function() {
-                  if (window.__eztubeSubtitleScanRunning) return;
-                  window.__eztubeSubtitleScanRunning = true;
+                  if (window.__eztubeSubtitleDiscoveryDone) return;
+                  window.__eztubeSubtitleDiscoveryDone = true;
+                  window.__eztubeSubtitleCandidates = window.__eztubeSubtitleCandidates || [];
 
-                  const save = (u) => {
-                    if (!u) return;
+                  const normalize = (u) => {
+                    if (!u) return '';
                     try {
                       const x = new URL(String(u), location.href);
                       if (
@@ -2598,13 +2608,22 @@ private fun NartoUnlockScreen(
                          x.hostname === 'stream.narto-drama.com') &&
                         x.pathname.startsWith('/e/s/')
                       ) {
-                        window.__eztubeVietsub = x.href;
+                        return x.href;
                       }
                     } catch (e) {}
+                    return '';
                   };
 
-                  const preferred = [];
-                  const resources = [];
+                  const addCandidate = (u) => {
+                    const normalized = normalize(u);
+                    if (
+                      normalized &&
+                      !window.__eztubeSubtitleCandidates.includes(normalized)
+                    ) {
+                      window.__eztubeSubtitleCandidates.push(normalized);
+                    }
+                    return normalized;
+                  };
 
                   try {
                     document.querySelectorAll('track').forEach((t) => {
@@ -2620,10 +2639,8 @@ private fun NartoUnlockScreen(
                           lang.includes('viet')
                         )
                       ) {
-                        preferred.push(src);
-                        // A real <track> element is already strong evidence. Save it
-                        // immediately when it is a Narto /e/s/ URL.
-                        save(src);
+                        const normalized = addCandidate(src);
+                        if (normalized) window.__eztubeVietsub = normalized;
                       }
                     });
                   } catch (e) {}
@@ -2631,66 +2648,17 @@ private fun NartoUnlockScreen(
                   try {
                     const html = String(document.documentElement?.innerHTML || '');
                     const absolute = html.match(/https:\/\/[^"'\\s<>]+\/e\/s\/[^"'\\s<>]+/gi) || [];
-                    absolute.forEach((u) => preferred.push(u.replace(/\\u0026/g, '&')));
+                    absolute.forEach((u) => addCandidate(u.replace(/\\u0026/g, '&')));
                     const relative = html.match(/\/e\/s\/[^"'\\s<>]+/gi) || [];
-                    relative.forEach((u) => {
-                      try { preferred.push(new URL(u, location.href).href); } catch (e) {}
-                    });
+                    relative.forEach(addCandidate);
                   } catch (e) {}
 
                   try {
                     performance.getEntriesByType('resource')
-                      .filter((e) => String(e.name || '').includes('narto-drama.com/e/s/'))
-                      .sort((a, b) => {
-                        const ax = Number(a.decodedBodySize || a.transferSize || 0);
-                        const bx = Number(b.decodedBodySize || b.transferSize || 0);
-                        if (ax === 0 && bx !== 0) return 1;
-                        if (bx === 0 && ax !== 0) return -1;
-                        return ax - bx;
-                      })
-                      .forEach((e) => resources.push(String(e.name || '')));
+                      .map((e) => String(e.name || ''))
+                      .filter((u) => u.includes('narto-drama.com/e/s/'))
+                      .forEach(addCandidate);
                   } catch (e) {}
-
-                  (async () => {
-                    const urls = Array.from(
-                      new Set([...preferred, ...resources])
-                    ).slice(0, 32);
-                    const classify = async (u) => {
-                      try {
-                        const controller = new AbortController();
-                        const timer = setTimeout(() => controller.abort(), 900);
-                        const r = await fetch(u, {
-                          credentials: 'omit',
-                          cache: 'no-store',
-                          signal: controller.signal
-                        });
-                        clearTimeout(timer);
-
-                        const type = String(r.headers.get('content-type') || '').toLowerCase();
-                        if (type.includes('text/vtt') || type.includes('application/vtt')) {
-                          return u;
-                        }
-
-                        const reader = r.body && r.body.getReader ? r.body.getReader() : null;
-                        if (!reader) return '';
-                        const first = await reader.read();
-                        try { await reader.cancel(); } catch (e) {}
-                        if (!first || !first.value) return '';
-                        const head = new TextDecoder('utf-8')
-                          .decode(first.value.slice(0, 512))
-                          .replace(/^\uFEFF/, '')
-                          .trimStart();
-                        return head.startsWith('WEBVTT') ? u : '';
-                      } catch (e) {
-                        return '';
-                      }
-                    };
-
-                    const results = await Promise.all(urls.map(classify));
-                    const found = results.find(Boolean);
-                    if (found) save(found);
-                    window.__eztubeSubtitleScanRunning = false;
-                  })();
                 })();
                 """.trimIndent(),
                 null
@@ -2708,6 +2676,11 @@ private fun NartoUnlockScreen(
                 };
 
                 push('subtitle.detected', window.__eztubeVietsub || '');
+                try {
+                  (window.__eztubeSubtitleCandidates || [])
+                    .slice(-32)
+                    .forEach((u) => push('subtitle.candidate', u));
+                } catch (e) {}
 
                 document.querySelectorAll('track').forEach((t) => {
                   const kind = String(t.kind || '').toLowerCase();
