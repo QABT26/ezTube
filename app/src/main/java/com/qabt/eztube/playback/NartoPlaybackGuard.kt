@@ -32,6 +32,14 @@ internal object NartoPlaybackGuard {
         return signedNarto || directDramaBox || unlockedDramaWave
     }
 
+    fun isDirectDramaBoxStream(url: String): Boolean {
+        val uri = parseHttps(url) ?: return false
+        return uri.host.orEmpty().equals(
+            "dramabox-stream.narto-drama.com",
+            ignoreCase = true
+        )
+    }
+
     fun allowedSubtitleUrl(url: String?): String? {
         val value = url?.takeIf { it.isNotBlank() } ?: return null
         val uri = parseHttps(value) ?: return null
