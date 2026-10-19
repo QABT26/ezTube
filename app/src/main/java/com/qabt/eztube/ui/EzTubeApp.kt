@@ -1489,9 +1489,9 @@ fun EzTubeApp(
                 status = nartoUnlockStatus,
                 sessionPreviouslyUnlocked = nartoSessionUnlocked,
                 onSessionUnlocked = { nartoSessionUnlocked = true },
-                onStreamCaptured = { hlsUrl, subtitleUrl ->
+                onStreamCaptured = { mediaUrl, subtitleUrl ->
                     if (nartoUnlockMedia != null) {
-                        playCapturedNartoHls(hlsUrl, subtitleUrl)
+                        playCapturedNartoHls(mediaUrl, subtitleUrl)
                     }
                 },
                 onCancel = {
@@ -2958,6 +2958,10 @@ private fun NartoUnlockScreen(
                         path.endsWith(".m3u8", ignoreCase = true)
                     )
 
+                val unlockedDirectPlayable =
+                    gateUnlockSeen.get() &&
+                        host == "dramabox-stream.narto-drama.com"
+
                 val unlockedUpstreamPlayable =
                     gateUnlockSeen.get() &&
                     (
@@ -2966,7 +2970,7 @@ private fun NartoUnlockScreen(
                     ) &&
                     path.endsWith(".m3u8", ignoreCase = true)
 
-                if (nartoPlayable || unlockedUpstreamPlayable) {
+                if (nartoPlayable || unlockedDirectPlayable || unlockedUpstreamPlayable) {
                     val waitingForSubtitle =
                         capturedSubtitleUrl == null &&
                             (
@@ -3473,6 +3477,10 @@ private fun NartoUnlockScreen(
                         path.endsWith(".m3u8", ignoreCase = true)
                     )
             
+                val unlockedDirectVideo =
+                    gateUnlockSeen.get() &&
+                        nartoHost == "dramabox-stream.narto-drama.com"
+            
                 val unlockedUpstreamManifest =
                     gateUnlockSeen.get() &&
                     (
@@ -3486,6 +3494,9 @@ private fun NartoUnlockScreen(
                     // Do not hand off immediately. Let the main-thread probe discover
                     // subtitle tracks/resources first, then Media3 gets video + subtitle together.
                     mainHandler.post { probeMainPlayback("signed-manifest") }
+                } else if (currentEpisodeActive && unlockedDirectVideo) {
+                    addDiagnostic("direct-video-detected", value)
+                    mainHandler.post { probeMainPlayback("direct-video") }
                 } else if (currentEpisodeActive && unlockedUpstreamManifest) {
                     mainHandler.post { probeMainPlayback("upstream-manifest") }
                 }
