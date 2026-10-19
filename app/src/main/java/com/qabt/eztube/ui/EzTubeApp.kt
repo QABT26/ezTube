@@ -2933,6 +2933,24 @@ private fun NartoUnlockScreen(
                       border-radius: 999px !important;
                       box-shadow: 0 4px 16px rgba(0,0,0,.28) !important;
                     }
+
+                    /* Preserve Narto's original DOM and click handlers. Only replace
+                       the visible label for button/anchor controls. */
+                    button.eztube-narto-open-ad,
+                    a.eztube-narto-open-ad,
+                    [role="button"].eztube-narto-open-ad {
+                      font-size: 0 !important;
+                    }
+
+                    button.eztube-narto-open-ad::after,
+                    a.eztube-narto-open-ad::after,
+                    [role="button"].eztube-narto-open-ad::after {
+                      content: 'Mở';
+                      font-size: 16px;
+                      line-height: 20px;
+                      font-weight: 600;
+                      color: currentColor;
+                    }
                   `;
                   document.head.appendChild(style);
                 }
@@ -2940,26 +2958,13 @@ private fun NartoUnlockScreen(
                 target.classList.add('eztube-narto-open-ad');
                 target.style.display = '';
 
-                // Keep Narto's own element and event handlers. Only normalize the
-                // visible label so the ezTube shell stays compact and predictable.
+                // Preserve the site's exact subtree and event targets. Mutating
+                // textContent or child pointer-events can break delegated handlers.
                 if (target.tagName === 'INPUT') {
                   target.value = 'Mở';
-                } else {
-                  target.textContent = 'Mở';
                 }
                 target.setAttribute('aria-label', 'Mở');
                 target.setAttribute('title', 'Mở');
-
-                // Some Narto builds put an overlay/child node above the clickable
-                // element. Make all descendants transparent to pointer hit-testing
-                // so the tap always lands on the original control and its own
-                // website click handler.
-                try {
-                  target.querySelectorAll('*').forEach((child) => {
-                    child.style.pointerEvents = 'none';
-                  });
-                } catch (e) {}
-
                 target.style.pointerEvents = 'auto';
                 return 'pinned';
               } catch (e) {
