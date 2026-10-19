@@ -139,7 +139,12 @@ class PlaybackQueueManager(
             }
 
         val isSplit = splitVideo != null && !playback.audioUrl.isNullOrBlank()
-        val engine = if (isSplit) PlaybackService.ENGINE_DIRECT else PlaybackService.ENGINE_HLS
+        val isDirect = !playback.directUrl.isNullOrBlank()
+        val engine = if (isSplit || isDirect) {
+            PlaybackService.ENGINE_DIRECT
+        } else {
+            PlaybackService.ENGINE_HLS
+        }
         val selectedHeight = splitVideo?.height ?: 0
 
         val diagnostic = buildString {
@@ -212,6 +217,24 @@ class PlaybackQueueManager(
                     videoMimeType = video.mimeType,
                     audioUrl = audioUrl,
                     audioMimeType = playback.audioMimeType,
+                    headers = playback.requestHeaders
+                )
+            )
+        }
+
+        playback.directUrl?.takeIf { it.isNotBlank() }?.let { directUrl ->
+            val mediaItem = MediaItem.Builder()
+                .setMediaId(media.id)
+                .setUri(directUrl)
+                .setSubtitleConfigurations(subtitleConfigurations)
+                .setMediaMetadata(metadata)
+                .build()
+
+            return ResolvedPlayback(
+                mediaItem = mediaItem,
+                mediaSource = mediaSourceFactory.createMovieDirect(
+                    mediaItem = mediaItem,
+                    url = directUrl,
                     headers = playback.requestHeaders
                 )
             )
@@ -509,9 +532,16 @@ class PlaybackQueueManager(
                     hlsHost.endsWith(".mydramawave.com")
                 ) &&
                 hlsPath.endsWith(".m3u8", ignoreCase = true)
+        val isUnlockedDramaBoxDirect =
+            parsedHls?.scheme == "https" &&
+                hlsHost == "dramabox-stream.narto-drama.com"
 
-        if (!isSignedNartoManifest && !isUnlockedDramaWaveManifest) {
-            onComplete(Result.failure(IllegalArgumentException("Invalid Narto HLS URL")))
+        if (
+            !isSignedNartoManifest &&
+            !isUnlockedDramaWaveManifest &&
+            !isUnlockedDramaBoxDirect
+        ) {
+            onComplete(Result.failure(IllegalArgumentException("Invalid Narto media URL")))
             return
         }
 
@@ -560,7 +590,8 @@ class PlaybackQueueManager(
                     media,
                     MoviePlayback(
                         mediaId = media.id,
-                        hlsUrl = hlsUrl,
+                        hlsUrl = hlsUrl.takeUnless { isUnlockedDramaBoxDirect },
+                        directUrl = hlsUrl.takeIf { isUnlockedDramaBoxDirect },
                         subtitles = safeSubtitleUrl
                             ?.let {
                                 listOf(
@@ -592,7 +623,13 @@ class PlaybackQueueManager(
                         diagnostic = buildString {
                             append("Provider: Narto Drama")
                             append("\nPlayback: interactive website unlock")
-                            append("\nMedia3: signed HLS")
+                            append(
+                                if (isUnlockedDramaBoxDirect) {
+                                    "\nMedia3: direct source"
+                                } else {
+                                    "\nMedia3: signed HLS"
+                                }
+                            )
                         }
                     )
                 )
