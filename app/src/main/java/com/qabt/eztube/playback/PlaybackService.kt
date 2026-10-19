@@ -49,6 +49,7 @@ class PlaybackService : MediaSessionService() {
         const val ARG_HLS_URL = "hls_url"
         const val ARG_REFERER = "referer"
         const val ARG_SUBTITLE_URL = "subtitle_url"
+        const val ARG_REQUEST_HEADERS_JSON = "request_headers_json"
         const val EXTRA_COMPATIBILITY_FALLBACK = "compatibility_fallback"
         const val EXTRA_VIDEO_HEIGHT = "video_height"
         const val EXTRA_PLAYBACK_ENGINE = "playback_engine"
@@ -332,11 +333,25 @@ class PlaybackService : MediaSessionService() {
                         val hlsUrl = args.getString(ARG_HLS_URL).orEmpty()
                         val referer = args.getString(ARG_REFERER).orEmpty()
                         val subtitleUrl = args.getString(ARG_SUBTITLE_URL)
+                        val requestHeaders = runCatching {
+                            val json = org.json.JSONObject(
+                                args.getString(ARG_REQUEST_HEADERS_JSON).orEmpty()
+                            )
+                            buildMap<String, String> {
+                                val keys = json.keys()
+                                while (keys.hasNext()) {
+                                    val key = keys.next()
+                                    val value = json.optString(key)
+                                    if (value.isNotBlank()) put(key, value)
+                                }
+                            }
+                        }.getOrDefault(emptyMap())
                         val future = com.google.common.util.concurrent.SettableFuture.create<SessionResult>()
                         queueManager.playDirectMovieHls(
                             hlsUrl = hlsUrl,
                             referer = referer,
                             subtitleUrl = subtitleUrl,
+                            requestHeaders = requestHeaders,
                             positionMs = args.getLong(ARG_POSITION_MS, 0L),
                             playWhenReady = args.getBoolean(ARG_PLAY_WHEN_READY, true)
                         ) { result ->
