@@ -2674,6 +2674,7 @@ private fun NartoUnlockScreen(
                   out.push(kind + "|" + String(value));
                 };
 
+                push('open.proxy', window.__eztubeOpenProxyStatus || '');
                 push('subtitle.detected', window.__eztubeVietsub || '');
                 try {
                   (window.__eztubeSubtitleCandidates || [])
@@ -2888,15 +2889,14 @@ private fun NartoUnlockScreen(
                   .toLowerCase()
                   .replace(/\\s+/g, ' ');
 
-                const nodes = Array.from(
-                  document.querySelectorAll(
-                    'button,a,[role="button"],input[type="button"],input[type="submit"]'
-                  )
-                );
+                const findOriginal = () => {
+                  const nodes = Array.from(
+                    document.querySelectorAll(
+                      'button,a,[role="button"],input[type="button"],input[type="submit"]'
+                    )
+                  ).filter((el) => el.id !== 'eztube-narto-open-proxy');
 
-                const target =
-                  document.querySelector('.eztube-narto-open-ad') ||
-                  nodes.find((el) => {
+                  return nodes.find((el) => {
                     const text = norm(el.innerText || el.textContent || el.value);
                     const aria = norm(el.getAttribute && el.getAttribute('aria-label'));
                     return (
@@ -2905,69 +2905,81 @@ private fun NartoUnlockScreen(
                       aria.includes('mở quảng cáo') ||
                       aria.includes('mo quang cao')
                     );
-                  });
+                  }) || null;
+                };
 
-                if (!target) return 'not-found';
+                const original = findOriginal();
+                if (!original) {
+                  window.__eztubeOpenProxyStatus = 'target-not-found';
+                  return 'not-found';
+                }
 
-                if (!document.getElementById('eztube-narto-pin-style')) {
+                if (!document.getElementById('eztube-narto-proxy-style')) {
                   const style = document.createElement('style');
-                  style.id = 'eztube-narto-pin-style';
+                  style.id = 'eztube-narto-proxy-style';
                   style.textContent = `
-                    .eztube-narto-open-ad {
+                    #eztube-narto-open-proxy {
                       position: fixed !important;
                       top: 12px !important;
                       right: 12px !important;
                       left: auto !important;
                       bottom: auto !important;
                       z-index: 2147483647 !important;
-                      width: auto !important;
                       min-width: 88px !important;
                       min-height: 44px !important;
-                      max-width: 48vw !important;
                       margin: 0 !important;
-                      padding: 12px 20px !important;
+                      padding: 10px 20px !important;
+                      border: 0 !important;
+                      border-radius: 999px !important;
+                      font: 600 16px/20px sans-serif !important;
                       opacity: 1 !important;
                       visibility: visible !important;
                       pointer-events: auto !important;
-                      transform: none !important;
-                      border-radius: 999px !important;
+                      touch-action: manipulation !important;
                       box-shadow: 0 4px 16px rgba(0,0,0,.28) !important;
-                    }
-
-                    /* Preserve Narto's original DOM and click handlers. Only replace
-                       the visible label for button/anchor controls. */
-                    button.eztube-narto-open-ad,
-                    a.eztube-narto-open-ad,
-                    [role="button"].eztube-narto-open-ad {
-                      font-size: 0 !important;
-                    }
-
-                    button.eztube-narto-open-ad::after,
-                    a.eztube-narto-open-ad::after,
-                    [role="button"].eztube-narto-open-ad::after {
-                      content: 'Mở';
-                      font-size: 16px;
-                      line-height: 20px;
-                      font-weight: 600;
-                      color: currentColor;
                     }
                   `;
                   document.head.appendChild(style);
                 }
 
-                target.classList.add('eztube-narto-open-ad');
-                target.style.display = '';
+                let proxy = document.getElementById('eztube-narto-open-proxy');
+                if (!proxy) {
+                  proxy = document.createElement('button');
+                  proxy.id = 'eztube-narto-open-proxy';
+                  proxy.type = 'button';
+                  proxy.textContent = 'Mở';
+                  proxy.setAttribute('aria-label', 'Mở');
+                  proxy.setAttribute('title', 'Mở');
 
-                // Preserve the site's exact subtree and event targets. Mutating
-                // textContent or child pointer-events can break delegated handlers.
-                if (target.tagName === 'INPUT') {
-                  target.value = 'Mở';
+                  proxy.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    const target = findOriginal();
+                    if (!target) {
+                      window.__eztubeOpenProxyStatus = 'tap:no-target';
+                      return;
+                    }
+                    if (target.disabled || target.getAttribute('aria-disabled') === 'true') {
+                      window.__eztubeOpenProxyStatus = 'tap:target-disabled';
+                      return;
+                    }
+
+                    window.__eztubeOpenProxyStatus = 'tap:forwarded';
+                    // Run synchronously inside the real WebView user gesture so
+                    // Narto's own click handler retains transient user activation.
+                    target.click();
+                  }, true);
+
+                  (document.body || document.documentElement).appendChild(proxy);
                 }
-                target.setAttribute('aria-label', 'Mở');
-                target.setAttribute('title', 'Mở');
-                target.style.pointerEvents = 'auto';
-                return 'pinned';
+
+                proxy.textContent = 'Mở';
+                proxy.style.display = '';
+                window.__eztubeOpenProxyStatus = 'ready';
+                return 'proxy-ready';
               } catch (e) {
+                window.__eztubeOpenProxyStatus = 'error:' + String(e);
                 return 'error';
               }
             })();
