@@ -2671,7 +2671,7 @@ private fun NartoUnlockScreen(
                 const out = [];
                 const push = (kind, value) => {
                   if (!value) return;
-                  const safe = String(value).replace(/\\|/g, '¦');
+                  const safe = String(value).split("|").join("¦");
                   out.push(kind + "|" + safe);
                 };
 
@@ -2959,8 +2959,7 @@ private fun NartoUnlockScreen(
                     )
 
                 val unlockedDirectPlayable =
-                    gateUnlockSeen.get() &&
-                        host == "dramabox-stream.narto-drama.com"
+                    host == "dramabox-stream.narto-drama.com"
 
                 val unlockedUpstreamPlayable =
                     gateUnlockSeen.get() &&
@@ -3478,8 +3477,7 @@ private fun NartoUnlockScreen(
                     )
             
                 val unlockedDirectVideo =
-                    gateUnlockSeen.get() &&
-                        nartoHost == "dramabox-stream.narto-drama.com"
+                    nartoHost == "dramabox-stream.narto-drama.com"
             
                 val unlockedUpstreamManifest =
                     gateUnlockSeen.get() &&
