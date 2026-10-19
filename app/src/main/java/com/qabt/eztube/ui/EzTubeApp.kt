@@ -2894,16 +2894,18 @@ private fun NartoUnlockScreen(
                   )
                 );
 
-                const target = nodes.find((el) => {
-                  const text = norm(el.innerText || el.textContent || el.value);
-                  const aria = norm(el.getAttribute && el.getAttribute('aria-label'));
-                  return (
-                    text.includes('mở quảng cáo') ||
-                    text.includes('mo quang cao') ||
-                    aria.includes('mở quảng cáo') ||
-                    aria.includes('mo quang cao')
-                  );
-                });
+                const target =
+                  document.querySelector('.eztube-narto-open-ad') ||
+                  nodes.find((el) => {
+                    const text = norm(el.innerText || el.textContent || el.value);
+                    const aria = norm(el.getAttribute && el.getAttribute('aria-label'));
+                    return (
+                      text.includes('mở quảng cáo') ||
+                      text.includes('mo quang cao') ||
+                      aria.includes('mở quảng cáo') ||
+                      aria.includes('mo quang cao')
+                    );
+                  });
 
                 if (!target) return 'not-found';
 
