@@ -2678,6 +2678,65 @@ private fun NartoUnlockScreen(
                 push('open.tap', window.__eztubeOpenProxyLastTap || '');
                 push('open.tree', window.__eztubeOpenTreeMeta || '');
                 push('open.target', window.__eztubeOpenTargetMeta || '');
+                try {
+                  document.querySelectorAll('iframe,frame').forEach((frame, index) => {
+                    push(
+                      'open.frame',
+                      [
+                        'i=' + index,
+                        'src=' + String(frame.src || '').slice(0, 180),
+                        'id=' + String(frame.id || ''),
+                        'class=' + String(frame.className || '').slice(0, 80)
+                      ].join(';')
+                    );
+                  });
+
+                  const dumpRoot = (root, label) => {
+                    let controls = [];
+                    try {
+                      controls = Array.from(
+                        root.querySelectorAll(
+                          'button,a,[role="button"],input[type="button"],input[type="submit"],[onclick]'
+                        )
+                      );
+                    } catch (e) {}
+
+                    controls.slice(0, 24).forEach((el, index) => {
+                      const rect = el.getBoundingClientRect();
+                      const text = String(
+                        el.innerText || el.textContent || el.value || ''
+                      ).trim().replace(/\s+/g, ' ').slice(0, 100);
+                      push(
+                        'open.control',
+                        [
+                          'root=' + label,
+                          'i=' + index,
+                          'tag=' + String(el.tagName || ''),
+                          'id=' + String(el.id || ''),
+                          'class=' + String(el.className || '').slice(0, 80),
+                          'text=' + text,
+                          'href=' + String(el.getAttribute && el.getAttribute('href') || '').slice(0, 120),
+                          'onclick=' + (typeof el.onclick === 'function' ? '1' : '0'),
+                          'rect=' + [
+                            Math.round(rect.left),
+                            Math.round(rect.top),
+                            Math.round(rect.width),
+                            Math.round(rect.height)
+                          ].join(',')
+                        ].join(';')
+                      );
+                    });
+                  };
+
+                  dumpRoot(document, 'main');
+                  document.querySelectorAll('iframe,frame').forEach((frame, index) => {
+                    try {
+                      if (frame.contentDocument) {
+                        dumpRoot(frame.contentDocument, 'frame:' + index);
+                      }
+                    } catch (e) {}
+                  });
+                } catch (e) {}
                 push('subtitle.detected', window.__eztubeVietsub || '');
                 try {
                   (window.__eztubeSubtitleCandidates || [])
