@@ -510,6 +510,7 @@ class PlaybackQueueManager(
         hlsUrl: String,
         referer: String,
         subtitleUrl: String?,
+        requestHeaders: Map<String, String> = emptyMap(),
         positionMs: Long,
         playWhenReady: Boolean,
         onComplete: (Result<Unit>) -> Unit
@@ -604,22 +605,46 @@ class PlaybackQueueManager(
                                 )
                             }
                             .orEmpty(),
-                        requestHeaders = mapOf(
-                            "User-Agent" to (
+                        requestHeaders = buildMap {
+                            put(
+                                "User-Agent",
                                 "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
                                     "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
-                                ),
-                            "Referer" to referer,
-                            "Origin" to runCatching {
-                                val uri = Uri.parse(referer)
-                                val host = uri.host.orEmpty()
-                                if (uri.scheme == "https" && host.endsWith("narto-drama.com")) {
-                                    "https://" + host
-                                } else {
-                                    "https://narto-drama.com"
+                            )
+                            put("Referer", referer)
+                            put(
+                                "Origin",
+                                runCatching {
+                                    val uri = Uri.parse(referer)
+                                    val host = uri.host.orEmpty()
+                                    if (uri.scheme == "https" && host.endsWith("narto-drama.com")) {
+                                        "https://" + host
+                                    } else {
+                                        "https://narto-drama.com"
+                                    }
+                                }.getOrDefault("https://narto-drama.com")
+                            )
+
+                            requestHeaders.forEach { (key, value) ->
+                                if (
+                                    value.isNotBlank() &&
+                                    (
+                                        key.equals("User-Agent", ignoreCase = true) ||
+                                        key.equals("Referer", ignoreCase = true) ||
+                                        key.equals("Origin", ignoreCase = true)
+                                    )
+                                ) {
+                                    put(
+                                        when {
+                                            key.equals("User-Agent", true) -> "User-Agent"
+                                            key.equals("Referer", true) -> "Referer"
+                                            else -> "Origin"
+                                        },
+                                        value
+                                    )
                                 }
-                            }.getOrDefault("https://narto-drama.com")
-                        ),
+                            }
+                        },
                         diagnostic = buildString {
                             append("Provider: Narto Drama")
                             append("\nPlayback: interactive website unlock")
