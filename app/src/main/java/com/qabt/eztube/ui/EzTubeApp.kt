@@ -92,6 +92,7 @@ import com.qabt.eztube.movie.MovieProviderRegistry
 import com.qabt.eztube.local.LocalMediaKind
 import com.qabt.eztube.local.LocalMediaRepository
 import com.qabt.eztube.movie.MovieDetail
+import com.qabt.eztube.movie.narto.NartoStreamSniffer
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.ChannelSummary
 import com.qabt.eztube.youtube.PlaylistSummary
@@ -867,7 +868,11 @@ fun EzTubeApp(
         }, context.mainExecutor)
     }
 
-    fun playCapturedNartoHls(hlsUrl: String, subtitleUrl: String?) {
+    fun playCapturedNartoHls(
+        hlsUrl: String,
+        subtitleUrl: String?,
+        requestHeaders: Map<String, String> = emptyMap()
+    ) {
         val media = nartoUnlockMedia ?: return
         val pageUrl = nartoUnlockPageUrl ?: return
         val active = controller ?: run {
@@ -883,6 +888,12 @@ fun EzTubeApp(
             putString(PlaybackService.ARG_REFERER, pageUrl)
             subtitleUrl?.takeIf { it.isNotBlank() }?.let {
                 putString(PlaybackService.ARG_SUBTITLE_URL, it)
+            }
+            if (requestHeaders.isNotEmpty()) {
+                putString(
+                    PlaybackService.ARG_REQUEST_HEADERS_JSON,
+                    org.json.JSONObject(requestHeaders).toString()
+                )
             }
             putLong(
                 PlaybackService.ARG_POSITION_MS,
@@ -1489,9 +1500,9 @@ fun EzTubeApp(
                 status = nartoUnlockStatus,
                 sessionPreviouslyUnlocked = nartoSessionUnlocked,
                 onSessionUnlocked = { nartoSessionUnlocked = true },
-                onStreamCaptured = { mediaUrl, subtitleUrl ->
+                onStreamCaptured = { mediaUrl, subtitleUrl, requestHeaders ->
                     if (nartoUnlockMedia != null) {
-                        playCapturedNartoHls(mediaUrl, subtitleUrl)
+                        playCapturedNartoHls(mediaUrl, subtitleUrl, requestHeaders)
                     }
                 },
                 onCancel = {
@@ -2359,7 +2370,7 @@ private fun NartoUnlockScreen(
     status: String?,
     sessionPreviouslyUnlocked: Boolean,
     onSessionUnlocked: () -> Unit,
-    onStreamCaptured: (String, String?) -> Unit,
+    onStreamCaptured: (String, String?, Map<String, String>) -> Unit,
     onCancel: () -> Unit
 ) {
     var mainWebView by remember(pageUrl) {
@@ -2473,6 +2484,10 @@ private fun NartoUnlockScreen(
         android.webkit.CookieManager.getInstance().apply {
             setAcceptCookie(true)
         }
+    }
+
+    val streamSniffer = remember(pageUrl) {
+        NartoStreamSniffer()
     }
 
     fun sameEpisodeUrl(a: String?, b: String): Boolean {
@@ -3027,7 +3042,26 @@ private fun NartoUnlockScreen(
                                 },
                                 url
                             )
-                            onStreamCaptured(url, capturedSubtitleUrl)
+                            val sniffedVideo = streamSniffer.bestVideo()
+                            val sniffedSubtitle = streamSniffer.bestSubtitle()
+                            val handoffUrl = sniffedVideo?.url ?: url
+                            val handoffSubtitle =
+                                capturedSubtitleUrl ?: sniffedSubtitle?.url
+
+                            addDiagnostic(
+                                if (sniffedVideo != null) {
+                                    "sniffer-handoff"
+                                } else {
+                                    "probe-handoff"
+                                },
+                                handoffUrl
+                            )
+
+                            onStreamCaptured(
+                                handoffUrl,
+                                handoffSubtitle,
+                                sniffedVideo?.headers.orEmpty()
+                            )
                         } else if (waitingForSubtitle) {
                             addDiagnostic("vietsub-still-waiting")
                         }
@@ -3664,8 +3698,29 @@ private fun NartoUnlockScreen(
                     view: android.webkit.WebView?,
                     request: android.webkit.WebResourceRequest?
                 ): android.webkit.WebResourceResponse? {
+                    val requestUrl = request?.url?.toString()
+                    streamSniffer.onRequest(
+                        requestUrl,
+                        request?.requestHeaders.orEmpty()
+                    )
+
+                    streamSniffer.bestSubtitle()?.let { subtitle ->
+                        if (capturedSubtitleUrl == null) {
+                            mainHandler.post {
+                                if (
+                                    capturedSubtitleUrl == null &&
+                                    pageCaptureReadyFlag.get()
+                                ) {
+                                    capturedSubtitleUrl = subtitle.url
+                                    addDiagnostic("vietsub-sniffed", subtitle.url)
+                                    probeMainPlayback("sniffed-subtitle")
+                                }
+                            }
+                        }
+                    }
+
                     inspect(
-                        request?.url?.toString(),
+                        requestUrl,
                         "main-" + (request?.method ?: "GET")
                     )
                     return super.shouldInterceptRequest(view, request)
@@ -3723,6 +3778,7 @@ private fun NartoUnlockScreen(
                     favicon: android.graphics.Bitmap?
                 ) {
                     if (sameEpisodeUrl(url, pageUrl)) {
+                        streamSniffer.clear()
                         pageReadyForCapture = false
                         pageCaptureReadyFlag.set(false)
                     }
