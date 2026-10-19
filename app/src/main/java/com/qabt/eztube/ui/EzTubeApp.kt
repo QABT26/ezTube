@@ -2755,15 +2755,36 @@ private fun NartoUnlockScreen(
                         lower.includes('/ads/') ||
                         lower.includes('advert');
                       if (src || interesting) {
+                        const compact = interesting
+                          ? body.replace(/\\s+/g, ' ')
+                          : '';
                         push(
                           'open.script',
                           [
                             'root=' + label,
                             'i=' + index,
                             'src=' + src.slice(0, 180),
-                            'inline=' + (interesting ? body.replace(/\\s+/g, ' ').slice(0, 260) : '')
+                            'inline=' + compact.slice(0, 260)
                           ].join(';')
                         );
+
+                        if (
+                          compact.includes('ND-WG-PROBE-START') ||
+                          compact.includes('gate-unlock') ||
+                          compact.includes('wrapper-guard')
+                        ) {
+                          for (let offset = 0; offset < Math.min(compact.length, 6000); offset += 700) {
+                            push(
+                              'open.script.chunk',
+                              [
+                                'root=' + label,
+                                'i=' + index,
+                                'off=' + offset,
+                                compact.slice(offset, offset + 700)
+                              ].join(';')
+                            );
+                          }
+                        }
                       }
                     });
                   };
