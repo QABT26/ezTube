@@ -2984,35 +2984,35 @@ private fun NartoUnlockScreen(
                         subtitleGraceStartedAtMs.set(android.os.SystemClock.elapsedRealtime())
                         addDiagnostic("vietsub-grace-wait")
                         mainHandler.postDelayed(
-                            { probeMainPlayback("vietsub-grace+350ms") },
-                            350
+                            { probeMainPlayback("vietsub-grace+200ms") },
+                            200
                         )
                         mainHandler.postDelayed(
-                            { probeMainPlayback("vietsub-grace+800ms") },
-                            800
+                            { probeMainPlayback("vietsub-grace+500ms") },
+                            500
                         )
                         mainHandler.postDelayed(
-                            { probeMainPlayback("vietsub-grace+1300ms") },
-                            1300
+                            { probeMainPlayback("vietsub-grace+950ms") },
+                            950
                         )
-                        mainHandler.postDelayed(
-                            { probeMainPlayback("vietsub-grace+1700ms") },
-                            1700
-                        )
-                        mainHandler.postDelayed(
-                            { probeMainPlayback("vietsub-grace+2900ms") },
-                            2900
-                        )
+                        if (!sessionPreviouslyUnlocked) {
+                            mainHandler.postDelayed(
+                                { probeMainPlayback("vietsub-grace+1850ms") },
+                                1850
+                            )
+                        }
                     } else {
                         val graceElapsedMs =
                             android.os.SystemClock.elapsedRealtime() -
                                 subtitleGraceStartedAtMs.get()
                         val subtitleReady = capturedSubtitleUrl != null
+                        val subtitleGraceMs =
+                            if (sessionPreviouslyUnlocked) 900L else 1800L
                         val graceExpired =
                             !waitingForSubtitle ||
                                 (
                                     subtitleWaitArmed.get() &&
-                                    graceElapsedMs >= 2800L
+                                    graceElapsedMs >= subtitleGraceMs
                                 )
 
                         if (
@@ -3723,8 +3723,24 @@ private fun NartoUnlockScreen(
                     favicon: android.graphics.Bitmap?
                 ) {
                     if (sameEpisodeUrl(url, pageUrl)) {
-                        pageReadyForCapture = false
-                        pageCaptureReadyFlag.set(false)
+                        pageReadyForCapture = sessionPreviouslyUnlocked
+                        pageCaptureReadyFlag.set(sessionPreviouslyUnlocked)
+                        if (sessionPreviouslyUnlocked) {
+                            view?.settings?.mediaPlaybackRequiresUserGesture = false
+                            addDiagnostic("session-reuse-start", url)
+                            mainHandler.postDelayed(
+                                { probeMainPlayback("session-reuse+100ms") },
+                                100
+                            )
+                            mainHandler.postDelayed(
+                                { probeMainPlayback("session-reuse+300ms") },
+                                300
+                            )
+                            mainHandler.postDelayed(
+                                { probeMainPlayback("session-reuse+600ms") },
+                                600
+                            )
+                        }
                     }
                     addDiagnostic("main-page-start", url)
                 }
@@ -3752,11 +3768,19 @@ private fun NartoUnlockScreen(
                     if (sameEpisodeUrl(url, pageUrl)) {
                         pageReadyForCapture = true
                         pageCaptureReadyFlag.set(true)
-                        mainHandler.postDelayed({ pinNartoOpenAdButton("page+100ms") }, 100)
-                        mainHandler.postDelayed({ pinNartoOpenAdButton("page+600ms") }, 600)
+                        if (!sessionPreviouslyUnlocked) {
+                            mainHandler.postDelayed(
+                                { pinNartoOpenAdButton("page+250ms") },
+                                250
+                            )
+                        }
                         mainHandler.postDelayed(
-                            { probeMainPlayback("page-finish+750ms") },
-                            750
+                            { probeMainPlayback("page-finish+100ms") },
+                            100
+                        )
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("page-finish+350ms") },
+                            350
                         )
                     }
                 }
@@ -3811,8 +3835,11 @@ private fun NartoUnlockScreen(
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Text(
-                        "Quảng cáo mở trong ezTube bằng cửa sổ con của chính trang Narto. " +
-                            "Sau khi đóng quảng cáo, phiên mở khóa và tín hiệu quay lại trang chính được giữ nguyên.",
+                        if (sessionPreviouslyUnlocked) {
+                            "Phiên Narto đã mở khóa. ezTube đang tái sử dụng cookie/session để vào tập mới trực tiếp."
+                        } else {
+                            "Nếu Narto yêu cầu quảng cáo, hoàn tất một lần trên trang. Các tập sau sẽ tái sử dụng phiên mở khóa."
+                        },
                         style = MaterialTheme.typography.bodySmall
                     )
                     status?.takeIf { it.isNotBlank() }?.let {
