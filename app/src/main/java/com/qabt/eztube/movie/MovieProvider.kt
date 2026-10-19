@@ -97,7 +97,6 @@ data class MovieVideoStream(
 data class MoviePlayback(
     val mediaId: String,
     val hlsUrl: String? = null,
-    val directUrl: String? = null,
     val videoStreams: List<MovieVideoStream> = emptyList(),
     val audioUrl: String? = null,
     val audioMimeType: String? = null,
