@@ -73,6 +73,29 @@ class PlaybackMediaSourceFactory(private val context: Context) {
             )
     }
 
+    fun createMovieDirect(
+        mediaItem: MediaItem,
+        url: String,
+        headers: Map<String, String>
+    ): MediaSource {
+        val dataFactory = if (headers.isEmpty()) {
+            dataSourceFactory
+        } else {
+            val httpFactory = DefaultHttpDataSource.Factory()
+                .setAllowCrossProtocolRedirects(true)
+                .setDefaultRequestProperties(headers)
+            DefaultDataSource.Factory(context, httpFactory)
+        }
+
+        return DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(dataFactory)
+            .createMediaSource(
+                mediaItem.buildUpon()
+                    .setUri(url)
+                    .build()
+            )
+    }
+
     fun createMerged(
         mediaItem: MediaItem,
         videoUrl: String,
