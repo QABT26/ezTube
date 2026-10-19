@@ -3670,6 +3670,38 @@ private fun NartoUnlockScreen(
             }
             
             webViewClient = object : android.webkit.WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: android.webkit.WebView?,
+                    request: android.webkit.WebResourceRequest?
+                ): Boolean {
+                    if (request?.isForMainFrame != true) return false
+                    val target = request.url?.toString().orEmpty()
+                    if (target.isBlank() || sameEpisodeUrl(target, pageUrl)) {
+                        return false
+                    }
+
+                    val targetHost = runCatching {
+                        android.net.Uri.parse(target).host.orEmpty().lowercase()
+                    }.getOrDefault("")
+                    val isNartoMainNavigation =
+                        targetHost == "edge.narto-drama.com" ||
+                            targetHost == "narto-drama.com"
+
+                    if (isNartoMainNavigation) {
+                        addDiagnostic("main-nav-blocked", target)
+                        mainHandler.post {
+                            val active = mainWebView
+                            if (active != null && !sameEpisodeUrl(active.url, pageUrl)) {
+                                active.stopLoading()
+                                active.loadUrl(pageUrl)
+                            }
+                        }
+                        return true
+                    }
+
+                    return false
+                }
+
                 override fun shouldInterceptRequest(
                     view: android.webkit.WebView?,
                     request: android.webkit.WebResourceRequest?
@@ -3750,6 +3782,22 @@ private fun NartoUnlockScreen(
                                 { probeMainPlayback("session-reuse+600ms") },
                                 600
                             )
+                        }
+                    } else {
+                        val startedHost = runCatching {
+                            android.net.Uri.parse(url.orEmpty()).host.orEmpty().lowercase()
+                        }.getOrDefault("")
+                        if (
+                            startedHost == "edge.narto-drama.com" ||
+                            startedHost == "narto-drama.com"
+                        ) {
+                            addDiagnostic("main-nav-recover", url)
+                            mainHandler.post {
+                                if (!sameEpisodeUrl(view?.url, pageUrl)) {
+                                    view?.stopLoading()
+                                    view?.loadUrl(pageUrl)
+                                }
+                            }
                         }
                     }
                     addDiagnostic("main-page-start", url)
