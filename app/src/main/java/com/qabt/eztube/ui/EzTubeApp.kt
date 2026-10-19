@@ -2794,12 +2794,18 @@ private fun NartoUnlockScreen(
 
                 val nartoPlayable =
                     (
-                        host == "stream.narto-drama.com" ||
-                        host == "edge.narto-drama.com"
-                    ) &&
+                        (
+                            host == "stream.narto-drama.com" ||
+                            host == "edge.narto-drama.com"
+                        ) &&
+                        (
+                            path.startsWith("/e/m/") ||
+                            path.endsWith(".m3u8", ignoreCase = true)
+                        )
+                    ) ||
                     (
-                        path.startsWith("/e/m/") ||
-                        path.endsWith(".m3u8", ignoreCase = true)
+                        gateUnlockSeen.get() &&
+                        host == "dramabox-stream.narto-drama.com"
                     )
 
                 val unlockedUpstreamPlayable =
@@ -3192,6 +3198,9 @@ private fun NartoUnlockScreen(
                         path.startsWith("/e/m/") ||
                         path.endsWith(".m3u8", ignoreCase = true)
                     )
+                val nartoDirectVideo =
+                    gateUnlockSeen.get() &&
+                    nartoHost == "dramabox-stream.narto-drama.com"
             
                 val unlockedUpstreamManifest =
                     gateUnlockSeen.get() &&
@@ -3206,6 +3215,9 @@ private fun NartoUnlockScreen(
                     // Do not hand off immediately. Let the main-thread probe discover
                     // subtitle tracks/resources first, then Media3 gets video + subtitle together.
                     mainHandler.post { probeMainPlayback("signed-manifest") }
+                } else if (currentEpisodeActive && nartoDirectVideo) {
+                    addDiagnostic("direct-video-detected", value)
+                    mainHandler.post { probeMainPlayback("direct-video") }
                 } else if (currentEpisodeActive && unlockedUpstreamManifest) {
                     mainHandler.post { probeMainPlayback("upstream-manifest") }
                 }
