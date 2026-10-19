@@ -84,7 +84,6 @@ import com.qabt.eztube.playback.QueueLimitPolicy
 import com.qabt.eztube.playback.NetworkType
 import com.qabt.eztube.playback.NetworkEnvironment
 import com.qabt.eztube.playback.NetworkUsageTracker
-import com.qabt.eztube.playback.NartoPlaybackGuard
 import com.qabt.eztube.playback.DataUsageSnapshot
 import com.qabt.eztube.playback.StorageSnapshot
 import com.qabt.eztube.playback.StorageUsage
@@ -656,7 +655,7 @@ fun EzTubeApp(
 
         val targetIndex = queueIndex + delta
         val target = queue.getOrNull(targetIndex)
-        if (target?.id?.let(NartoPlaybackGuard::isNartoMediaId) == true) {
+        if (target?.id?.startsWith("movie:narto:") == true) {
             queueIndex = targetIndex
             playbackPrefs.saveQueue(queue, queueIndex)
             nowPlaying = target
@@ -819,7 +818,7 @@ fun EzTubeApp(
         }
         playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
 
-        if (NartoPlaybackGuard.isNartoMediaId(media.id)) {
+        if (media.id.startsWith("movie:narto:")) {
             val pageUrl = movieProviders.nartoWatchPageUrl(media.id)
             if (pageUrl == null) {
                 errorMessage = "Unable to open Narto episode"
@@ -2794,18 +2793,12 @@ private fun NartoUnlockScreen(
 
                 val nartoPlayable =
                     (
-                        (
-                            host == "stream.narto-drama.com" ||
-                            host == "edge.narto-drama.com"
-                        ) &&
-                        (
-                            path.startsWith("/e/m/") ||
-                            path.endsWith(".m3u8", ignoreCase = true)
-                        )
-                    ) ||
+                        host == "stream.narto-drama.com" ||
+                        host == "edge.narto-drama.com"
+                    ) &&
                     (
-                        gateUnlockSeen.get() &&
-                        host == "dramabox-stream.narto-drama.com"
+                        path.startsWith("/e/m/") ||
+                        path.endsWith(".m3u8", ignoreCase = true)
                     )
 
                 val unlockedUpstreamPlayable =
@@ -3198,9 +3191,6 @@ private fun NartoUnlockScreen(
                         path.startsWith("/e/m/") ||
                         path.endsWith(".m3u8", ignoreCase = true)
                     )
-                val nartoDirectVideo =
-                    gateUnlockSeen.get() &&
-                    nartoHost == "dramabox-stream.narto-drama.com"
             
                 val unlockedUpstreamManifest =
                     gateUnlockSeen.get() &&
@@ -3215,9 +3205,6 @@ private fun NartoUnlockScreen(
                     // Do not hand off immediately. Let the main-thread probe discover
                     // subtitle tracks/resources first, then Media3 gets video + subtitle together.
                     mainHandler.post { probeMainPlayback("signed-manifest") }
-                } else if (currentEpisodeActive && nartoDirectVideo) {
-                    addDiagnostic("direct-video-detected", value)
-                    mainHandler.post { probeMainPlayback("direct-video") }
                 } else if (currentEpisodeActive && unlockedUpstreamManifest) {
                     mainHandler.post { probeMainPlayback("upstream-manifest") }
                 }
