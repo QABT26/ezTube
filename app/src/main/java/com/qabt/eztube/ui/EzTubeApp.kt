@@ -2671,7 +2671,8 @@ private fun NartoUnlockScreen(
                 const out = [];
                 const push = (kind, value) => {
                   if (!value) return;
-                  out.push(kind + "|" + String(value));
+                  const safe = String(value).replace(/\\|/g, '¦');
+                  out.push(kind + "|" + safe);
                 };
 
                 push('open.proxy', window.__eztubeOpenProxyState || '');
@@ -2767,6 +2768,38 @@ private fun NartoUnlockScreen(
                             'inline=' + compact.slice(0, 260)
                           ].join(';')
                         );
+
+                        const keys = [
+                          'gate-unlock',
+                          'window.open',
+                          'wrapper-guard',
+                          '/ads/',
+                          'popup',
+                          'openad',
+                          'advert'
+                        ];
+                        keys.forEach((key) => {
+                          let from = 0;
+                          let count = 0;
+                          while (count < 4) {
+                            const at = compact.toLowerCase().indexOf(key, from);
+                            if (at < 0) break;
+                            const lo = Math.max(0, at - 260);
+                            const hi = Math.min(compact.length, at + key.length + 520);
+                            push(
+                              'open.script.hit',
+                              [
+                                'root=' + label,
+                                'i=' + index,
+                                'key=' + key,
+                                'at=' + at,
+                                compact.slice(lo, hi)
+                              ].join(';')
+                            );
+                            from = at + key.length;
+                            count += 1;
+                          }
+                        });
 
                         if (
                           compact.includes('ND-WG-PROBE-START') ||
