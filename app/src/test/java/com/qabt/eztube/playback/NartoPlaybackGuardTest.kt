@@ -16,6 +16,11 @@ class NartoPlaybackGuardTest {
         )
         assertTrue(
             NartoPlaybackGuard.isAllowedManifest(
+                "https://dramabox-stream.narto-drama.com/tokenized-video-path"
+            )
+        )
+        assertTrue(
+            NartoPlaybackGuard.isAllowedManifest(
                 "https://cdn.mydramawave.com/vt/episode-12.m3u8"
             )
         )
