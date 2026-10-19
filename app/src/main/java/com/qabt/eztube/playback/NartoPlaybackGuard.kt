@@ -22,11 +22,14 @@ internal object NartoPlaybackGuard {
             host == "stream.narto-drama.com" &&
                 path.startsWith("/e/m/")
 
+        val directDramaBox =
+            host == "dramabox-stream.narto-drama.com"
+
         val unlockedDramaWave =
             (host == "mydramawave.com" || host.endsWith(".mydramawave.com")) &&
                 path.endsWith(".m3u8", ignoreCase = true)
 
-        return signedNarto || unlockedDramaWave
+        return signedNarto || directDramaBox || unlockedDramaWave
     }
 
     fun allowedSubtitleUrl(url: String?): String? {
