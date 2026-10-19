@@ -2675,6 +2675,7 @@ private fun NartoUnlockScreen(
                 };
 
                 push('open.proxy', window.__eztubeOpenProxyStatus || '');
+                push('open.target', window.__eztubeOpenTargetMeta || '');
                 push('subtitle.detected', window.__eztubeVietsub || '');
                 try {
                   (window.__eztubeSubtitleCandidates || [])
@@ -2911,7 +2912,36 @@ private fun NartoUnlockScreen(
                 const original = findOriginal();
                 if (!original) {
                   window.__eztubeOpenProxyStatus = 'target-not-found';
+                  window.__eztubeOpenTargetMeta = 'not-found';
                   return 'not-found';
+                }
+
+                try {
+                  const rect = original.getBoundingClientRect();
+                  const parent = original.parentElement;
+                  const style = getComputedStyle(original);
+                  window.__eztubeOpenTargetMeta = [
+                    'tag=' + String(original.tagName || ''),
+                    'id=' + String(original.id || ''),
+                    'class=' + String(original.className || '').slice(0, 80),
+                    'href=' + String(original.getAttribute && original.getAttribute('href') || '').slice(0, 120),
+                    'onclick=' + (typeof original.onclick === 'function' ? '1' : '0'),
+                    'disabled=' + (original.disabled ? '1' : '0'),
+                    'ariaDisabled=' + String(original.getAttribute && original.getAttribute('aria-disabled') || ''),
+                    'display=' + String(style.display || ''),
+                    'visibility=' + String(style.visibility || ''),
+                    'pointer=' + String(style.pointerEvents || ''),
+                    'rect=' + [
+                      Math.round(rect.left),
+                      Math.round(rect.top),
+                      Math.round(rect.width),
+                      Math.round(rect.height)
+                    ].join(','),
+                    'parent=' + String(parent && parent.tagName || ''),
+                    'parentClass=' + String(parent && parent.className || '').slice(0, 80)
+                  ].join(';');
+                } catch (e) {
+                  window.__eztubeOpenTargetMeta = 'meta-error:' + String(e);
                 }
 
                 if (!document.getElementById('eztube-narto-proxy-style')) {
