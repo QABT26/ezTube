@@ -921,8 +921,6 @@ fun EzTubeApp(
                                 0L
                             )
                         }
-                        nartoUnlockMedia = null
-                        nartoUnlockPageUrl = null
                         nartoUnlockStartPositionMs = 0L
                         nartoUnlockStatus = null
                         showPlayer = true
@@ -1482,27 +1480,7 @@ fun EzTubeApp(
             }
         } else {
         Box(Modifier.fillMaxSize()) {
-        if (nartoUnlockMedia != null && nartoUnlockPageUrl != null) {
-            NartoUnlockScreen(
-                media = requireNotNull(nartoUnlockMedia),
-                pageUrl = requireNotNull(nartoUnlockPageUrl),
-                status = nartoUnlockStatus,
-                sessionPreviouslyUnlocked = nartoSessionUnlocked,
-                onSessionUnlocked = { nartoSessionUnlocked = true },
-                onStreamCaptured = { mediaUrl, subtitleUrl ->
-                    if (nartoUnlockMedia != null) {
-                        playCapturedNartoHls(mediaUrl, subtitleUrl)
-                    }
-                },
-                onCancel = {
-                    nartoUnlockMedia = null
-                    nartoUnlockPageUrl = null
-                    nartoUnlockStartPositionMs = 0L
-                    nartoUnlockStatus = null
-                    resolvingId = null
-                }
-            )
-        } else if (movieDetail != null || movieDetailLoading || movieDetailError != null) {
+        if (movieDetail != null || movieDetailLoading || movieDetailError != null) {
             Scaffold(bottomBar = {
                 nowPlaying?.let { media -> MiniPlayer(
                     media = media,
@@ -2330,6 +2308,34 @@ fun EzTubeApp(
         }
 
         }
+
+        nartoUnlockMedia?.let { unlockMedia ->
+            nartoUnlockPageUrl?.let { unlockPage ->
+                NartoUnlockScreen(
+                    media = unlockMedia,
+                    pageUrl = unlockPage,
+                    status = nartoUnlockStatus,
+                    sessionPreviouslyUnlocked = nartoSessionUnlocked,
+                    modifier = if (showPlayer) {
+                        Modifier.size(1.dp).alpha(0f)
+                    } else {
+                        Modifier.fillMaxSize()
+                    },
+                    visible = !showPlayer,
+                    onSessionUnlocked = { nartoSessionUnlocked = true },
+                    onStreamCaptured = { mediaUrl, subtitleUrl ->
+                        playCapturedNartoHls(mediaUrl, subtitleUrl)
+                    },
+                    onCancel = {
+                        nartoUnlockMedia = null
+                        nartoUnlockPageUrl = null
+                        nartoUnlockStartPositionMs = 0L
+                        nartoUnlockStatus = null
+                        resolvingId = null
+                    }
+                )
+            }
+        }
         }
     }
 }
@@ -2358,50 +2364,52 @@ private fun NartoUnlockScreen(
     pageUrl: String,
     status: String?,
     sessionPreviouslyUnlocked: Boolean,
+    modifier: Modifier = Modifier,
+    visible: Boolean = true,
     onSessionUnlocked: () -> Unit,
     onStreamCaptured: (String, String?) -> Unit,
     onCancel: () -> Unit
 ) {
-    var mainWebView by remember(pageUrl) {
+    var mainWebView by remember {
         mutableStateOf<android.webkit.WebView?>(null)
     }
-    var popupWebView by remember(pageUrl) {
+    var popupWebView by remember {
         mutableStateOf<android.webkit.WebView?>(null)
     }
-    var popupVisible by remember(pageUrl) { mutableStateOf(false) }
-    var popupTitle by remember(pageUrl) { mutableStateOf("Quảng cáo") }
-    var popupSerial by remember(pageUrl) { mutableIntStateOf(0) }
-    val playbackCaptured = remember(pageUrl) {
+    var popupVisible by remember { mutableStateOf(false) }
+    var popupTitle by remember { mutableStateOf("Quảng cáo") }
+    var popupSerial by remember { mutableIntStateOf(0) }
+    val playbackCaptured = remember {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
-    var capturedSubtitleUrl by remember(pageUrl) { mutableStateOf<String?>(null) }
-    val subtitleWaitArmed = remember(pageUrl) {
+    var capturedSubtitleUrl by remember { mutableStateOf<String?>(null) }
+    val subtitleWaitArmed = remember {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
-    val subtitleGraceStartedAtMs = remember(pageUrl) {
+    val subtitleGraceStartedAtMs = remember {
         java.util.concurrent.atomic.AtomicLong(0L)
     }
-    val subtitleClassifierRunning = remember(pageUrl) {
+    val subtitleClassifierRunning = remember {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
-    val subtitleClassifierAttempts = remember(pageUrl) {
+    val subtitleClassifierAttempts = remember {
         java.util.concurrent.atomic.AtomicInteger(0)
     }
     val nartoScope = rememberCoroutineScope()
-    val gateUnlockSeen = remember(pageUrl) {
+    val gateUnlockSeen = remember {
+        java.util.concurrent.atomic.AtomicBoolean(sessionPreviouslyUnlocked)
+    }
+    val popupOpenSeen = remember {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
-    val popupOpenSeen = remember(pageUrl) {
+    var pageReadyForCapture by remember { mutableStateOf(false) }
+    val pageCaptureReadyFlag = remember {
         java.util.concurrent.atomic.AtomicBoolean(false)
     }
-    var pageReadyForCapture by remember(pageUrl) { mutableStateOf(false) }
-    val pageCaptureReadyFlag = remember(pageUrl) {
-        java.util.concurrent.atomic.AtomicBoolean(false)
-    }
-    var webViewGeneration by remember(pageUrl) { mutableIntStateOf(0) }
-    var rendererRecoveryCount by remember(pageUrl) { mutableIntStateOf(0) }
-    val diagnosticEvents = remember(pageUrl) { mutableStateListOf<String>() }
-    var diagnosticSeq by remember(pageUrl) { mutableIntStateOf(0) }
+    var webViewGeneration by remember { mutableIntStateOf(0) }
+    var rendererRecoveryCount by remember { mutableIntStateOf(0) }
+    val diagnosticEvents = remember { mutableStateListOf<String>() }
+    var diagnosticSeq by remember { mutableIntStateOf(0) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     val context = LocalContext.current
 
@@ -3012,7 +3020,8 @@ private fun NartoUnlockScreen(
                             !waitingForSubtitle ||
                                 (
                                     subtitleWaitArmed.get() &&
-                                    graceElapsedMs >= subtitleGraceMs
+                                    graceElapsedMs >= subtitleGraceMs &&
+                                    !subtitleClassifierRunning.get()
                                 )
 
                         if (
@@ -3407,7 +3416,7 @@ private fun NartoUnlockScreen(
                     addDiagnostic("wrapper-guard-confirmed", value)
                     mainHandler.postDelayed(
                         {
-                            if (popupVisible) {
+                            if (popupVisible && visible) {
                                 addDiagnostic(
                                     "auto-close-popup-after-report",
                                     popupWebView?.url
@@ -3791,13 +3800,21 @@ private fun NartoUnlockScreen(
     }
 
     Box(
-        Modifier
+        modifier
             .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .background(MaterialTheme.colorScheme.background)
+            .then(
+                if (visible) {
+                    Modifier
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .background(MaterialTheme.colorScheme.background)
+                } else {
+                    Modifier
+                }
+            )
     ) {
         Column(Modifier.fillMaxSize()) {
+            if (visible) {
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -3876,7 +3893,9 @@ private fun NartoUnlockScreen(
                 }
             }
 
-            key(pageUrl, webViewGeneration) {
+            }
+
+            key(webViewGeneration) {
                 AndroidView(
                     factory = { webContext ->
                         android.webkit.WebView(webContext).apply {
@@ -3895,6 +3914,18 @@ private fun NartoUnlockScreen(
                     update = { active ->
                         mainWebView = active
                         active.onResume()
+                        if (!sameEpisodeUrl(active.url, pageUrl)) {
+                            pageReadyForCapture = sessionPreviouslyUnlocked
+                            pageCaptureReadyFlag.set(sessionPreviouslyUnlocked)
+                            playbackCaptured.set(false)
+                            capturedSubtitleUrl = null
+                            subtitleWaitArmed.set(false)
+                            subtitleGraceStartedAtMs.set(0L)
+                            subtitleClassifierRunning.set(false)
+                            subtitleClassifierAttempts.set(0)
+                            addDiagnostic("main-navigate", pageUrl)
+                            active.loadUrl(pageUrl)
+                        }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3971,7 +4002,7 @@ private fun NartoUnlockScreen(
         }
     }
 
-    DisposableEffect(pageUrl) {
+    DisposableEffect(Unit) {
         onDispose {
             cookieManager.flush()
             popupWebView?.stopLoading()
