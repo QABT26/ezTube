@@ -753,6 +753,60 @@ fun EzTubeApp(
         )
     }
 
+    fun warmMedia(media: MediaSummary) {
+        val active = controller ?: return
+        if (media.id.startsWith("movie-title:")) return
+        if (media.id.startsWith("movie:narto:")) return
+
+        active.sendCustomCommand(
+            androidx.media3.session.SessionCommand(
+                PlaybackService.COMMAND_WARM_MEDIA,
+                android.os.Bundle.EMPTY
+            ),
+            android.os.Bundle().apply {
+                putString(PlaybackService.ARG_MEDIA_ID, media.id)
+                putString(PlaybackService.ARG_MEDIA_TITLE, media.title)
+                putString(PlaybackService.ARG_MEDIA_CHANNEL, media.channel)
+                media.thumbnailUrl?.let {
+                    putString(PlaybackService.ARG_MEDIA_THUMBNAIL, it)
+                }
+            }
+        )
+    }
+
+    LaunchedEffect(controller, searchResults) {
+        if (controller == null) return@LaunchedEffect
+        delay(220L)
+        searchResults
+            .asSequence()
+            .filterNot { it.id.startsWith("movie-title:") }
+            .filterNot { it.id.startsWith("movie:narto:") }
+            .take(3)
+            .forEach(::warmMedia)
+    }
+
+    LaunchedEffect(controller, homeSuggestions, trending) {
+        if (controller == null) return@LaunchedEffect
+        delay(350L)
+        (homeSuggestions.take(2) + trending.take(1))
+            .distinctBy { it.id }
+            .filterNot { it.id.startsWith("movie-title:") }
+            .filterNot { it.id.startsWith("movie:narto:") }
+            .forEach(::warmMedia)
+    }
+
+    LaunchedEffect(controller, movieDetail) {
+        if (controller == null) return@LaunchedEffect
+        delay(120L)
+        movieDetail
+            ?.episodes
+            ?.asSequence()
+            ?.map { it.toMediaSummary() }
+            ?.filterNot { it.id.startsWith("movie:narto:") }
+            ?.take(2)
+            ?.forEach(::warmMedia)
+    }
+
     fun playMedia(media: MediaSummary, startPositionMs: Long = 0L) {
         if (resolvingId != null) return
 
