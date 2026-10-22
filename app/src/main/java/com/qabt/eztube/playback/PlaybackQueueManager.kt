@@ -37,7 +37,9 @@ class PlaybackQueueManager(
     private data class ResolvedPlayback(
         val mediaItem: MediaItem,
         val mediaSource: MediaSource?,
-        val sabrQualityController: SabrMediaSourceFactory.QualityController? = null
+        val sabrQualityController: SabrMediaSourceFactory.QualityController? = null,
+        val prebufferUrl: String? = null,
+        val prebufferHeaders: Map<String, String> = emptyMap()
     )
 
     private val mediaSourceFactory by lazy {
@@ -154,6 +156,18 @@ class PlaybackQueueManager(
             }.getOrNull()
                 ?.getOrNull()
                 ?.let { resolved ->
+                    resolved.prebufferUrl
+                        ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                        ?.let { url ->
+                            withContext(Dispatchers.IO) {
+                                runCatching {
+                                    mediaSourceFactory.prebuffer(
+                                        url = url,
+                                        headers = resolved.prebufferHeaders
+                                    )
+                                }
+                            }
+                        }
                     putWarm(key, resolved)
                 }
             warmInFlight.remove(key)
@@ -201,7 +215,8 @@ class PlaybackQueueManager(
 
         return ResolvedPlayback(
             mediaItem = mediaItem,
-            mediaSource = mediaSourceFactory.create(mediaItem, source)
+            mediaSource = mediaSourceFactory.create(mediaItem, source),
+            prebufferUrl = uri
         )
     }
 
@@ -311,7 +326,9 @@ class PlaybackQueueManager(
                     audioUrl = audioUrl,
                     audioMimeType = playback.audioMimeType,
                     headers = playback.requestHeaders
-                )
+                ),
+                prebufferUrl = video.url,
+                prebufferHeaders = playback.requestHeaders
             )
         }
 
@@ -329,7 +346,9 @@ class PlaybackQueueManager(
                     mediaItem = mediaItem,
                     url = directUrl,
                     headers = playback.requestHeaders
-                )
+                ),
+                prebufferUrl = directUrl,
+                prebufferHeaders = playback.requestHeaders
             )
         }
 
@@ -349,7 +368,9 @@ class PlaybackQueueManager(
                 mediaItem = mediaItem,
                 manifestUrl = hlsUrl,
                 headers = playback.requestHeaders
-            )
+            ),
+            prebufferUrl = hlsUrl,
+            prebufferHeaders = playback.requestHeaders
         )
     }
 
@@ -465,7 +486,8 @@ class PlaybackQueueManager(
             .build()
         return ResolvedPlayback(
             mediaItem = mediaItem,
-            mediaSource = mediaSourceFor(mediaItem, stream)
+            mediaSource = mediaSourceFor(mediaItem, stream),
+            prebufferUrl = stream.url
         )
     }
 
@@ -1298,7 +1320,8 @@ class PlaybackQueueManager(
         setResolved(
             ResolvedPlayback(
                 mediaItem = mediaItem,
-                mediaSource = mediaSourceFor(mediaItem, stream)
+                mediaSource = mediaSourceFor(mediaItem, stream),
+                prebufferUrl = stream.url
             )
         )
         player.prepare()
