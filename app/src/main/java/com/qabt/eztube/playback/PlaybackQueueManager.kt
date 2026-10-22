@@ -39,6 +39,7 @@ class PlaybackQueueManager(
         val mediaSource: MediaSource?,
         val sabrQualityController: SabrMediaSourceFactory.QualityController? = null,
         val prebufferUrl: String? = null,
+        val prebufferCompanionUrl: String? = null,
         val prebufferHeaders: Map<String, String> = emptyMap()
     )
 
@@ -147,29 +148,48 @@ class PlaybackQueueManager(
         if (!warmInFlight.add(key)) return
 
         scope.launch {
-            runCatching {
-                resolve(
-                    media = media,
-                    fastStart = key.videoMode,
-                    initialPositionMs = 0L
-                )
+            val resolved = runCatching {
+                if (
+                    PlaybackSourceResolver.resolve(media.id) is PlaybackSource.YouTube &&
+                    key.videoMode
+                ) {
+                    val streams = withContext(Dispatchers.IO) {
+                        source.videoStreams(media.id)
+                    }
+                    val stream = VideoStreamSelector.selectFastStart(
+                        streams,
+                        preferences.effectiveVideoQuality()
+                    ) ?: error("No warmable YouTube video stream")
+                    resolvedPlayback(media, stream)
+                } else {
+                    resolve(
+                        media = media,
+                        fastStart = key.videoMode,
+                        initialPositionMs = 0L
+                    ).getOrThrow()
+                }
             }.getOrNull()
-                ?.getOrNull()
-                ?.let { resolved ->
-                    resolved.prebufferUrl
-                        ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-                        ?.let { url ->
-                            withContext(Dispatchers.IO) {
-                                runCatching {
-                                    mediaSourceFactory.prebuffer(
-                                        url = url,
-                                        headers = resolved.prebufferHeaders
-                                    )
-                                }
+
+            if (resolved != null) {
+                listOfNotNull(
+                    resolved.prebufferUrl,
+                    resolved.prebufferCompanionUrl
+                )
+                    .distinct()
+                    .filter { it.startsWith("http://") || it.startsWith("https://") }
+                    .take(2)
+                    .forEach { url ->
+                        withContext(Dispatchers.IO) {
+                            runCatching {
+                                mediaSourceFactory.prebuffer(
+                                    url = url,
+                                    headers = resolved.prebufferHeaders
+                                )
                             }
                         }
-                    putWarm(key, resolved)
-                }
+                    }
+                putWarm(key, resolved)
+            }
             warmInFlight.remove(key)
         }
     }
@@ -487,7 +507,8 @@ class PlaybackQueueManager(
         return ResolvedPlayback(
             mediaItem = mediaItem,
             mediaSource = mediaSourceFor(mediaItem, stream),
-            prebufferUrl = stream.url
+            prebufferUrl = stream.url,
+            prebufferCompanionUrl = stream.companionAudioUrl
         )
     }
 
@@ -1321,7 +1342,8 @@ class PlaybackQueueManager(
             ResolvedPlayback(
                 mediaItem = mediaItem,
                 mediaSource = mediaSourceFor(mediaItem, stream),
-                prebufferUrl = stream.url
+                prebufferUrl = stream.url,
+                prebufferCompanionUrl = stream.companionAudioUrl
             )
         )
         player.prepare()
