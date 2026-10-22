@@ -19,6 +19,8 @@ import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.dash.DashMediaSource
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 @UnstableApi
 class PlaybackMediaSourceFactory(private val context: Context) {
@@ -157,20 +159,77 @@ class PlaybackMediaSourceFactory(private val context: Context) {
     ): Long {
         if (url.isBlank() || maxBytes <= 0L) return 0L
 
-        val upstream = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setDefaultRequestProperties(headers)
-        val cacheFactory = CacheDataSource.Factory()
-            .setCache(sharedCache(appContext))
-            .setUpstreamDataSourceFactory(upstream)
-            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+        return if (looksLikeHls(url)) {
+            prebufferHls(url, headers, maxBytes)
+        } else {
+            prebufferRange(url, headers, maxBytes)
+        }
+    }
 
+    private fun prebufferHls(
+        manifestUrl: String,
+        headers: Map<String, String>,
+        segmentBytes: Long
+    ): Long {
+        var total = 0L
+        var current = manifestUrl
+
+        repeat(2) {
+            // Warm the small manifest itself into the same Media3 cache.
+            total += runCatching {
+                prebufferWhole(current, headers)
+            }.getOrDefault(0L)
+
+            val body = runCatching {
+                fetchText(current, headers)
+            }.getOrNull() ?: return total
+
+            val nextRaw = firstHlsUri(body) ?: return total
+            val next = resolveRelative(current, nextRaw) ?: return total
+
+            if (looksLikeHls(next)) {
+                current = next
+            } else {
+                total += runCatching {
+                    prebufferRange(next, headers, segmentBytes)
+                }.getOrDefault(0L)
+                return total
+            }
+        }
+
+        return total
+    }
+
+    private fun prebufferWhole(
+        url: String,
+        headers: Map<String, String>
+    ): Long {
+        val cacheFactory = cacheFactoryFor(url, headers)
+        val dataSpec = DataSpec.Builder()
+            .setUri(url)
+            .setPosition(0L)
+            .build()
+        val writer = CacheWriter(
+            cacheFactory.createDataSource(),
+            dataSpec,
+            null,
+            null
+        )
+        writer.cache()
+        return MANIFEST_PREBUFFER_BYTES
+    }
+
+    private fun prebufferRange(
+        url: String,
+        headers: Map<String, String>,
+        maxBytes: Long
+    ): Long {
+        val cacheFactory = cacheFactoryFor(url, headers)
         val dataSpec = DataSpec.Builder()
             .setUri(url)
             .setPosition(0L)
             .setLength(maxBytes)
             .build()
-
         val writer = CacheWriter(
             cacheFactory.createDataSource(),
             dataSpec,
@@ -181,9 +240,72 @@ class PlaybackMediaSourceFactory(private val context: Context) {
         return maxBytes
     }
 
+    private fun cacheFactoryFor(
+        url: String,
+        headers: Map<String, String>
+    ): CacheDataSource.Factory {
+        val requestHeaders = effectiveHeaders(url, headers)
+        val upstream = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(requestHeaders)
+        return CacheDataSource.Factory()
+            .setCache(sharedCache(appContext))
+            .setUpstreamDataSourceFactory(upstream)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    }
+
+    private fun effectiveHeaders(
+        url: String,
+        headers: Map<String, String>
+    ): Map<String, String> {
+        val base = headers.filterKeys { !it.equals("Cookie", ignoreCase = true) }
+        val cookie = CookieManager.getInstance().getCookie(url)
+        return if (cookie.isNullOrBlank()) base else base + ("Cookie" to cookie)
+    }
+
+    private fun fetchText(
+        url: String,
+        headers: Map<String, String>
+    ): String {
+        val builder = Request.Builder().url(url).get()
+        effectiveHeaders(url, headers).forEach { (name, value) ->
+            builder.header(name, value)
+        }
+        return PREBUFFER_HTTP.newCall(builder.build()).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw java.io.IOException("Prebuffer manifest HTTP " + response.code)
+            }
+            response.body?.string().orEmpty()
+        }
+    }
+
+    private fun firstHlsUri(body: String): String? {
+        val lines = body.lineSequence().map { it.trim() }.toList()
+        for (index in lines.indices) {
+            if (lines[index].startsWith("#EXT-X-STREAM-INF", ignoreCase = true)) {
+                return lines.drop(index + 1)
+                    .firstOrNull { it.isNotBlank() && !it.startsWith("#") }
+            }
+        }
+        return lines.firstOrNull { it.isNotBlank() && !it.startsWith("#") }
+    }
+
+    private fun resolveRelative(baseUrl: String, value: String): String? =
+        runCatching {
+            java.net.URI(baseUrl).resolve(value).toString()
+        }.getOrNull()
+
+    private fun looksLikeHls(url: String): Boolean =
+        url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+
     companion object {
         private const val CACHE_BYTES = 32L * 1024L * 1024L
-        private const val PREBUFFER_BYTES = 256L * 1024L
+        private const val PREBUFFER_BYTES = 128L * 1024L
+        private const val MANIFEST_PREBUFFER_BYTES = 64L * 1024L
+        private val PREBUFFER_HTTP = OkHttpClient.Builder()
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
 
         @Volatile
         private var cacheInstance: SimpleCache? = null
