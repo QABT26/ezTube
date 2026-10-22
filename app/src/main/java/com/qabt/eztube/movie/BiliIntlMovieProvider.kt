@@ -157,7 +157,7 @@ class BiliIntlMovieProvider(
         // Validate availability now, but do not keep temporary CDN URLs.
         val play = fetchPlayUrl(slug)
 
-        if (play.videoStreams.isEmpty() || play.audioUrl.isNullOrBlank()) {
+        if (play.videos.isEmpty() || play.audios.isEmpty()) {
             throw IOException("Bilibili returned no playable video/audio pair")
         }
 
