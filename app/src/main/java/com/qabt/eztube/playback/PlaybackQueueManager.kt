@@ -348,6 +348,7 @@ class PlaybackQueueManager(
                     headers = playback.requestHeaders
                 ),
                 prebufferUrl = video.url,
+                prebufferCompanionUrl = audioUrl,
                 prebufferHeaders = playback.requestHeaders
             )
         }
