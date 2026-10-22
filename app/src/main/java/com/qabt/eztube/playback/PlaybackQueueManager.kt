@@ -47,6 +47,8 @@ class PlaybackQueueManager(
         private const val MAX_SOURCE_RECOVERY_ATTEMPTS = 3
         private const val MAX_RESOLVE_ATTEMPTS = 3
         private const val SABR_FAILURE_COOLDOWN_MS = 15_000L
+        private const val WARM_CACHE_TTL_MS = 90_000L
+        private const val WARM_CACHE_MAX_ENTRIES = 6
     }
 
     @Volatile private var busy = false
@@ -66,6 +68,97 @@ class PlaybackQueueManager(
     @Volatile private var sabrQualityWarmPending = false
     private val sabrFailureUntilMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
     @Volatile private var lastSabrFallbackReason: String? = null
+
+    private data class WarmKey(
+        val mediaId: String,
+        val videoMode: Boolean,
+        val videoHeight: Int?,
+        val audioQuality: AudioQuality?
+    )
+
+    private data class WarmEntry(
+        val resolved: ResolvedPlayback,
+        val createdAtMs: Long
+    )
+
+    private val warmCache = java.util.LinkedHashMap<WarmKey, WarmEntry>()
+    private val warmInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<WarmKey>()
+
+    private fun warmKey(media: MediaSummary): WarmKey {
+        val videoMode = media.id.startsWith("movie:") || preferences.loadVideoMode()
+        return WarmKey(
+            mediaId = media.id,
+            videoMode = videoMode,
+            videoHeight = if (videoMode) {
+                preferences.effectiveVideoQuality().targetHeight
+            } else {
+                null
+            },
+            audioQuality = if (videoMode) null else preferences.effectiveAudioQuality()
+        )
+    }
+
+    @Synchronized
+    private fun takeWarm(media: MediaSummary): ResolvedPlayback? {
+        val key = warmKey(media)
+        val entry = warmCache.remove(key) ?: return null
+        val age = android.os.SystemClock.elapsedRealtime() - entry.createdAtMs
+        return entry.resolved.takeIf { age in 0..WARM_CACHE_TTL_MS }
+    }
+
+    @Synchronized
+    private fun putWarm(key: WarmKey, resolved: ResolvedPlayback) {
+        warmCache[key] = WarmEntry(
+            resolved = resolved,
+            createdAtMs = android.os.SystemClock.elapsedRealtime()
+        )
+        while (warmCache.size > WARM_CACHE_MAX_ENTRIES) {
+            val oldest = warmCache.entries.firstOrNull()?.key ?: break
+            warmCache.remove(oldest)
+        }
+    }
+
+    @Synchronized
+    private fun clearWarm(mediaId: String? = null) {
+        if (mediaId == null) {
+            warmCache.clear()
+        } else {
+            val keys = warmCache.keys.filter { it.mediaId == mediaId }
+            keys.forEach(warmCache::remove)
+        }
+    }
+
+    fun warm(media: MediaSummary) {
+        if (media.id.startsWith("movie:narto:")) return
+        if (!preferences.shouldPreloadOnCurrentNetwork()) return
+        if (player.currentMediaItem?.mediaId == media.id) return
+
+        val key = warmKey(media)
+        synchronized(this) {
+            val existing = warmCache[key]
+            if (existing != null) {
+                val age = android.os.SystemClock.elapsedRealtime() - existing.createdAtMs
+                if (age in 0..WARM_CACHE_TTL_MS) return
+                warmCache.remove(key)
+            }
+        }
+        if (!warmInFlight.add(key)) return
+
+        scope.launch {
+            runCatching {
+                resolve(
+                    media = media,
+                    fastStart = key.videoMode,
+                    initialPositionMs = 0L
+                )
+            }.getOrNull()
+                ?.getOrNull()
+                ?.let { resolved ->
+                    putWarm(key, resolved)
+                }
+            warmInFlight.remove(key)
+        }
+    }
 
     private fun mediaSourceFor(mediaItem: MediaItem, stream: AudioStream): MediaSource? {
         val audioUrl = stream.companionAudioUrl ?: return null
@@ -749,6 +842,7 @@ class PlaybackQueueManager(
 
         val positionMs = player.currentPosition.coerceAtLeast(0L)
         val shouldPlay = player.playWhenReady
+        clearWarm(currentId)
 
         // Give a movie source one real Media3 retry before blacklisting its provider.
         // This avoids treating a transient manifest/segment error as proof that the
@@ -844,6 +938,7 @@ class PlaybackQueueManager(
     }
 
     fun applyVideoQualityChange(positionMs: Long, playWhenReady: Boolean): String {
+        clearWarm()
         if (activePlaybackEngine == PlaybackService.ENGINE_SABR) {
             val controller = activeSabrQualityController
             if (controller == null) {
@@ -1078,11 +1173,16 @@ class PlaybackQueueManager(
         scope.launch {
             val media = items[target]
             val useFastStart = allowFastStart && preferences.loadVideoMode() && playWhenReady
-            val resolved = resolveWithRetry(
-                media,
-                fastStart = useFastStart,
-                initialPositionMs = positionMs
-            )
+            val warmed = takeWarm(media)
+            val resolved = if (warmed != null) {
+                Result.success(warmed)
+            } else {
+                resolveWithRetry(
+                    media,
+                    fastStart = useFastStart,
+                    initialPositionMs = positionMs
+                )
+            }
             resolved.onSuccess { item ->
                 if (requestGeneration != generation) {
                     onComplete?.invoke(Result.failure(IllegalStateException("Playback request was superseded")))
