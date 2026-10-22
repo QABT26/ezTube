@@ -157,6 +157,7 @@ class MovieProviderRegistry(
             "biliintl" -> 50
             "phimapi" -> 50
             "nguonc" -> 45
+            "phim4k" -> 43
             "tophim" -> 40
             "narto" -> 30
             "motphim" -> 20
@@ -217,6 +218,7 @@ class MovieProviderRegistry(
                 providers = listOf(
                     PhimApiMovieProvider(),
                     NguonCMovieProvider(),
+                    Phim4KMovieProvider(),
                     TophimMovieProvider(),
                     NartoDramaMovieProvider(),
                     BiliIntlMovieProvider()
