@@ -1657,6 +1657,7 @@ fun EzTubeApp(
                     videoMode = videoMode,
                     playbackSpeed = playbackSpeed,
                     compatibilityFallback = compatibilityFallback,
+                    isResolving = resolvingId == nowPlaying?.id,
                     isBuffering = isBuffering,
                     playerError = playerError ?: errorMessage,
                     movieDiagnostic = movieDiagnostic,
@@ -8427,6 +8428,7 @@ private data class FullPlayerState(
     val videoMode: Boolean,
     val playbackSpeed: Float,
     val compatibilityFallback: Boolean,
+    val isResolving: Boolean,
     val isBuffering: Boolean,
     val playerError: String?,
     val movieDiagnostic: String?,
@@ -8492,6 +8494,7 @@ private fun FullPlayer(
     val videoMode = state.videoMode
     val playbackSpeed = state.playbackSpeed
     val compatibilityFallback = state.compatibilityFallback
+    val isResolving = state.isResolving
     val isBuffering = state.isBuffering
     val playerError = state.playerError
     val movieDiagnostic = state.movieDiagnostic
@@ -9546,7 +9549,33 @@ private fun FullPlayer(
                                 }
                             }
                     )
-                    if (inlineVideoControlsVisible) {
+                    if (isResolving || isBuffering) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(16.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.62f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = androidx.compose.ui.graphics.Color.White
+                                )
+                                Text(
+                                    if (isResolving) "Đang chuẩn bị nguồn…" else "Đang tải…",
+                                    color = androidx.compose.ui.graphics.Color.White,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+                    }
+                    if (inlineVideoControlsVisible && !isResolving) {
                         FilledTonalIconButton(
                             onClick = { fullscreenRequested = true },
                             modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(38.dp)
@@ -9556,12 +9585,42 @@ private fun FullPlayer(
                     }
                 }
             } else {
-                AsyncImage(
-                    media.thumbnailUrl, null,
-                    Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentScale = ContentScale.Crop
-                )
+                Box(
+                    Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    AsyncImage(
+                        media.thumbnailUrl,
+                        null,
+                        Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                    if (isResolving || isBuffering) {
+                        Surface(
+                            modifier = Modifier.align(Alignment.Center),
+                            shape = RoundedCornerShape(14.dp),
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.62f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = androidx.compose.ui.graphics.Color.White
+                                )
+                                Text(
+                                    if (isResolving) "Đang chuẩn bị nguồn…" else "Đang tải…",
+                                    color = androidx.compose.ui.graphics.Color.White,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+                    }
+                }
             }
             Spacer(Modifier.height(12.dp))
             Text(media.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
@@ -10256,7 +10315,7 @@ private fun FullPlayer(
         }
         Surface(tonalElevation = 6.dp, shadowElevation = 6.dp) {
             Column {
-                if (isBuffering) {
+                if (isResolving || isBuffering) {
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxWidth().height(3.dp)
                     )
