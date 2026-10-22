@@ -171,23 +171,29 @@ class PlaybackQueueManager(
             }.getOrNull()
 
             if (resolved != null) {
-                listOfNotNull(
-                    resolved.prebufferUrl,
-                    resolved.prebufferCompanionUrl
-                )
-                    .distinct()
-                    .filter { it.startsWith("http://") || it.startsWith("https://") }
-                    .take(2)
-                    .forEach { url ->
-                        withContext(Dispatchers.IO) {
-                            runCatching {
-                                mediaSourceFactory.prebuffer(
-                                    url = url,
-                                    headers = resolved.prebufferHeaders
-                                )
+                // Movie providers frequently use signed/fragile CDN URLs and some
+                // legacy hosts reset the connection when we probe bytes before the
+                // real Media3 request. Keep predictive resolve for movies, but only
+                // byte-prebuffer YouTube/non-movie sources.
+                if (!media.id.startsWith("movie:")) {
+                    listOfNotNull(
+                        resolved.prebufferUrl,
+                        resolved.prebufferCompanionUrl
+                    )
+                        .distinct()
+                        .filter { it.startsWith("http://") || it.startsWith("https://") }
+                        .take(2)
+                        .forEach { url ->
+                            withContext(Dispatchers.IO) {
+                                runCatching {
+                                    mediaSourceFactory.prebuffer(
+                                        url = url,
+                                        headers = resolved.prebufferHeaders
+                                    )
+                                }
                             }
                         }
-                    }
+                }
                 putWarm(key, resolved)
             }
             warmInFlight.remove(key)
