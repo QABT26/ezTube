@@ -7,6 +7,12 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheWriter
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
+import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
@@ -16,7 +22,15 @@ import androidx.media3.exoplayer.dash.DashMediaSource
 
 @UnstableApi
 class PlaybackMediaSourceFactory(private val context: Context) {
-    private val dataSourceFactory = DefaultDataSource.Factory(context)
+    private val appContext = context.applicationContext
+    private val dataSourceFactory = DefaultDataSource.Factory(
+        appContext,
+        CacheDataSource.Factory()
+            .setCache(sharedCache(appContext))
+            .setUpstreamDataSourceFactory(DefaultHttpDataSource.Factory()
+                .setAllowCrossProtocolRedirects(true))
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    )
 
     private fun movieDataSourceFactory(headers: Map<String, String>): androidx.media3.datasource.DataSource.Factory {
         val baseHeaders = headers.filterKeys { !it.equals("Cookie", ignoreCase = true) }
@@ -32,7 +46,11 @@ class PlaybackMediaSourceFactory(private val context: Context) {
                 dataSpec.withAdditionalHeaders(mapOf("Cookie" to cookie))
             }
         }
-        return DefaultDataSource.Factory(context, resolvingFactory)
+        val cached = CacheDataSource.Factory()
+            .setCache(sharedCache(appContext))
+            .setUpstreamDataSourceFactory(resolvingFactory)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+        return DefaultDataSource.Factory(appContext, cached)
     }
     private val progressiveFactory = ProgressiveMediaSource.Factory(dataSourceFactory)
     private val hlsFactory = HlsMediaSource.Factory(dataSourceFactory)
@@ -130,6 +148,54 @@ class PlaybackMediaSourceFactory(private val context: Context) {
                 .build()
         )
         return MergingMediaSource(video, audio)
+    }
+
+    fun prebuffer(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        maxBytes: Long = PREBUFFER_BYTES
+    ): Long {
+        if (url.isBlank() || maxBytes <= 0L) return 0L
+
+        val upstream = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(headers)
+        val cacheFactory = CacheDataSource.Factory()
+            .setCache(sharedCache(appContext))
+            .setUpstreamDataSourceFactory(upstream)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+
+        val dataSpec = DataSpec.Builder()
+            .setUri(url)
+            .setPosition(0L)
+            .setLength(maxBytes)
+            .build()
+
+        val writer = CacheWriter(
+            cacheFactory.createDataSource(),
+            dataSpec,
+            null,
+            null
+        )
+        writer.cache()
+        return maxBytes
+    }
+
+    companion object {
+        private const val CACHE_BYTES = 32L * 1024L * 1024L
+        private const val PREBUFFER_BYTES = 256L * 1024L
+
+        @Volatile
+        private var cacheInstance: SimpleCache? = null
+
+        private fun sharedCache(context: Context): SimpleCache =
+            cacheInstance ?: synchronized(this) {
+                cacheInstance ?: SimpleCache(
+                    java.io.File(context.cacheDir, "media3-warm-cache"),
+                    LeastRecentlyUsedCacheEvictor(CACHE_BYTES),
+                    StandaloneDatabaseProvider(context)
+                ).also { cacheInstance = it }
+            }
     }
 
 }
