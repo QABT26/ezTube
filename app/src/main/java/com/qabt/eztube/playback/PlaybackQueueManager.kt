@@ -103,7 +103,7 @@ class PlaybackQueueManager(
         val key = warmKey(media)
         val entry = warmCache.remove(key) ?: return null
         val age = android.os.SystemClock.elapsedRealtime() - entry.createdAtMs
-        return entry.resolved.takeIf { age in 0..WARM_CACHE_TTL_MS }
+        return entry.resolved.takeIf { age >= 0L && age <= WARM_CACHE_TTL_MS }
     }
 
     @Synchronized
@@ -138,7 +138,7 @@ class PlaybackQueueManager(
             val existing = warmCache[key]
             if (existing != null) {
                 val age = android.os.SystemClock.elapsedRealtime() - existing.createdAtMs
-                if (age in 0..WARM_CACHE_TTL_MS) return
+                if (age >= 0L && age <= WARM_CACHE_TTL_MS) return
                 warmCache.remove(key)
             }
         }
