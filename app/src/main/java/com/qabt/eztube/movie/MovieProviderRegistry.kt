@@ -155,7 +155,9 @@ class MovieProviderRegistry(
         when (item.providerId) {
             // Direct Bilibili URLs are explicit user input and should win for that item.
             "biliintl" -> 50
-            "phimapi" -> 40
+            "phimapi" -> 50
+            "nguonc" -> 45
+            "tophim" -> 40
             "narto" -> 30
             "motphim" -> 20
             else -> 0
@@ -214,6 +216,8 @@ class MovieProviderRegistry(
             MovieProviderRegistry(
                 providers = listOf(
                     PhimApiMovieProvider(),
+                    NguonCMovieProvider(),
+                    TophimMovieProvider(),
                     NartoDramaMovieProvider(),
                     BiliIntlMovieProvider()
                 )
