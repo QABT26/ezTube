@@ -33,6 +33,7 @@ class PlaybackService : MediaSessionService() {
         const val COMMAND_RELOAD_CURRENT = "com.qabt.eztube.RELOAD_CURRENT"
         const val COMMAND_PLAY_CURRENT = "com.qabt.eztube.PLAY_CURRENT"
         const val COMMAND_PLAY_DIRECT_HLS = "com.qabt.eztube.PLAY_DIRECT_HLS"
+        const val COMMAND_WARM_MEDIA = "com.qabt.eztube.WARM_MEDIA"
         const val COMMAND_SET_VIDEO_QUALITY = "com.qabt.eztube.SET_VIDEO_QUALITY"
         const val COMMAND_GET_SABR_DIAGNOSTIC = "com.qabt.eztube.GET_SABR_DIAGNOSTIC"
         const val COMMAND_SET_SLEEP_END_CURRENT = "com.qabt.eztube.SET_SLEEP_END_CURRENT"
@@ -50,6 +51,10 @@ class PlaybackService : MediaSessionService() {
         const val ARG_REFERER = "referer"
         const val ARG_SUBTITLE_URL = "subtitle_url"
         const val ARG_REQUEST_HEADERS_JSON = "request_headers_json"
+        const val ARG_MEDIA_ID = "media_id"
+        const val ARG_MEDIA_TITLE = "media_title"
+        const val ARG_MEDIA_CHANNEL = "media_channel"
+        const val ARG_MEDIA_THUMBNAIL = "media_thumbnail"
         const val EXTRA_COMPATIBILITY_FALLBACK = "compatibility_fallback"
         const val EXTRA_VIDEO_HEIGHT = "video_height"
         const val EXTRA_PLAYBACK_ENGINE = "playback_engine"
@@ -247,6 +252,7 @@ class PlaybackService : MediaSessionService() {
                         .add(androidx.media3.session.SessionCommand(COMMAND_RELOAD_CURRENT, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_PLAY_CURRENT, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_PLAY_DIRECT_HLS, android.os.Bundle.EMPTY))
+                        .add(androidx.media3.session.SessionCommand(COMMAND_WARM_MEDIA, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_SET_VIDEO_QUALITY, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_GET_SABR_DIAGNOSTIC, android.os.Bundle.EMPTY))
                         .add(androidx.media3.session.SessionCommand(COMMAND_SET_SLEEP_END_CURRENT, android.os.Bundle.EMPTY))
@@ -305,6 +311,23 @@ class PlaybackService : MediaSessionService() {
                 ): com.google.common.util.concurrent.ListenableFuture<SessionResult> {
                     if (customCommand.customAction == COMMAND_QUEUE_CHANGED) {
                         queueManager.refreshFromPreferences()
+                        return com.google.common.util.concurrent.Futures.immediateFuture(
+                            SessionResult(SessionResult.RESULT_SUCCESS)
+                        )
+                    }
+                    if (customCommand.customAction == COMMAND_WARM_MEDIA) {
+                        val mediaId = args.getString(ARG_MEDIA_ID).orEmpty()
+                        if (mediaId.isNotBlank()) {
+                            queueManager.warm(
+                                com.qabt.eztube.youtube.MediaSummary(
+                                    id = mediaId,
+                                    title = args.getString(ARG_MEDIA_TITLE).orEmpty()
+                                        .ifBlank { mediaId },
+                                    channel = args.getString(ARG_MEDIA_CHANNEL).orEmpty(),
+                                    thumbnailUrl = args.getString(ARG_MEDIA_THUMBNAIL)
+                                )
+                            )
+                        }
                         return com.google.common.util.concurrent.Futures.immediateFuture(
                             SessionResult(SessionResult.RESULT_SUCCESS)
                         )
