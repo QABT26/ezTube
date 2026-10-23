@@ -4913,6 +4913,11 @@ private fun SearchScreen(
                 listState.firstVisibleItemScrollOffset > 0
         }
     }
+    val reachedSearchEnd by remember {
+        derivedStateOf {
+            userHasScrolledSearch && !listState.canScrollForward
+        }
+    }
 
     Column(modifier.padding(horizontal = 14.dp)) {
         Spacer(Modifier.height(10.dp))
@@ -5213,7 +5218,7 @@ private fun SearchScreen(
                             .height(54.dp)
                             .padding(horizontal = 8.dp, vertical = 10.dp)
                     ) {
-                        if (userHasScrolledSearch) {
+                        if (reachedSearchEnd) {
                             Row(
                                 modifier = Modifier.fillMaxSize(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
