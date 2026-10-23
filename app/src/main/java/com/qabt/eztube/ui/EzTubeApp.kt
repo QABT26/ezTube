@@ -1385,7 +1385,9 @@ fun EzTubeApp(
         sleepMinutes = null
     }
 
-    LaunchedEffect(homeRefreshToken, trendingTopics, trendingLanguage) {
+    LaunchedEffect(selected, homeRefreshToken, trendingTopics, trendingLanguage) {
+        if (selected != Tab.HOME) return@LaunchedEffect
+        delay(450L)
         trendingLoading = true
         val topicOrder = listOf("Music", "Podcasts", "Gaming", "Movies", "Live")
         val selectedTopics = topicOrder.filter { it in trendingTopics }.ifEmpty { listOf("Music") }
@@ -1420,7 +1422,9 @@ fun EzTubeApp(
         trendingLoading = false
     }
 
-    LaunchedEffect(recent.firstOrNull()?.mediaId, favorites.firstOrNull()?.mediaId, recentSearches, homeRefreshToken) {
+    LaunchedEffect(selected, recent.firstOrNull()?.mediaId, favorites.firstOrNull()?.mediaId, recentSearches, homeRefreshToken) {
+        if (selected != Tab.HOME) return@LaunchedEffect
+        delay(120L)
         val searchSeeds = recentSearches.filter { it.isNotBlank() }.distinct().take(5)
         val tasteSeeds = (favorites.map { it.channel } + recent.map { it.channel })
             .filter { it.isNotBlank() }.distinct().take(3)
@@ -1444,7 +1448,9 @@ fun EzTubeApp(
         homeLoading = false
     }
 
-    LaunchedEffect(recentSearches, recent.firstOrNull()?.mediaId, homeRefreshToken) {
+    LaunchedEffect(selected, recentSearches, recent.firstOrNull()?.mediaId, homeRefreshToken) {
+        if (selected != Tab.HOME) return@LaunchedEffect
+        delay(700L)
         val movieSeeds = (
             recentSearches.filter { it.isNotBlank() } +
                 recent
@@ -4800,9 +4806,13 @@ private fun SearchScreen(
 ) {
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searchSort by remember { mutableStateOf(SearchSort.RELEVANCE) }
     var youtubeSearchMode by remember { mutableStateOf(YouTubeSearchMode.ALL) }
+    var loadedExtraPages by remember(query, sourceMode, youtubeSearchMode) {
+        mutableIntStateOf(0)
+    }
     var playlistTarget by remember { mutableStateOf<MediaSummary?>(null) }
     val displayResults = remember(results, searchSort) {
         when (searchSort) {
@@ -4823,6 +4833,7 @@ private fun SearchScreen(
         if (normalized != query) onQueryChange(normalized)
         scope.launch {
             loading = true
+            loadedExtraPages = 0
             searchError = null
             onSearchSubmitted(normalized)
             runCatching {
@@ -4841,6 +4852,57 @@ private fun SearchScreen(
                 .onFailure { searchError = it.message ?: "Search failed" }
             loading = false
         }
+    }
+
+    fun loadMore() {
+        if (
+            sourceMode != SearchSourceMode.YOUTUBE ||
+            query.isBlank() ||
+            loading ||
+            loadingMore ||
+            results.isEmpty() ||
+            loadedExtraPages >= 5
+        ) return
+
+        val nextExtraPages = loadedExtraPages + 1
+        scope.launch {
+            loadingMore = true
+            searchError = null
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    when (youtubeSearchMode) {
+                        YouTubeSearchMode.ALL ->
+                            source.searchMore(query.trim(), nextExtraPages)
+                        YouTubeSearchMode.LIVE ->
+                            source.searchLiveMore(query.trim(), nextExtraPages)
+                        YouTubeSearchMode.SHORTS ->
+                            source.searchShortsMore(query.trim(), nextExtraPages)
+                    }
+                }
+            }.onSuccess { expanded ->
+                loadedExtraPages = nextExtraPages
+                onResultsChange(expanded)
+            }.onFailure {
+                searchError = it.message ?: "Unable to load more results"
+            }
+            loadingMore = false
+        }
+    }
+
+    val nearSearchEnd by remember {
+        derivedStateOf {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            displayResults.isNotEmpty() && lastVisible >= displayResults.lastIndex - 2
+        }
+    }
+
+    LaunchedEffect(
+        nearSearchEnd,
+        displayResults.size,
+        sourceMode,
+        youtubeSearchMode
+    ) {
+        if (nearSearchEnd) loadMore()
     }
 
     Column(modifier.padding(horizontal = 14.dp)) {
@@ -4952,14 +5014,14 @@ private fun SearchScreen(
                     ) {
                         AssistChip(
                             onClick = { submit(recent) },
-                            modifier = Modifier.height(34.dp),
+                            modifier = Modifier.height(28.dp),
                             label = {
                                 Text(
                                     recent,
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.labelSmall,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(max = 210.dp)
+                                    modifier = Modifier.widthIn(max = 170.dp)
                                 )
                             }
                         )
@@ -4967,7 +5029,7 @@ private fun SearchScreen(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .offset(x = 2.dp, y = (-2).dp)
-                                .size(14.dp)
+                                .size(12.dp)
                                 .clickable { onRecentSearchDelete(recent) },
                             shape = RoundedCornerShape(50),
                             color = MaterialTheme.colorScheme.surface,
@@ -4980,7 +5042,7 @@ private fun SearchScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.Close,
                                     contentDescription = "Delete search",
-                                    modifier = Modifier.size(8.dp)
+                                    modifier = Modifier.size(7.dp)
                                 )
                             }
                         }
@@ -5090,6 +5152,66 @@ private fun SearchScreen(
                         isWatchLater = media.id in watchLaterIds,
                         onToggleWatchLater = { onToggleWatchLater(media) }
                     )
+                }
+                if (loadingMore) {
+                    item(key = "search-loading-more") {
+                        LinearProgressIndicator(
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+                item(key = "search-footer-actions") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(34.dp)
+                                .clickable(
+                                    enabled = sourceMode == SearchSourceMode.YOUTUBE &&
+                                        !loadingMore &&
+                                        loadedExtraPages < 5,
+                                    onClick = { loadMore() }
+                                ),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Row(
+                                Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    if (loadedExtraPages >= 5) "Đã tải tối đa" else "Thêm",
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
+                        }
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(34.dp)
+                                .clickable {
+                                    scope.launch { listState.animateScrollToItem(0) }
+                                },
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Row(
+                                Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Outlined.KeyboardArrowUp, null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Lên đầu", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -6086,7 +6208,7 @@ private fun HomeScreen(
     val visibleRecommendations =
         if (showAllRecommendations) displayedRecommendations else displayedRecommendations.take(5)
     val trendingListIndex = run {
-        var index = 1 // "For you"
+        var index = 1 // top actions
         if (continueWatching.isNotEmpty()) {
             index += 1 + continueWatching.size // heading + rows
         }
@@ -6111,10 +6233,6 @@ private fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item {
-            Text("For you", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("Suggestions shaped by what you listen to",
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onSearch, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Outlined.Search, null)
