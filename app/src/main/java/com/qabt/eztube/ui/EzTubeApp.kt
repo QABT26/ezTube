@@ -5207,58 +5207,63 @@ private fun SearchScreen(
                     }
                 }
                 item(key = "search-footer-actions") {
-                    if (userHasScrolledSearch) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Surface(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(34.dp)
-                                    .clickable(
-                                        enabled = sourceMode == SearchSourceMode.YOUTUBE &&
-                                            !loadingMore &&
-                                            loadedExtraPages < 5,
-                                        onClick = { loadMore() }
-                                    ),
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.secondaryContainer
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp)
+                            .padding(horizontal = 8.dp, vertical = 10.dp)
+                    ) {
+                        if (userHasScrolledSearch) {
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Row(
-                                    Modifier.fillMaxSize(),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .clickable(
+                                            enabled = sourceMode == SearchSourceMode.YOUTUBE &&
+                                                !loadingMore &&
+                                                loadedExtraPages < 5,
+                                            onClick = { loadMore() }
+                                        ),
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.secondaryContainer
                                 ) {
-                                    Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(
-                                        if (loadedExtraPages >= 5) "Đã tải tối đa" else "Thêm",
-                                        style = MaterialTheme.typography.labelMedium
-                                    )
+                                    Row(
+                                        Modifier.fillMaxSize(),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            if (loadedExtraPages >= 5) "Đã tải tối đa" else "Thêm",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
                                 }
-                            }
 
-                            Surface(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(34.dp)
-                                    .clickable {
-                                        scope.launch { listState.animateScrollToItem(0) }
-                                    },
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant
-                            ) {
-                                Row(
-                                    Modifier.fillMaxSize(),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .clickable {
+                                            scope.launch { listState.animateScrollToItem(0) }
+                                        },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant
                                 ) {
-                                    Icon(Icons.Outlined.KeyboardArrowUp, null, Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Lên đầu", style = MaterialTheme.typography.labelMedium)
+                                    Row(
+                                        Modifier.fillMaxSize(),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Outlined.KeyboardArrowUp, null, Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Lên đầu", style = MaterialTheme.typography.labelMedium)
+                                    }
                                 }
                             }
                         }
