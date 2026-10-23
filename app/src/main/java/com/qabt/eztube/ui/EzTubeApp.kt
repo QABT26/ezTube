@@ -3133,7 +3133,6 @@ private fun NartoUnlockScreen(
                         }
                     }
                 }
-                }
             }
         }
     }
