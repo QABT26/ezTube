@@ -167,7 +167,15 @@ class MovieProviderRegistry(
             durationSeconds = null
         )
 
-        val knownMirrors = mirrorsByTitleId[mediaId].orEmpty()
+        var knownMirrors = mirrorsByTitleId[mediaId].orEmpty()
+        if (knownMirrors.isEmpty() && !mediaTitle.isNullOrBlank()) {
+            // Library/history entries survive process restarts while the in-memory
+            // mirror cache does not. Rebuild the mirror set from the saved title
+            // before giving up on the originally selected provider.
+            runCatching { search(mediaTitle) }
+            knownMirrors = mirrorsByTitleId[mediaId].orEmpty()
+        }
+
         val attempts = buildList {
             add(
                 knownMirrors.firstOrNull {
@@ -368,12 +376,9 @@ class MovieProviderRegistry(
 
     private fun canonicalKey(item: MovieCatalogItem): String {
         val title = normalizeTitle(item.title)
-        val original = normalizeTitle(item.originalTitle.orEmpty())
+            .ifBlank { normalizeTitle(item.originalTitle.orEmpty()) }
         val year = item.year?.toString().orEmpty()
-        return listOf(title, original, year)
-            .filter { it.isNotBlank() }
-            .joinToString("|")
-            .ifBlank { title }
+        return if (year.isBlank()) title else title + "|" + year
     }
 
     private fun metadataScore(item: MovieCatalogItem): Int =
