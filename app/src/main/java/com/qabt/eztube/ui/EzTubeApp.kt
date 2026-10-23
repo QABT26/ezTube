@@ -4850,7 +4850,14 @@ private fun SearchScreen(
             loading = true
             loadedExtraPages = 0
             searchError = null
+
+            // Reset the lazy-list anchor before a new result set is attached.
+            // requestScrollToItem() applies to the next remeasure, which avoids
+            // the first-search race where Compose preserves an old bottom anchor.
+            listState.requestScrollToItem(0)
+            onResultsChange(emptyList())
             onSearchSubmitted(normalized)
+
             runCatching {
                 withContext(Dispatchers.IO) {
                     when (mode) {
@@ -4864,8 +4871,8 @@ private fun SearchScreen(
                 }
             }
                 .onSuccess {
+                    listState.requestScrollToItem(0)
                     onResultsChange(it)
-                    listState.scrollToItem(0)
                 }
                 .onFailure { searchError = it.message ?: "Search failed" }
             loading = false
