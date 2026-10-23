@@ -29,7 +29,8 @@ data class MovieCatalogItem(
         thumbnailUrl = thumbnailUrl,
         uploadDateText = year?.toString(),
         durationSeconds = durationSeconds ?: -1L,
-        thumbnailBadge = episodeBadge
+        thumbnailBadge = episodeBadge,
+        isSeries = isSeries
     )
 }
 
