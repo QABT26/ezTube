@@ -5263,6 +5263,7 @@ private fun SearchScreen(
                         }
                     }
                 }
+                }
             }
         }
     }
