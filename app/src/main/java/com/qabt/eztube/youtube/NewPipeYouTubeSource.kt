@@ -479,26 +479,48 @@ class NewPipeYouTubeSource : YouTubeSource {
             .toList()
     }
 
+    private fun isLikelyLive(item: StreamInfoItem): Boolean {
+        if (
+            item.streamType == StreamType.LIVE_STREAM ||
+            item.streamType == StreamType.AUDIO_LIVE_STREAM
+        ) return true
+
+        val haystack = buildString {
+            append(item.name)
+            append(' ')
+            append(item.uploaderName.orEmpty())
+        }.lowercase()
+
+        return " live" in " $haystack" ||
+            "livestream" in haystack ||
+            "trực tiếp" in haystack ||
+            "🔴" in haystack
+    }
+
+    private fun isLikelyShort(item: StreamInfoItem): Boolean {
+        if (item.isShortFormContent) return true
+        val duration = item.duration
+        return duration in 1..180
+    }
+
     override suspend fun search(query: String): List<MediaSummary> =
         searchStreams(query, predicate = { !it.isShortFormContent })
 
     override suspend fun searchLive(query: String): List<MediaSummary> =
         searchStreams(
-            query,
-            predicate = {
-                !it.isShortFormContent &&
-                    (it.streamType == StreamType.LIVE_STREAM ||
-                        it.streamType == StreamType.AUDIO_LIVE_STREAM)
-            },
+            query = query.trim() + " live",
+            predicate = ::isLikelyLive,
             badge = "LIVE",
+            extraPages = 2,
             preferredFilters = listOf("live", "livestream", "videos", "all")
         )
 
     override suspend fun searchShorts(query: String): List<MediaSummary> =
         searchStreams(
-            query,
-            predicate = { it.isShortFormContent },
+            query = query.trim() + " shorts",
+            predicate = ::isLikelyShort,
             badge = "SHORT",
+            extraPages = 2,
             preferredFilters = listOf("shorts", "short", "videos", "all")
         )
 
@@ -511,23 +533,19 @@ class NewPipeYouTubeSource : YouTubeSource {
 
     suspend fun searchLiveMore(query: String, extraPages: Int): List<MediaSummary> =
         searchStreams(
-            query,
-            predicate = {
-                !it.isShortFormContent &&
-                    (it.streamType == StreamType.LIVE_STREAM ||
-                        it.streamType == StreamType.AUDIO_LIVE_STREAM)
-            },
+            query = query.trim() + " live",
+            predicate = ::isLikelyLive,
             badge = "LIVE",
-            extraPages = extraPages,
+            extraPages = (extraPages + 2).coerceAtMost(5),
             preferredFilters = listOf("live", "livestream", "videos", "all")
         )
 
     suspend fun searchShortsMore(query: String, extraPages: Int): List<MediaSummary> =
         searchStreams(
-            query,
-            predicate = { it.isShortFormContent },
+            query = query.trim() + " shorts",
+            predicate = ::isLikelyShort,
             badge = "SHORT",
-            extraPages = extraPages,
+            extraPages = (extraPages + 2).coerceAtMost(5),
             preferredFilters = listOf("shorts", "short", "videos", "all")
         )
 
