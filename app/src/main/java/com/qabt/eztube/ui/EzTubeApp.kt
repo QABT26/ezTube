@@ -4595,7 +4595,7 @@ private fun SettingsScreen(
                         label = {
                             Text(
                                 option,
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.labelMedium,
                                 maxLines = 1,
                                 softWrap = false
                             )
@@ -5130,7 +5130,7 @@ private fun SearchScreen(
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
                                 option.label,
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1,
                                 softWrap = false
                             )
