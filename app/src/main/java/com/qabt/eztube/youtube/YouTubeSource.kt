@@ -11,7 +11,8 @@ data class MediaSummary(
     val viewCount: Long = -1,
     val uploadDateText: String? = null,
     val durationSeconds: Long = -1,
-    val thumbnailBadge: String? = null
+    val thumbnailBadge: String? = null,
+    val isSeries: Boolean? = null
 )
 
 data class CommentSummary(
