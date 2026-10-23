@@ -225,9 +225,98 @@ class MovieProviderRegistry(
         mediaId: String,
         mediaTitle: String? = null
     ): MoviePlayback {
-        val provider = providers.firstOrNull { it.canResolve(mediaId) }
+        val parsedEpisode = parseEpisodeId(mediaId)
             ?: throw IOException("No movie provider can resolve this item")
-        return runProviderCall(provider) { provider.resolve(mediaId) }
+        val requestedProvider = providers.firstOrNull { it.id == parsedEpisode.providerId }
+            ?: throw IOException("Movie provider not installed: " + parsedEpisode.providerId)
+
+        var lastError: Throwable? = null
+        val direct = runCatching {
+            runProviderCall(requestedProvider) { requestedProvider.resolve(mediaId) }
+        }.onFailure { lastError = it }.getOrNull()
+        if (direct != null) return direct
+
+        val lookupTitle = mediaTitle
+            ?.substringBefore(" · ")
+            ?.trim()
+            .orEmpty()
+        if (lookupTitle.isBlank()) {
+            throw IOException(
+                "Unable to resolve movie playback from " + requestedProvider.displayName,
+                lastError
+            )
+        }
+
+        runCatching { search(lookupTitle) }
+
+        val originalTitleId =
+            "movie-title:" + parsedEpisode.providerId + ":" + parsedEpisode.movieSlug
+        var mirrors = mirrorsByTitleId[originalTitleId].orEmpty()
+
+        if (mirrors.isEmpty()) {
+            // The original provider may have disappeared from current search results.
+            // Reuse any canonical mirror group rebuilt by the title search.
+            mirrors = mirrorsByTitleId.values
+                .asSequence()
+                .filter { group ->
+                    group.any { candidate ->
+                        normalizeTitle(candidate.title) == normalizeTitle(lookupTitle) ||
+                            normalizeTitle(candidate.originalTitle.orEmpty()) ==
+                                normalizeTitle(lookupTitle)
+                    }
+                }
+                .flatten()
+                .distinctBy { it.providerId + ":" + it.slug }
+                .toList()
+        }
+
+        val primaryEpisode = runCatching {
+            runProviderCall(requestedProvider) {
+                requestedProvider.detail(parsedEpisode.movieSlug)
+            }.episodes.firstOrNull { ref ->
+                ref.stableId == mediaId ||
+                    ref.episodeSlug.equals(parsedEpisode.episodeKey, ignoreCase = true)
+            }
+        }.getOrNull()
+
+        val fallbackCandidates = mirrors
+            .filterNot {
+                it.providerId == parsedEpisode.providerId &&
+                    it.slug == parsedEpisode.movieSlug
+            }
+            .sortedByDescending(::candidateScore)
+
+        for ((index, candidate) in fallbackCandidates.withIndex()) {
+            val provider = providers.firstOrNull { it.id == candidate.providerId } ?: continue
+            if (isCoolingDown(provider.id) && index < fallbackCandidates.lastIndex) continue
+
+            val detail = runCatching {
+                runProviderCall(provider) { provider.detail(candidate.slug) }
+            }.onFailure { lastError = it }.getOrNull() ?: continue
+
+            val replacement = matchEpisode(
+                original = primaryEpisode,
+                parsed = parsedEpisode,
+                candidates = detail.episodes
+            ) ?: continue
+
+            val playback = runCatching {
+                runProviderCall(provider) { provider.resolve(replacement.stableId) }
+            }.onFailure { lastError = it }.getOrNull()
+
+            if (playback != null) return playback
+        }
+
+        throw IOException(
+            buildString {
+                append("Unable to resolve movie playback")
+                append(": ").append(lookupTitle)
+                lastError?.message?.takeIf { it.isNotBlank() }?.let {
+                    append(" (").append(it).append(')')
+                }
+            },
+            lastError
+        )
     }
 
     fun nartoWatchPageUrl(mediaId: String): String? {
@@ -373,6 +462,97 @@ class MovieProviderRegistry(
         if (parts[1].isBlank() || parts[2].isBlank()) return null
         return parts[1] to parts[2]
     }
+    private data class ParsedEpisodeId(
+        val providerId: String,
+        val movieSlug: String,
+        val serverName: String,
+        val episodeKey: String
+    )
+
+    private fun parseEpisodeId(mediaId: String): ParsedEpisodeId? {
+        val parts = mediaId.split(':', limit = 5)
+        if (parts.size != 5 || parts[0] != "movie") return null
+        val providerId = parts[1].trim()
+        val movieSlug = parts[2].trim()
+        if (providerId.isBlank() || movieSlug.isBlank()) return null
+
+        return ParsedEpisodeId(
+            providerId = providerId,
+            movieSlug = movieSlug,
+            serverName = decodeStablePart(parts[3]),
+            episodeKey = decodeStablePart(parts[4])
+        )
+    }
+
+    private fun decodeStablePart(value: String): String =
+        runCatching {
+            String(
+                java.util.Base64.getUrlDecoder().decode(value),
+                Charsets.UTF_8
+            )
+        }.getOrDefault(value)
+
+    private fun matchEpisode(
+        original: MovieEpisodeRef?,
+        parsed: ParsedEpisodeId,
+        candidates: List<MovieEpisodeRef>
+    ): MovieEpisodeRef? {
+        if (candidates.isEmpty()) return null
+
+        val episodeKey = normalizeEpisodeKey(parsed.episodeKey)
+        val originalSlug = normalizeEpisodeKey(original?.episodeSlug.orEmpty())
+        val originalName = normalizeEpisodeKey(original?.episodeName.orEmpty())
+        val originalNumber = episodeNumber(
+            original?.episodeName.orEmpty() + " " +
+                original?.episodeSlug.orEmpty() + " " +
+                parsed.episodeKey
+        )
+
+        candidates.firstOrNull {
+            normalizeEpisodeKey(it.episodeSlug) == episodeKey ||
+                (originalSlug.isNotBlank() &&
+                    normalizeEpisodeKey(it.episodeSlug) == originalSlug)
+        }?.let { return it }
+
+        candidates.firstOrNull {
+            originalName.isNotBlank() &&
+                normalizeEpisodeKey(it.episodeName) == originalName
+        }?.let { return it }
+
+        if (originalNumber != null) {
+            candidates.firstOrNull {
+                episodeNumber(it.episodeName + " " + it.episodeSlug) == originalNumber
+            }?.let { return it }
+        }
+
+        if (original != null) {
+            val sameServer = candidates.filter {
+                normalizeEpisodeKey(it.serverName) ==
+                    normalizeEpisodeKey(original.serverName)
+            }
+            sameServer.getOrNull(original.episodeIndex)?.let { return it }
+            candidates.getOrNull(original.episodeIndex)?.let { return it }
+        }
+
+        return candidates.firstOrNull {
+            normalizeEpisodeKey(it.serverName) ==
+                normalizeEpisodeKey(parsed.serverName)
+        }
+    }
+
+    private fun normalizeEpisodeKey(value: String): String =
+        normalizeTitle(value)
+            .replace(Regex("""\b(tap|episode|ep|phan|part)\b"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+
+    private fun episodeNumber(value: String): Int? =
+        Regex("""(?:tap|episode|ep|e)?\s*(\d{1,4})""", RegexOption.IGNORE_CASE)
+            .find(normalizeTitle(value))
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+
 
     private fun canonicalKey(item: MovieCatalogItem): String {
         val title = normalizeTitle(item.title)
