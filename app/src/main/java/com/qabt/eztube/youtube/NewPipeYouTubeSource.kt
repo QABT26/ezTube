@@ -416,23 +416,29 @@ class NewPipeYouTubeSource : YouTubeSource {
         query: String,
         predicate: (StreamInfoItem) -> Boolean,
         badge: String? = null,
-        extraPages: Int = 0
+        extraPages: Int = 0,
+        preferredFilters: List<String> = listOf("videos", "all")
     ): List<MediaSummary> {
         val normalized = query.trim()
         if (normalized.isEmpty()) return emptyList()
 
         val service = ServiceList.YouTube
         val factory = service.searchQHFactory
-        val contentFilter = factory.availableContentFilter
+        val availableFilters = factory.availableContentFilter
             .filterGroups
             .asSequence()
             .flatMap { it.filterItems.asSequence() }
-            .firstOrNull { it.name.equals("videos", ignoreCase = true) }
-            ?: factory.availableContentFilter
-                .filterGroups
-                .asSequence()
-                .flatMap { it.filterItems.asSequence() }
-                .firstOrNull { it.name.equals("all", ignoreCase = true) }
+            .toList()
+        val contentFilter = preferredFilters
+            .asSequence()
+            .mapNotNull { preferred ->
+                availableFilters.firstOrNull {
+                    it.name.equals(preferred, ignoreCase = true) ||
+                        it.name.contains(preferred, ignoreCase = true)
+                }
+            }
+            .firstOrNull()
+            ?: availableFilters.firstOrNull()
             ?: error("YouTube search has no usable content filter")
 
         val searchHandler = factory.fromQuery(
@@ -484,14 +490,16 @@ class NewPipeYouTubeSource : YouTubeSource {
                     (it.streamType == StreamType.LIVE_STREAM ||
                         it.streamType == StreamType.AUDIO_LIVE_STREAM)
             },
-            badge = "LIVE"
+            badge = "LIVE",
+            preferredFilters = listOf("live", "livestream", "videos", "all")
         )
 
     override suspend fun searchShorts(query: String): List<MediaSummary> =
         searchStreams(
             query,
             predicate = { it.isShortFormContent },
-            badge = "SHORT"
+            badge = "SHORT",
+            preferredFilters = listOf("shorts", "short", "videos", "all")
         )
 
     suspend fun searchMore(query: String, extraPages: Int): List<MediaSummary> =
@@ -510,7 +518,8 @@ class NewPipeYouTubeSource : YouTubeSource {
                         it.streamType == StreamType.AUDIO_LIVE_STREAM)
             },
             badge = "LIVE",
-            extraPages = extraPages
+            extraPages = extraPages,
+            preferredFilters = listOf("live", "livestream", "videos", "all")
         )
 
     suspend fun searchShortsMore(query: String, extraPages: Int): List<MediaSummary> =
@@ -518,7 +527,8 @@ class NewPipeYouTubeSource : YouTubeSource {
             query,
             predicate = { it.isShortFormContent },
             badge = "SHORT",
-            extraPages = extraPages
+            extraPages = extraPages,
+            preferredFilters = listOf("shorts", "short", "videos", "all")
         )
 
     override suspend fun comments(mediaId: String): CommentsPage {
