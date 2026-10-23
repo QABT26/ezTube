@@ -11,6 +11,7 @@ class MovieProviderRegistryTest {
         override val displayName: String,
         private val title: String = "Test Movie",
         private val slug: String = "test-movie",
+        private val year: Int = 2026,
         private val detailFails: Boolean = false,
         private val resolveFails: Boolean = false,
         private val episodes: List<Pair<String, String>> = listOf(
@@ -27,7 +28,7 @@ class MovieProviderRegistryTest {
                     title = title,
                     originalTitle = "Test Movie",
                     thumbnailUrl = "https://example.com/" + id + ".jpg",
-                    year = 2026,
+                    year = year,
                     language = "Vietsub",
                     durationText = "45 phút",
                     durationSeconds = 2700,
@@ -139,7 +140,8 @@ class MovieProviderRegistryTest {
             id = "phimapi",
             displayName = "KKPhim",
             title = "Same Movie",
-            slug = "same-movie-2020"
+            slug = "same-movie-2020",
+            year = 2020
         )
         val remake = object : MovieProvider {
             override val id = "ophim"
