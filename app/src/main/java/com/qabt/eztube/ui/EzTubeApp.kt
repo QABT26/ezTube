@@ -4595,7 +4595,7 @@ private fun SettingsScreen(
                         label = {
                             Text(
                                 option,
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1,
                                 softWrap = false
                             )
@@ -4863,7 +4863,10 @@ private fun SearchScreen(
                     }
                 }
             }
-                .onSuccess { onResultsChange(it) }
+                .onSuccess {
+                    onResultsChange(it)
+                    listState.scrollToItem(0)
+                }
                 .onFailure { searchError = it.message ?: "Search failed" }
             loading = false
         }
@@ -4904,10 +4907,18 @@ private fun SearchScreen(
         }
     }
 
+    val userHasScrolledSearch by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 ||
+                listState.firstVisibleItemScrollOffset > 0
+        }
+    }
     val nearSearchEnd by remember {
         derivedStateOf {
             val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-            displayResults.isNotEmpty() && lastVisible >= displayResults.lastIndex - 2
+            displayResults.isNotEmpty() &&
+                userHasScrolledSearch &&
+                lastVisible >= displayResults.lastIndex - 2
         }
     }
 
@@ -4959,27 +4970,36 @@ private fun SearchScreen(
                     }
                 },
                 label = { Text("Movie", maxLines = 1) },
-                modifier = Modifier.weight(1f).height(40.dp)
+                modifier = Modifier.weight(1f).height(32.dp)
             )
         }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = query,
             onValueChange = onQueryChange,
-            modifier = Modifier.fillMaxWidth().height(46.dp),
+            modifier = Modifier.fillMaxWidth().height(50.dp),
             singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium,
             placeholder = {
                 Text(
                     if (sourceMode == SearchSourceMode.MOVIE)
                         "Search movies…"
                     else
-                        "Search YouTube…"
+                        "Search YouTube…",
+                    style = MaterialTheme.typography.bodyMedium
                 )
             },
-            leadingIcon = { Icon(Icons.Outlined.Search, null) },
+            leadingIcon = {
+                Icon(Icons.Outlined.Search, null, Modifier.size(18.dp))
+            },
             trailingIcon = {
-                if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) {
-                    Icon(Icons.Outlined.Close, "Clear")
+                if (query.isNotEmpty()) {
+                    IconButton(
+                        onClick = { onQueryChange("") },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Outlined.Close, "Clear", Modifier.size(18.dp))
+                    }
                 }
             },
             keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { submit() }),
@@ -5098,7 +5118,7 @@ private fun SearchScreen(
                     Surface(
                         modifier = Modifier
                             .weight(1f)
-                            .height(30.dp)
+                            .height(24.dp)
                             .clickable { searchSort = option },
                         shape = RoundedCornerShape(10.dp),
                         color = if (searchSort == option) MaterialTheme.colorScheme.secondaryContainer
