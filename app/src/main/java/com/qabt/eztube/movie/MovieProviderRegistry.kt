@@ -4,24 +4,57 @@ import com.qabt.eztube.youtube.MediaSummary
 import java.io.IOException
 import java.text.Normalizer
 import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.math.min
+
+data class MovieProviderHealth(
+    val providerId: String,
+    val providerName: String,
+    val consecutiveFailures: Int,
+    val successes: Long,
+    val failures: Long,
+    val lastLatencyMs: Long?,
+    val cooldownRemainingMs: Long,
+    val lastError: String?
+) {
+    val available: Boolean
+        get() = cooldownRemainingMs <= 0L
+}
 
 class MovieProviderRegistry(
-    private val providers: List<MovieProvider>
+    private val providers: List<MovieProvider>,
+    private val nowMs: () -> Long = { System.currentTimeMillis() }
 ) {
     init {
         require(providers.isNotEmpty()) { "MovieProviderRegistry requires at least one provider" }
+        require(providers.map { it.id }.distinct().size == providers.size) {
+            "MovieProviderRegistry provider ids must be unique"
+        }
     }
 
-    private val searchExecutor = Executors.newFixedThreadPool(
-        providers.size.coerceIn(1, 4)
+    private data class ProviderRuntime(
+        var consecutiveFailures: Int = 0,
+        var successes: Long = 0,
+        var failures: Long = 0,
+        var lastLatencyMs: Long? = null,
+        var cooldownUntilMs: Long = 0,
+        var lastError: String? = null
     )
 
-    private val failedProvidersByMediaId =
-        java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
-    private val activeProviderByMediaId =
-        java.util.concurrent.ConcurrentHashMap<String, String>()
+    private data class ProviderSearchResult(
+        val provider: MovieProvider,
+        val items: List<MovieCatalogItem> = emptyList(),
+        val latencyMs: Long = 0,
+        val error: Throwable? = null
+    )
+
+    private val searchExecutor = Executors.newFixedThreadPool(
+        providers.size.coerceIn(1, 6)
+    )
+    private val runtimeByProviderId = ConcurrentHashMap<String, ProviderRuntime>()
+    private val mirrorsByTitleId = ConcurrentHashMap<String, List<MovieCatalogItem>>()
 
     fun search(query: String): List<MediaSummary> {
         val normalizedQuery = query.trim()
@@ -30,64 +63,85 @@ class MovieProviderRegistry(
         if (BILI_URL_REGEX.containsMatchIn(normalizedQuery)) {
             val bili = providers.firstOrNull { it.id == "biliintl" }
                 ?: throw IOException("Bilibili provider is not installed")
-            return bili.search(normalizedQuery).map { it.toMediaSummary() }
+            return runProviderCall(bili) { bili.search(normalizedQuery) }
+                .map { it.toMediaSummary() }
         }
 
-        data class ProviderSearchResult(
-            val providerName: String,
-            val items: List<MovieCatalogItem> = emptyList(),
-            val error: Throwable? = null
-        )
-
-        val futures = providers.map { provider ->
+        val futures = providersForAttempt().map { provider ->
             provider to searchExecutor.submit(
                 Callable {
+                    val started = nowMs()
                     runCatching { provider.search(normalizedQuery) }
                         .fold(
-                            onSuccess = { ProviderSearchResult(provider.displayName, it) },
-                            onFailure = { ProviderSearchResult(provider.displayName, error = it) }
+                            onSuccess = {
+                                ProviderSearchResult(
+                                    provider = provider,
+                                    items = it,
+                                    latencyMs = (nowMs() - started).coerceAtLeast(0)
+                                )
+                            },
+                            onFailure = {
+                                ProviderSearchResult(
+                                    provider = provider,
+                                    latencyMs = (nowMs() - started).coerceAtLeast(0),
+                                    error = it
+                                )
+                            }
                         )
                 }
             )
         }
 
         val searchResults = futures.map { (provider, future) ->
-            runCatching { future.get(8, TimeUnit.SECONDS) }
-                .getOrElse {
+            runCatching { future.get(SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS) }
+                .getOrElse { error ->
                     future.cancel(true)
                     ProviderSearchResult(
-                        providerName = provider.displayName,
-                        error = IOException("${provider.displayName} search timed out", it)
+                        provider = provider,
+                        error = IOException(provider.displayName + " search timed out", error)
                     )
                 }
+        }
+
+        searchResults.forEach { result ->
+            if (result.error == null) {
+                recordSuccess(result.provider, result.latencyMs)
+            } else {
+                recordFailure(result.provider, result.latencyMs, result.error)
+            }
         }
 
         val candidates = searchResults.flatMap { it.items }
         if (candidates.isEmpty()) {
             val errors = searchResults.mapNotNull { result ->
                 result.error?.message?.takeIf { it.isNotBlank() }?.let {
-                    "${result.providerName}: $it"
+                    result.provider.displayName + ": " + it
                 }
             }
-            if (errors.isNotEmpty()) {
-                throw IOException(errors.joinToString(" | "))
-            }
+            if (errors.isNotEmpty()) throw IOException(errors.joinToString(" | "))
+            return emptyList()
         }
 
         return candidates
             .groupBy(::canonicalKey)
             .values
             .mapNotNull { sameMovie ->
-                sameMovie.maxWithOrNull(
-                    compareBy<MovieCatalogItem> { providerPreference(it) }
-                        .thenBy { metadataScore(it) }
+                val orderedMirrors = sameMovie.sortedWith(
+                    compareByDescending<MovieCatalogItem> { candidateScore(it) }
+                        .thenByDescending { metadataScore(it) }
                 )
+                val primary = orderedMirrors.firstOrNull() ?: return@mapNotNull null
+                orderedMirrors.forEach { candidate ->
+                    mirrorsByTitleId[candidate.stableId] = orderedMirrors
+                }
+                primary
             }
             .sortedWith(
                 compareByDescending<MovieCatalogItem> { queryScore(normalizedQuery, it) }
+                    .thenByDescending { candidateScore(it) }
                     .thenByDescending { it.year ?: 0 }
             )
-            .take(24)
+            .take(MAX_SEARCH_RESULTS)
             .map { it.toMediaSummary() }
     }
 
@@ -97,10 +151,62 @@ class MovieProviderRegistry(
     ): MovieDetail {
         val parsed = parseTitleId(mediaId)
             ?: throw IOException("Invalid movie title id")
-        val provider = providers.firstOrNull { it.id == parsed.first }
-            ?: throw IOException("Movie provider not installed: ${parsed.first}")
+        val requestedProvider = providers.firstOrNull { it.id == parsed.first }
+            ?: throw IOException("Movie provider not installed: " + parsed.first)
 
-        return provider.detail(parsed.second)
+        val directCatalog = MovieCatalogItem(
+            providerId = requestedProvider.id,
+            providerName = requestedProvider.displayName,
+            slug = parsed.second,
+            title = mediaTitle.orEmpty().ifBlank { parsed.second.replace('-', ' ') },
+            originalTitle = null,
+            thumbnailUrl = null,
+            year = null,
+            language = null,
+            durationText = null,
+            durationSeconds = null
+        )
+
+        val knownMirrors = mirrorsByTitleId[mediaId].orEmpty()
+        val attempts = buildList {
+            add(
+                knownMirrors.firstOrNull {
+                    it.providerId == parsed.first && it.slug == parsed.second
+                } ?: directCatalog
+            )
+            knownMirrors
+                .filterNot { it.providerId == parsed.first && it.slug == parsed.second }
+                .sortedByDescending(::candidateScore)
+                .forEach(::add)
+        }.distinctBy { it.providerId + ":" + it.slug }
+
+        var lastError: Throwable? = null
+        for ((index, candidate) in attempts.withIndex()) {
+            val provider = providers.firstOrNull { it.id == candidate.providerId } ?: continue
+            if (isCoolingDown(provider.id) && index < attempts.lastIndex) continue
+
+            val detail = runCatching {
+                runProviderCall(provider) { provider.detail(candidate.slug) }
+            }.onFailure { lastError = it }.getOrNull()
+
+            if (detail != null) {
+                if (knownMirrors.isNotEmpty()) {
+                    mirrorsByTitleId[detail.catalog.stableId] = knownMirrors
+                }
+                return detail
+            }
+        }
+
+        throw IOException(
+            buildString {
+                append("Unable to load movie detail")
+                mediaTitle?.takeIf { it.isNotBlank() }?.let { append(": ").append(it) }
+                lastError?.message?.takeIf { it.isNotBlank() }?.let {
+                    append(" (").append(it).append(')')
+                }
+            },
+            lastError
+        )
     }
 
     fun canResolve(mediaId: String): Boolean =
@@ -113,7 +219,7 @@ class MovieProviderRegistry(
     ): MoviePlayback {
         val provider = providers.firstOrNull { it.canResolve(mediaId) }
             ?: throw IOException("No movie provider can resolve this item")
-        return provider.resolve(mediaId)
+        return runProviderCall(provider) { provider.resolve(mediaId) }
     }
 
     fun nartoWatchPageUrl(mediaId: String): String? {
@@ -131,15 +237,127 @@ class MovieProviderRegistry(
     }
 
     fun reportPlaybackFailure(mediaId: String) {
-        // Diagnostic build: keep MotPhim isolated and let Media3 retry the same
-        // exact source. Do not redirect to another provider.
+        providers.firstOrNull { it.canResolve(mediaId) }?.let { provider ->
+            recordFailure(provider, 0, IOException("Playback failed"))
+        }
     }
 
     fun reportPlaybackHealthy(mediaId: String) {
-        // No provider blacklist state in diagnostic mode.
+        providers.firstOrNull { it.canResolve(mediaId) }?.let { provider ->
+            recordSuccess(provider, 0)
+        }
     }
 
+    fun providerHealth(): List<MovieProviderHealth> =
+        providers.map { provider ->
+            val runtime = runtimeByProviderId[provider.id] ?: ProviderRuntime()
+            MovieProviderHealth(
+                providerId = provider.id,
+                providerName = provider.displayName,
+                consecutiveFailures = runtime.consecutiveFailures,
+                successes = runtime.successes,
+                failures = runtime.failures,
+                lastLatencyMs = runtime.lastLatencyMs,
+                cooldownRemainingMs = (runtime.cooldownUntilMs - nowMs()).coerceAtLeast(0),
+                lastError = runtime.lastError
+            )
+        }.sortedByDescending { providerStaticPreference(it.providerId) }
+
     fun isTitle(mediaId: String): Boolean = mediaId.startsWith("movie-title:")
+
+    private fun providersForAttempt(): List<MovieProvider> {
+        val active = providers.filterNot { isCoolingDown(it.id) }
+        return (if (active.isNotEmpty()) active else providers)
+            .sortedByDescending { providerDynamicScore(it.id) }
+    }
+
+    private fun isCoolingDown(providerId: String): Boolean =
+        (runtimeByProviderId[providerId]?.cooldownUntilMs ?: 0L) > nowMs()
+
+    private fun <T> runProviderCall(provider: MovieProvider, block: () -> T): T {
+        val started = nowMs()
+        return try {
+            block().also {
+                recordSuccess(provider, (nowMs() - started).coerceAtLeast(0))
+            }
+        } catch (error: Throwable) {
+            recordFailure(provider, (nowMs() - started).coerceAtLeast(0), error)
+            throw error
+        }
+    }
+
+    private fun recordSuccess(provider: MovieProvider, latencyMs: Long) {
+        runtimeByProviderId.compute(provider.id) { _, existing ->
+            val runtime = existing ?: ProviderRuntime()
+            runtime.successes += 1
+            runtime.consecutiveFailures = 0
+            runtime.lastLatencyMs = latencyMs
+            runtime.cooldownUntilMs = 0
+            runtime.lastError = null
+            runtime
+        }
+    }
+
+    private fun recordFailure(
+        provider: MovieProvider,
+        latencyMs: Long,
+        error: Throwable
+    ) {
+        runtimeByProviderId.compute(provider.id) { _, existing ->
+            val runtime = existing ?: ProviderRuntime()
+            runtime.failures += 1
+            runtime.consecutiveFailures += 1
+            runtime.lastLatencyMs = latencyMs
+            runtime.lastError = error.message ?: error.javaClass.simpleName
+
+            if (runtime.consecutiveFailures >= FAILURE_THRESHOLD) {
+                val exponent =
+                    (runtime.consecutiveFailures - FAILURE_THRESHOLD).coerceIn(0, 4)
+                val cooldown = min(
+                    MAX_COOLDOWN_MS,
+                    BASE_COOLDOWN_MS * (1L shl exponent)
+                )
+                runtime.cooldownUntilMs = nowMs() + cooldown
+            }
+            runtime
+        }
+    }
+
+    private fun candidateScore(item: MovieCatalogItem): Int =
+        providerDynamicScore(item.providerId) + metadataScore(item)
+
+    private fun providerDynamicScore(providerId: String): Int {
+        val runtime = runtimeByProviderId[providerId]
+        val healthAdjustment = when {
+            runtime == null -> 0
+            isCoolingDown(providerId) -> -100
+            runtime.consecutiveFailures > 0 -> -20 * runtime.consecutiveFailures
+            runtime.successes > 0 -> 5
+            else -> 0
+        }
+        val latencyAdjustment = runtime?.lastLatencyMs?.let {
+            when {
+                it <= 500 -> 5
+                it <= 1_500 -> 2
+                it >= 5_000 -> -5
+                else -> 0
+            }
+        } ?: 0
+        return providerStaticPreference(providerId) + healthAdjustment + latencyAdjustment
+    }
+
+    private fun providerStaticPreference(providerId: String): Int =
+        when (providerId) {
+            "biliintl" -> 70
+            "phimapi" -> 65
+            "ophim" -> 62
+            "nguonc" -> 58
+            "phim4k" -> 54
+            "tophim" -> 50
+            "narto" -> 35
+            "motphim" -> 20
+            else -> 10
+        }
 
     private fun parseTitleId(mediaId: String): Pair<String, String>? {
         val parts = mediaId.split(':', limit = 3)
@@ -148,21 +366,15 @@ class MovieProviderRegistry(
         return parts[1] to parts[2]
     }
 
-    private fun canonicalKey(item: MovieCatalogItem): String =
-        normalizeTitle(item.title)
-
-    private fun providerPreference(item: MovieCatalogItem): Int =
-        when (item.providerId) {
-            // Direct Bilibili URLs are explicit user input and should win for that item.
-            "biliintl" -> 50
-            "phimapi" -> 50
-            "nguonc" -> 45
-            "phim4k" -> 43
-            "tophim" -> 40
-            "narto" -> 30
-            "motphim" -> 20
-            else -> 0
-        }
+    private fun canonicalKey(item: MovieCatalogItem): String {
+        val title = normalizeTitle(item.title)
+        val original = normalizeTitle(item.originalTitle.orEmpty())
+        val year = item.year?.toString().orEmpty()
+        return listOf(title, original, year)
+            .filter { it.isNotBlank() }
+            .joinToString("|")
+            .ifBlank { title }
+    }
 
     private fun metadataScore(item: MovieCatalogItem): Int =
         listOf(
@@ -208,6 +420,12 @@ class MovieProviderRegistry(
     }
 
     companion object {
+        private const val SEARCH_TIMEOUT_SECONDS = 8L
+        private const val MAX_SEARCH_RESULTS = 24
+        private const val FAILURE_THRESHOLD = 2
+        private const val BASE_COOLDOWN_MS = 15_000L
+        private const val MAX_COOLDOWN_MS = 120_000L
+
         private val BILI_URL_REGEX = Regex(
             """https?://(?:www\.)?(?:bilibili\.tv|biliintl\.com)/(?:[a-zA-Z]{2}/)?video/\d+""",
             RegexOption.IGNORE_CASE
@@ -217,6 +435,7 @@ class MovieProviderRegistry(
             MovieProviderRegistry(
                 providers = listOf(
                     PhimApiMovieProvider(),
+                    OPhimMovieProvider(),
                     NguonCMovieProvider(),
                     Phim4KMovieProvider(),
                     TophimMovieProvider(),
