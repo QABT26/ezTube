@@ -134,6 +134,89 @@ class MovieProviderRegistryTest {
     }
 
     @Test
+    fun searchKeepsSameTitleDifferentYearsSeparate() {
+        val oldMovie = FakeProvider(
+            id = "phimapi",
+            displayName = "KKPhim",
+            title = "Same Movie",
+            slug = "same-movie-2020"
+        )
+        val remake = object : MovieProvider {
+            override val id = "ophim"
+            override val displayName = "OPhim"
+
+            override fun search(query: String): List<MovieCatalogItem> =
+                listOf(
+                    MovieCatalogItem(
+                        providerId = id,
+                        providerName = displayName,
+                        slug = "same-movie-2026",
+                        title = "Same Movie",
+                        originalTitle = "Same Movie",
+                        thumbnailUrl = null,
+                        year = 2026,
+                        language = "Vietsub",
+                        durationText = null,
+                        durationSeconds = null,
+                        episodeBadge = null,
+                        isSeries = false
+                    )
+                )
+
+            override fun detail(slug: String): MovieDetail =
+                throw UnsupportedOperationException()
+
+            override fun resolve(mediaId: String): MoviePlayback =
+                throw UnsupportedOperationException()
+        }
+
+        val registry = MovieProviderRegistry(
+            providers = listOf(oldMovie, remake),
+            nowMs = { 20_000L }
+        )
+
+        val results = registry.search("Same Movie")
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun playbackDoesNotUseAmbiguousWrongEpisodeMirror() {
+        val primary = FakeProvider(
+            id = "phimapi",
+            displayName = "KKPhim",
+            resolveFails = true,
+            episodes = listOf(
+                "tap-9" to "Tập 9"
+            )
+        )
+        val mirror = FakeProvider(
+            id = "ophim",
+            displayName = "OPhim",
+            episodes = listOf(
+                "tap-1" to "Tập 1",
+                "tap-2" to "Tập 2"
+            )
+        )
+        val registry = MovieProviderRegistry(
+            providers = listOf(primary, mirror),
+            nowMs = { 30_000L }
+        )
+
+        registry.search("Test Movie")
+        val episode = primary.detail("test-movie").episodes.first()
+
+        val result = runCatching {
+            registry.resolve(
+                mediaId = episode.stableId,
+                mediaTitle = episode.toMediaSummary().title
+            )
+        }
+
+        assertTrue(result.isFailure)
+    }
+
+    @Test
     fun repeatedPlaybackFailuresPutProviderIntoCooldown() {
         var now = 5_000L
         val primary = FakeProvider(
