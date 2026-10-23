@@ -4909,15 +4909,14 @@ private fun SearchScreen(
 
     val showSearchFooterActions by remember {
         derivedStateOf {
-            val visible = listState.layoutInfo.visibleItemsInfo
-            val lastVisible = visible.lastOrNull()?.index ?: -1
-            val hasScrollableResults =
-                displayResults.size > visible.size &&
-                    (listState.firstVisibleItemIndex > 0 ||
-                        listState.firstVisibleItemScrollOffset > 0)
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            val userHasScrolled =
+                listState.firstVisibleItemIndex > 0 ||
+                    listState.firstVisibleItemScrollOffset > 0
+
             displayResults.isNotEmpty() &&
-                hasScrollableResults &&
-                lastVisible >= displayResults.lastIndex - 1
+                userHasScrolled &&
+                lastVisible >= displayResults.lastIndex
         }
     }
 
