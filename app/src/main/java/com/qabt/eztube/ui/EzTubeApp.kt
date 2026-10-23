@@ -109,9 +109,14 @@ import java.util.Locale
 private enum class Tab(val label: String) { HOME("Home"), SEARCH("Search"), LIBRARY("Library") }
 private enum class SearchSourceMode { YOUTUBE, MOVIE }
 private enum class YouTubeSearchMode(val label: String) {
-    ALL("All"),
+    ALL("Video"),
     LIVE("Live"),
     SHORTS("Shorts")
+}
+private enum class MovieSearchMode(val label: String) {
+    ALL("Tất cả"),
+    MOVIE("Phim lẻ"),
+    SERIES("Phim bộ")
 }
 private data class SubtitleOption(val label: String, val language: String?)
 private enum class RepeatMode { OFF, ONE, ALL }
@@ -4810,16 +4815,26 @@ private fun SearchScreen(
     var searchError by remember { mutableStateOf<String?>(null) }
     var searchSort by remember { mutableStateOf(SearchSort.RELEVANCE) }
     var youtubeSearchMode by remember { mutableStateOf(YouTubeSearchMode.ALL) }
+    var movieSearchMode by remember { mutableStateOf(MovieSearchMode.ALL) }
     var loadedExtraPages by remember(query, sourceMode, youtubeSearchMode) {
         mutableIntStateOf(0)
     }
     var playlistTarget by remember { mutableStateOf<MediaSummary?>(null) }
-    val displayResults = remember(results, searchSort) {
+    val displayResults = remember(results, searchSort, sourceMode, movieSearchMode) {
+        val sourceFiltered = if (sourceMode == SearchSourceMode.MOVIE) {
+            when (movieSearchMode) {
+                MovieSearchMode.ALL -> results
+                MovieSearchMode.MOVIE -> results.filter { it.isSeries == false }
+                MovieSearchMode.SERIES -> results.filter { it.isSeries == true }
+            }
+        } else {
+            results
+        }
         when (searchSort) {
-            SearchSort.RELEVANCE -> results
-            SearchSort.NEWEST -> results.sortedBy { searchAgeRank(it.uploadDateText) }
-            SearchSort.VIEWS -> results.sortedByDescending { it.viewCount }
-            SearchSort.DURATION -> results.sortedByDescending { it.durationSeconds }
+            SearchSort.RELEVANCE -> sourceFiltered
+            SearchSort.NEWEST -> sourceFiltered.sortedBy { searchAgeRank(it.uploadDateText) }
+            SearchSort.VIEWS -> sourceFiltered.sortedByDescending { it.viewCount }
+            SearchSort.DURATION -> sourceFiltered.sortedByDescending { it.durationSeconds }
         }
     }
 
@@ -4917,6 +4932,7 @@ private fun SearchScreen(
                     if (sourceMode != SearchSourceMode.YOUTUBE) {
                         onSourceModeChange(SearchSourceMode.YOUTUBE)
                         youtubeSearchMode = YouTubeSearchMode.ALL
+                        movieSearchMode = MovieSearchMode.ALL
                         searchError = null
                         onResultsChange(emptyList())
                         if (query.isNotBlank()) {
@@ -4929,13 +4945,14 @@ private fun SearchScreen(
                     }
                 },
                 label = { Text("YouTube", maxLines = 1) },
-                modifier = Modifier.weight(1f).height(40.dp)
+                modifier = Modifier.weight(1f).height(32.dp)
             )
             FilterChip(
                 selected = sourceMode == SearchSourceMode.MOVIE,
                 onClick = {
                     if (sourceMode != SearchSourceMode.MOVIE) {
                         onSourceModeChange(SearchSourceMode.MOVIE)
+                        movieSearchMode = MovieSearchMode.ALL
                         searchError = null
                         onResultsChange(emptyList())
                         if (query.isNotBlank()) submit(query, SearchSourceMode.MOVIE)
@@ -4949,10 +4966,8 @@ private fun SearchScreen(
         OutlinedTextField(
             value = query,
             onValueChange = onQueryChange,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp, max = 104.dp),
-            singleLine = false,
-            minLines = 1,
-            maxLines = 3,
+            modifier = Modifier.fillMaxWidth().height(46.dp),
+            singleLine = true,
             placeholder = {
                 Text(
                     if (sourceMode == SearchSourceMode.MOVIE)
@@ -4973,11 +4988,11 @@ private fun SearchScreen(
             ),
             shape = RoundedCornerShape(16.dp)
         )
-        if (sourceMode == SearchSourceMode.YOUTUBE) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            if (sourceMode == SearchSourceMode.YOUTUBE) {
                 YouTubeSearchMode.entries.forEach { option ->
                     FilterChip(
                         selected = youtubeSearchMode == option,
@@ -4995,8 +5010,32 @@ private fun SearchScreen(
                                 }
                             }
                         },
-                        label = { Text(option.label) },
-                        modifier = Modifier.weight(1f).height(34.dp)
+                        label = {
+                            Text(
+                                option.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1
+                            )
+                        },
+                        modifier = Modifier.weight(1f).height(28.dp)
+                    )
+                }
+            } else {
+                MovieSearchMode.entries.forEach { option ->
+                    FilterChip(
+                        selected = movieSearchMode == option,
+                        onClick = {
+                            movieSearchMode = option
+                            searchSort = SearchSort.RELEVANCE
+                        },
+                        label = {
+                            Text(
+                                option.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1
+                            )
+                        },
+                        modifier = Modifier.weight(1f).height(28.dp)
                     )
                 }
             }
