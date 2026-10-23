@@ -415,7 +415,8 @@ class NewPipeYouTubeSource : YouTubeSource {
     private suspend fun searchStreams(
         query: String,
         predicate: (StreamInfoItem) -> Boolean,
-        badge: String? = null
+        badge: String? = null,
+        extraPages: Int = 0
     ): List<MediaSummary> {
         val normalized = query.trim()
         if (normalized.isEmpty()) return emptyList()
@@ -440,8 +441,18 @@ class NewPipeYouTubeSource : YouTubeSource {
             null
         )
 
-        return SearchInfo.getInfo(service, searchHandler)
-            .relatedItems
+        val first = SearchInfo.getInfo(service, searchHandler)
+        val all = first.relatedItems.toMutableList()
+        var next = first.nextPage
+        var pages = 0
+        while (next != null && pages < extraPages.coerceIn(0, 5)) {
+            val page = SearchInfo.getMoreItems(service, searchHandler, next)
+            all += page.items
+            next = page.nextPage
+            pages += 1
+        }
+
+        return all
             .asSequence()
             .filterIsInstance<StreamInfoItem>()
             .filter(predicate)
@@ -458,6 +469,7 @@ class NewPipeYouTubeSource : YouTubeSource {
                     thumbnailBadge = badge
                 )
             }
+            .distinctBy { it.id }
             .toList()
     }
 
@@ -480,6 +492,33 @@ class NewPipeYouTubeSource : YouTubeSource {
             query,
             predicate = { it.isShortFormContent },
             badge = "SHORT"
+        )
+
+    suspend fun searchMore(query: String, extraPages: Int): List<MediaSummary> =
+        searchStreams(
+            query,
+            predicate = { !it.isShortFormContent },
+            extraPages = extraPages
+        )
+
+    suspend fun searchLiveMore(query: String, extraPages: Int): List<MediaSummary> =
+        searchStreams(
+            query,
+            predicate = {
+                !it.isShortFormContent &&
+                    (it.streamType == StreamType.LIVE_STREAM ||
+                        it.streamType == StreamType.AUDIO_LIVE_STREAM)
+            },
+            badge = "LIVE",
+            extraPages = extraPages
+        )
+
+    suspend fun searchShortsMore(query: String, extraPages: Int): List<MediaSummary> =
+        searchStreams(
+            query,
+            predicate = { it.isShortFormContent },
+            badge = "SHORT",
+            extraPages = extraPages
         )
 
     override suspend fun comments(mediaId: String): CommentsPage {
