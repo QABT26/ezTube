@@ -3133,6 +3133,7 @@ private fun NartoUnlockScreen(
                         }
                     }
                 }
+                }
             }
         }
     }
@@ -4907,28 +4908,18 @@ private fun SearchScreen(
         }
     }
 
-    val userHasScrolledSearch by remember {
+    val showSearchFooterActions by remember {
         derivedStateOf {
-            listState.firstVisibleItemIndex > 0 ||
-                listState.firstVisibleItemScrollOffset > 0
-        }
-    }
-    val nearSearchEnd by remember {
-        derivedStateOf {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            val visible = listState.layoutInfo.visibleItemsInfo
+            val lastVisible = visible.lastOrNull()?.index ?: -1
+            val hasScrollableResults =
+                displayResults.size > visible.size &&
+                    (listState.firstVisibleItemIndex > 0 ||
+                        listState.firstVisibleItemScrollOffset > 0)
             displayResults.isNotEmpty() &&
-                userHasScrolledSearch &&
-                lastVisible >= displayResults.lastIndex - 2
+                hasScrollableResults &&
+                lastVisible >= displayResults.lastIndex - 1
         }
-    }
-
-    LaunchedEffect(
-        nearSearchEnd,
-        displayResults.size,
-        sourceMode,
-        youtubeSearchMode
-    ) {
-        if (nearSearchEnd) loadMore()
     }
 
     Column(modifier.padding(horizontal = 14.dp)) {
@@ -5219,8 +5210,9 @@ private fun SearchScreen(
                         )
                     }
                 }
-                item(key = "search-footer-actions") {
-                    Row(
+                if (showSearchFooterActions) {
+                    item(key = "search-footer-actions") {
+                        Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
