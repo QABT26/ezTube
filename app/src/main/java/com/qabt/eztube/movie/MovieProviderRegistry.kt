@@ -122,9 +122,7 @@ class MovieProviderRegistry(
             return emptyList()
         }
 
-        return candidates
-            .groupBy(::canonicalKey)
-            .values
+        return buildCanonicalGroups(candidates)
             .mapNotNull { sameMovie ->
                 val orderedMirrors = sameMovie.sortedWith(
                     compareByDescending<MovieCatalogItem> { candidateScore(it) }
@@ -427,20 +425,39 @@ class MovieProviderRegistry(
         val runtime = runtimeByProviderId[providerId]
         val healthAdjustment = when {
             runtime == null -> 0
-            isCoolingDown(providerId) -> -100
-            runtime.consecutiveFailures > 0 -> -20 * runtime.consecutiveFailures
-            runtime.successes > 0 -> 5
+            isCoolingDown(providerId) -> -120
+            runtime.consecutiveFailures > 0 -> -25 * runtime.consecutiveFailures
             else -> 0
         }
-        val latencyAdjustment = runtime?.lastLatencyMs?.let {
-            when {
-                it <= 500 -> 5
-                it <= 1_500 -> 2
-                it >= 5_000 -> -5
-                else -> 0
+        val reliabilityAdjustment = runtime?.let {
+            val total = it.successes + it.failures
+            if (total < 3L) {
+                if (it.successes > 0L) 3 else 0
+            } else {
+                val successRatio = it.successes.toDouble() / total.toDouble()
+                when {
+                    successRatio >= 0.95 -> 18
+                    successRatio >= 0.80 -> 10
+                    successRatio >= 0.60 -> 2
+                    successRatio >= 0.40 -> -10
+                    else -> -25
+                }
             }
         } ?: 0
-        return providerStaticPreference(providerId) + healthAdjustment + latencyAdjustment
+        val latencyAdjustment = runtime?.lastLatencyMs?.let {
+            when {
+                it <= 350 -> 10
+                it <= 800 -> 6
+                it <= 1_500 -> 2
+                it <= 3_000 -> 0
+                it <= 5_000 -> -6
+                else -> -12
+            }
+        } ?: 0
+        return providerStaticPreference(providerId) +
+            healthAdjustment +
+            reliabilityAdjustment +
+            latencyAdjustment
     }
 
     private fun providerStaticPreference(providerId: String): Int =
@@ -499,45 +516,69 @@ class MovieProviderRegistry(
     ): MovieEpisodeRef? {
         if (candidates.isEmpty()) return null
 
-        val episodeKey = normalizeEpisodeKey(parsed.episodeKey)
+        return candidates
+            .map { candidate ->
+                candidate to episodeMatchScore(
+                    original = original,
+                    parsed = parsed,
+                    candidate = candidate
+                )
+            }
+            .filter { (_, score) -> score >= MIN_EPISODE_MATCH_SCORE }
+            .maxWithOrNull(
+                compareBy<Pair<MovieEpisodeRef, Int>> { it.second }
+                    .thenByDescending { it.first.episodeIndex }
+            )
+            ?.first
+    }
+
+    private fun episodeMatchScore(
+        original: MovieEpisodeRef?,
+        parsed: ParsedEpisodeId,
+        candidate: MovieEpisodeRef
+    ): Int {
+        var score = 0
+
+        val parsedKey = normalizeEpisodeKey(parsed.episodeKey)
+        val candidateSlug = normalizeEpisodeKey(candidate.episodeSlug)
+        val candidateName = normalizeEpisodeKey(candidate.episodeName)
+        val candidateServer = normalizeEpisodeKey(candidate.serverName)
+
         val originalSlug = normalizeEpisodeKey(original?.episodeSlug.orEmpty())
         val originalName = normalizeEpisodeKey(original?.episodeName.orEmpty())
+        val originalServer = normalizeEpisodeKey(original?.serverName.orEmpty())
+
+        if (parsedKey.isNotBlank() && candidateSlug == parsedKey) score += 100
+        if (originalSlug.isNotBlank() && candidateSlug == originalSlug) score += 100
+        if (originalName.isNotBlank() && candidateName == originalName) score += 90
+
         val originalNumber = episodeNumber(
             original?.episodeName.orEmpty() + " " +
                 original?.episodeSlug.orEmpty() + " " +
                 parsed.episodeKey
         )
+        val candidateNumber = episodeNumber(
+            candidate.episodeName + " " + candidate.episodeSlug
+        )
+        if (originalNumber != null && candidateNumber == originalNumber) score += 80
 
-        candidates.firstOrNull {
-            normalizeEpisodeKey(it.episodeSlug) == episodeKey ||
-                (originalSlug.isNotBlank() &&
-                    normalizeEpisodeKey(it.episodeSlug) == originalSlug)
-        }?.let { return it }
-
-        candidates.firstOrNull {
-            originalName.isNotBlank() &&
-                normalizeEpisodeKey(it.episodeName) == originalName
-        }?.let { return it }
-
-        if (originalNumber != null) {
-            candidates.firstOrNull {
-                episodeNumber(it.episodeName + " " + it.episodeSlug) == originalNumber
-            }?.let { return it }
+        if (originalServer.isNotBlank() && candidateServer == originalServer) score += 15
+        if (
+            original == null &&
+            normalizeEpisodeKey(parsed.serverName).isNotBlank() &&
+            candidateServer == normalizeEpisodeKey(parsed.serverName)
+        ) {
+            score += 10
         }
 
-        if (original != null) {
-            val sameServer = candidates.filter {
-                normalizeEpisodeKey(it.serverName) ==
-                    normalizeEpisodeKey(original.serverName)
-            }
-            sameServer.getOrNull(original.episodeIndex)?.let { return it }
-            candidates.getOrNull(original.episodeIndex)?.let { return it }
+        if (original != null && candidate.episodeIndex == original.episodeIndex) score += 20
+        if (original?.language != null &&
+            candidate.language?.equals(original.language, ignoreCase = true) == true
+        ) {
+            score += 5
         }
 
-        return candidates.firstOrNull {
-            normalizeEpisodeKey(it.serverName) ==
-                normalizeEpisodeKey(parsed.serverName)
-        }
+        return score
     }
 
     private fun normalizeEpisodeKey(value: String): String =
@@ -553,12 +594,68 @@ class MovieProviderRegistry(
             ?.getOrNull(1)
             ?.toIntOrNull()
 
+    private fun buildCanonicalGroups(
+        candidates: List<MovieCatalogItem>
+    ): List<List<MovieCatalogItem>> {
+        val groups = mutableListOf<MutableList<MovieCatalogItem>>()
 
-    private fun canonicalKey(item: MovieCatalogItem): String {
-        val title = normalizeTitle(item.title)
-            .ifBlank { normalizeTitle(item.originalTitle.orEmpty()) }
-        val year = item.year?.toString().orEmpty()
-        return if (year.isBlank()) title else title + "|" + year
+        for (candidate in candidates) {
+            val matching = groups.firstOrNull { group ->
+                group.any { existing -> sameMovieIdentity(existing, candidate) }
+            }
+            if (matching != null) {
+                matching += candidate
+            } else {
+                groups += mutableListOf(candidate)
+            }
+        }
+
+        return groups
+    }
+
+    private fun sameMovieIdentity(
+        left: MovieCatalogItem,
+        right: MovieCatalogItem
+    ): Boolean {
+        if (
+            left.isSeries != null &&
+            right.isSeries != null &&
+            left.isSeries != right.isSeries
+        ) return false
+
+        if (
+            left.year != null &&
+            right.year != null &&
+            kotlin.math.abs(left.year - right.year) > 1
+        ) return false
+
+        val leftTitles = normalizedMovieTitles(left)
+        val rightTitles = normalizedMovieTitles(right)
+
+        if (leftTitles.any { it in rightTitles }) return true
+
+        val bestOverlap = leftTitles.maxOfOrNull { a ->
+            rightTitles.maxOfOrNull { b -> tokenSimilarity(a, b) } ?: 0.0
+        } ?: 0.0
+
+        return bestOverlap >= 0.82
+    }
+
+    private fun normalizedMovieTitles(item: MovieCatalogItem): Set<String> =
+        buildSet {
+            normalizeTitle(item.title).takeIf { it.isNotBlank() }?.let(::add)
+            normalizeTitle(item.originalTitle.orEmpty())
+                .takeIf { it.isNotBlank() }
+                ?.let(::add)
+        }
+
+    private fun tokenSimilarity(left: String, right: String): Double {
+        val a = left.split(' ').filter { it.length >= 2 }.toSet()
+        val b = right.split(' ').filter { it.length >= 2 }.toSet()
+        if (a.isEmpty() || b.isEmpty()) return 0.0
+        val intersection = a.intersect(b).size.toDouble()
+        val union = a.union(b).size.toDouble()
+        return if (union == 0.0) 0.0 else intersection / union
     }
 
     private fun metadataScore(item: MovieCatalogItem): Int =
@@ -608,6 +705,7 @@ class MovieProviderRegistry(
         private const val SEARCH_TIMEOUT_SECONDS = 8L
         private const val MAX_SEARCH_RESULTS = 24
         private const val FAILURE_THRESHOLD = 2
+        private const val MIN_EPISODE_MATCH_SCORE = 70
         private const val BASE_COOLDOWN_MS = 15_000L
         private const val MAX_COOLDOWN_MS = 120_000L
 
