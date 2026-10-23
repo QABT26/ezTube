@@ -11,7 +11,12 @@ class MovieProviderRegistryTest {
         override val displayName: String,
         private val title: String = "Test Movie",
         private val slug: String = "test-movie",
-        private val detailFails: Boolean = false
+        private val detailFails: Boolean = false,
+        private val resolveFails: Boolean = false,
+        private val episodes: List<Pair<String, String>> = listOf(
+            "tap-1" to "Tập 1",
+            "tap-2" to "Tập 2"
+        )
     ) : MovieProvider {
         override fun search(query: String): List<MovieCatalogItem> =
             listOf(
@@ -36,30 +41,32 @@ class MovieProviderRegistryTest {
             val catalog = search(title).first()
             return MovieDetail(
                 catalog = catalog,
-                episodes = listOf(
+                episodes = episodes.mapIndexed { index, (episodeSlug, episodeName) ->
                     MovieEpisodeRef(
                         providerId = id,
                         providerName = displayName,
                         movieSlug = slug,
                         movieTitle = title,
                         serverIndex = 0,
-                        episodeIndex = 0,
+                        episodeIndex = index,
                         serverName = "Vietsub",
-                        episodeSlug = "full",
-                        episodeName = "Video",
+                        episodeSlug = episodeSlug,
+                        episodeName = episodeName,
                         thumbnailUrl = catalog.thumbnailUrl,
                         durationSeconds = catalog.durationSeconds,
                         language = catalog.language
                     )
-                )
+                }
             )
         }
 
-        override fun resolve(mediaId: String): MoviePlayback =
-            MoviePlayback(
+        override fun resolve(mediaId: String): MoviePlayback {
+            if (resolveFails) throw IOException(displayName + " playback unavailable")
+            return MoviePlayback(
                 mediaId = mediaId,
                 hlsUrl = "https://example.com/" + id + "/master.m3u8"
             )
+        }
     }
 
     @Test
@@ -90,6 +97,40 @@ class MovieProviderRegistryTest {
         assertEquals("ophim", detail.catalog.providerId)
         assertEquals("OPhim", detail.catalog.providerName)
         assertTrue(detail.episodes.first().stableId.startsWith("movie:ophim:"))
+    }
+
+    @Test
+    fun playbackFallsBackToMatchingEpisodeOnMirrorProvider() {
+        val primary = FakeProvider(
+            id = "phimapi",
+            displayName = "KKPhim",
+            resolveFails = true
+        )
+        val mirror = FakeProvider(
+            id = "ophim",
+            displayName = "OPhim"
+        )
+        val registry = MovieProviderRegistry(
+            providers = listOf(primary, mirror),
+            nowMs = { 10_000L }
+        )
+
+        registry.search("Test Movie")
+        val primaryDetail = registry.detail(
+            mediaId = "movie-title:phimapi:test-movie",
+            mediaTitle = "Test Movie"
+        )
+        val episodeTwo = primaryDetail.episodes.first {
+            it.episodeSlug == "tap-2"
+        }
+
+        val playback = registry.resolve(
+            mediaId = episodeTwo.stableId,
+            mediaTitle = episodeTwo.toMediaSummary().title
+        )
+
+        assertTrue(playback.mediaId.startsWith("movie:ophim:"))
+        assertTrue(playback.hlsUrl.orEmpty().contains("/ophim/"))
     }
 
     @Test
