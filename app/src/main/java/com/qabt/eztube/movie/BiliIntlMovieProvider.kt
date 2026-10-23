@@ -157,7 +157,7 @@ class BiliIntlMovieProvider(
         // Validate availability now, but do not keep temporary CDN URLs.
         val play = fetchPlayUrl(slug)
 
-        if (play.videoStreams.isEmpty() || play.audioUrl.isNullOrBlank()) {
+        if (play.videos.isEmpty() || play.audios.isEmpty()) {
             throw IOException("Bilibili returned no playable video/audio pair")
         }
 
@@ -204,36 +204,66 @@ class BiliIntlMovieProvider(
 
         // Resolve on every play because Bilibili CDN URLs are temporary.
         val play = fetchPlayUrl(aid)
-        if (play.videoStreams.isEmpty()) {
+        if (play.videos.isEmpty()) {
             throw IOException("Bilibili returned no video streams")
         }
-        val audioUrl = play.audioUrl
-            ?: throw IOException("Bilibili returned no audio stream")
+        if (play.audios.isEmpty()) {
+            throw IOException("Bilibili returned no audio stream")
+        }
 
         val headers = mapOf(
             "User-Agent" to USER_AGENT,
             "Referer" to "$WEB_BASE/"
         )
-        val probeVideo = play.videoStreams.maxByOrNull { it.height ?: 0 }
-            ?: throw IOException("Bilibili returned no video streams")
-        val videoHttp = probeMedia(probeVideo.url, headers, "video")
-        val audioHttp = probeMedia(audioUrl, headers, "audio")
+
+        val videoStreams = play.videos.mapNotNull { resource ->
+            val selectedUrl = firstReachableMediaUrl(
+                urls = resource.urls,
+                headers = headers,
+                label = "video"
+            ) ?: return@mapNotNull null
+            MovieVideoStream(
+                url = selectedUrl,
+                mimeType = resource.mimeType,
+                width = resource.width,
+                height = resource.height,
+                bitrate = resource.bitrate,
+                codecs = resource.codecs
+            )
+        }
+        if (videoStreams.isEmpty()) {
+            throw IOException("Bilibili video CDN mirrors are unavailable")
+        }
+
+        val selectedAudio = play.audios
+            .sortedByDescending { it.bitrate }
+            .firstNotNullOfOrNull { resource ->
+                firstReachableMediaUrl(
+                    urls = resource.urls,
+                    headers = headers,
+                    label = "audio"
+                )?.let { url -> resource to url }
+            }
+            ?: throw IOException("Bilibili audio CDN mirrors are unavailable")
+
+        val audioResource = selectedAudio.first
+        val audioUrl = selectedAudio.second
         val subtitles = runCatching { fetchSubtitles(aid) }.getOrDefault(emptyList())
 
         return MoviePlayback(
             mediaId = mediaId,
-            videoStreams = play.videoStreams,
+            videoStreams = videoStreams,
             audioUrl = audioUrl,
-            audioMimeType = play.audioMimeType,
+            audioMimeType = audioResource.mimeType,
             subtitles = subtitles,
             requestHeaders = headers,
             diagnostic = buildString {
                 append("Provider: Bilibili")
                 append("\nAID: ").append(aid)
                 append("\nPlay API: OK")
-                append("\nVideo streams: ").append(play.videoStreams.size)
-                append("\nVideo CDN: HTTP ").append(videoHttp)
-                append("\nAudio CDN: HTTP ").append(audioHttp)
+                append("\nVideo streams: ").append(videoStreams.size)
+                append("\nVideo CDN: reachable mirror selected")
+                append("\nAudio CDN: reachable mirror selected")
                 append("\nSubtitles: ").append(subtitles.size)
             }
         )
@@ -249,10 +279,24 @@ class BiliIntlMovieProvider(
         val thumbnail: String?
     )
 
+    private data class PlayVideoResource(
+        val urls: List<String>,
+        val mimeType: String?,
+        val width: Int?,
+        val height: Int?,
+        val bitrate: Int?,
+        val codecs: String?
+    )
+
+    private data class PlayAudioResource(
+        val urls: List<String>,
+        val mimeType: String?,
+        val bitrate: Int
+    )
+
     private data class PlayResult(
-        val videoStreams: List<MovieVideoStream>,
-        val audioUrl: String?,
-        val audioMimeType: String?
+        val videos: List<PlayVideoResource>,
+        val audios: List<PlayAudioResource>
     )
 
     private fun parseVideoUrl(value: String): ParsedVideo? {
@@ -336,17 +380,17 @@ class BiliIntlMovieProvider(
         val playurl = data.getObject("playurl")
             ?: throw IOException("Bilibili play API has no playurl")
 
-        val streams = mutableListOf<MovieVideoStream>()
+        val videosOut = mutableListOf<PlayVideoResource>()
         val videos = playurl.getArray("video")
         if (videos != null) {
             for (index in 0 until videos.size) {
                 val video = videos.getObject(index) ?: continue
                 val resource = video.getObject("video_resource") ?: continue
-                val urlValue = resource.getString("url").orEmpty().trim()
-                if (urlValue.isBlank()) continue
+                val urls = resourceUrls(resource)
+                if (urls.isEmpty()) continue
 
-                streams += MovieVideoStream(
-                    url = urlValue,
+                videosOut += PlayVideoResource(
+                    urls = urls,
                     mimeType = resource.getString("mimetype")
                         ?.takeIf { it.isNotBlank() }
                         ?: "video/mp4",
@@ -358,28 +402,60 @@ class BiliIntlMovieProvider(
             }
         }
 
+        val audiosOut = mutableListOf<PlayAudioResource>()
         val audios = playurl.getArray("audio_resource")
-        var bestAudio: JsonObject? = null
         if (audios != null) {
             for (index in 0 until audios.size) {
                 val candidate = audios.getObject(index) ?: continue
-                val candidateUrl = candidate.getString("url").orEmpty().trim()
-                if (candidateUrl.isBlank()) continue
-                val currentBitrate = bestAudio?.getInt("bandwidth") ?: -1
-                val bitrate = candidate.getInt("bandwidth")
-                if (bestAudio == null || bitrate > currentBitrate) {
-                    bestAudio = candidate
-                }
+                val urls = resourceUrls(candidate)
+                if (urls.isEmpty()) continue
+                audiosOut += PlayAudioResource(
+                    urls = urls,
+                    mimeType = candidate.getString("mimetype")
+                        ?.takeIf { it.isNotBlank() }
+                        ?: "audio/mp4",
+                    bitrate = candidate.getInt("bandwidth")
+                )
             }
         }
 
         return PlayResult(
-            videoStreams = streams.distinctBy { it.url },
-            audioUrl = bestAudio?.getString("url")?.trim()?.takeIf { it.isNotBlank() },
-            audioMimeType = bestAudio?.getString("mimetype")
-                ?.takeIf { it.isNotBlank() }
-                ?: "audio/mp4"
+            videos = videosOut,
+            audios = audiosOut
         )
+    }
+
+    private fun resourceUrls(resource: JsonObject): List<String> {
+        val urls = mutableListOf<String>()
+        resource.getString("url")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let(urls::add)
+
+        listOf("backup_url", "backupUrl").forEach { key ->
+            val backups = resource.getArray(key) ?: return@forEach
+            for (index in 0 until backups.size) {
+                backups.getString(index)
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(urls::add)
+            }
+        }
+        return urls.distinct()
+    }
+
+    private fun firstReachableMediaUrl(
+        urls: List<String>,
+        headers: Map<String, String>,
+        label: String
+    ): String? {
+        urls.forEach { url ->
+            val reachable = runCatching {
+                probeMedia(url, headers, label)
+            }.isSuccess
+            if (reachable) return url
+        }
+        return null
     }
 
     private fun fetchSubtitles(aid: String): List<MovieSubtitle> {

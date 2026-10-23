@@ -92,6 +92,7 @@ import com.qabt.eztube.movie.MovieProviderRegistry
 import com.qabt.eztube.local.LocalMediaKind
 import com.qabt.eztube.local.LocalMediaRepository
 import com.qabt.eztube.movie.MovieDetail
+import com.qabt.eztube.movie.narto.NartoStreamSniffer
 import com.qabt.eztube.youtube.MediaSummary
 import com.qabt.eztube.youtube.ChannelSummary
 import com.qabt.eztube.youtube.PlaylistSummary
@@ -99,6 +100,7 @@ import com.qabt.eztube.youtube.PlaylistDetail
 import com.qabt.eztube.youtube.NewPipeYouTubeSource
 import com.qabt.eztube.youtube.CommentsPage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -107,9 +109,14 @@ import java.util.Locale
 private enum class Tab(val label: String) { HOME("Home"), SEARCH("Search"), LIBRARY("Library") }
 private enum class SearchSourceMode { YOUTUBE, MOVIE }
 private enum class YouTubeSearchMode(val label: String) {
-    ALL("All"),
+    ALL("Video"),
     LIVE("Live"),
     SHORTS("Shorts")
+}
+private enum class MovieSearchMode(val label: String) {
+    ALL("Tất cả"),
+    MOVIE("Phim lẻ"),
+    SERIES("Phim bộ")
 }
 private data class SubtitleOption(val label: String, val language: String?)
 private enum class RepeatMode { OFF, ONE, ALL }
@@ -270,6 +277,8 @@ fun EzTubeApp(
     var playbackEngine by remember { mutableStateOf(PlaybackService.ENGINE_DIRECT) }
     var movieDiagnostic by remember { mutableStateOf<String?>(null) }
     var sabrDiagnostic by remember { mutableStateOf<String?>(null) }
+    var nartoDiagnostic by remember { mutableStateOf<String?>(null) }
+    var nartoDiagnosticRunning by remember { mutableStateOf(false) }
     var developerUnlocked by remember {
         mutableStateOf(playbackPrefs.loadDeveloperUnlocked())
     }
@@ -303,6 +312,11 @@ fun EzTubeApp(
         mutableStateOf(RepeatMode.entries.getOrElse(playbackPrefs.loadRepeatMode()) { RepeatMode.OFF })
     }
     var showSettings by remember { mutableStateOf(false) }
+    var nartoUnlockMedia by remember { mutableStateOf<MediaSummary?>(null) }
+    var nartoUnlockPageUrl by remember { mutableStateOf<String?>(null) }
+    var nartoUnlockStartPositionMs by remember { mutableLongStateOf(0L) }
+    var nartoUnlockStatus by remember { mutableStateOf<String?>(null) }
+    var nartoSessionUnlocked by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -360,6 +374,11 @@ fun EzTubeApp(
     var movieDetailLoading by remember { mutableStateOf(false) }
     var movieDetailError by remember { mutableStateOf<String?>(null) }
     var movieDetailFocusId by remember { mutableStateOf<String?>(null) }
+
+    val currentAutoplay = rememberUpdatedState(autoplay)
+    val currentSleepMinutes = rememberUpdatedState(sleepMinutes)
+    val currentQueue = rememberUpdatedState(queue)
+    val currentQueueIndex = rememberUpdatedState(queueIndex)
 
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -465,6 +484,45 @@ fun EzTubeApp(
                             // completion immediately in Compose so the sleep UI does not
                             // stay highlighted after playback has stopped.
                             sleepMinutes = null
+                        }
+
+                        if (
+                            state == Player.STATE_ENDED &&
+                            currentAutoplay.value &&
+                            currentSleepMinutes.value != -1 &&
+                            currentQueueIndex.value in currentQueue.value.indices &&
+                            currentQueueIndex.value < currentQueue.value.lastIndex
+                        ) {
+                            val activeQueue = currentQueue.value
+                            val activeIndex = currentQueueIndex.value
+                            val nextIndex = activeIndex + 1
+                            val next = activeQueue[nextIndex]
+
+                            if (next.id.startsWith("movie:narto:")) {
+                                queueIndex = nextIndex
+                                playbackPrefs.saveQueue(activeQueue, nextIndex)
+                                nowPlaying = next
+                                val nextPage = movieProviders.nartoWatchPageUrl(next.id)
+                                if (nextPage != null) {
+                                    nartoUnlockMedia = next
+                                    nartoUnlockPageUrl = nextPage
+                                    nartoUnlockStartPositionMs = 0L
+                                    nartoUnlockStatus = null
+                                    showPlayer = false
+                                } else {
+                                    errorMessage = "Unable to open next Narto episode"
+                                }
+                            } else {
+                                mediaController.sendCustomCommand(
+                                    androidx.media3.session.SessionCommand(
+                                        PlaybackService.COMMAND_MOVE_QUEUE,
+                                        android.os.Bundle.EMPTY
+                                    ),
+                                    android.os.Bundle().apply {
+                                        putInt(PlaybackService.ARG_DELTA, 1)
+                                    }
+                                )
+                            }
                         }
                     }
                     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -600,6 +658,26 @@ fun EzTubeApp(
     fun moveQueue(delta: Int) {
         val active = controller ?: return
         if (delta == 0) return
+
+        val targetIndex = queueIndex + delta
+        val target = queue.getOrNull(targetIndex)
+        if (target?.id?.startsWith("movie:narto:") == true) {
+            queueIndex = targetIndex
+            playbackPrefs.saveQueue(queue, queueIndex)
+            nowPlaying = target
+            val pageUrl = movieProviders.nartoWatchPageUrl(target.id)
+            if (pageUrl == null) {
+                errorMessage = "Unable to open Narto episode"
+                return
+            }
+            nartoUnlockMedia = target
+            nartoUnlockPageUrl = pageUrl
+            nartoUnlockStartPositionMs = 0L
+            nartoUnlockStatus = null
+            showPlayer = false
+            return
+        }
+
         active.sendCustomCommand(
             androidx.media3.session.SessionCommand(
                 PlaybackService.COMMAND_MOVE_QUEUE,
@@ -680,6 +758,60 @@ fun EzTubeApp(
         )
     }
 
+    fun warmMedia(media: MediaSummary) {
+        val active = controller ?: return
+        if (media.id.startsWith("movie-title:")) return
+        if (media.id.startsWith("movie:narto:")) return
+
+        active.sendCustomCommand(
+            androidx.media3.session.SessionCommand(
+                PlaybackService.COMMAND_WARM_MEDIA,
+                android.os.Bundle.EMPTY
+            ),
+            android.os.Bundle().apply {
+                putString(PlaybackService.ARG_MEDIA_ID, media.id)
+                putString(PlaybackService.ARG_MEDIA_TITLE, media.title)
+                putString(PlaybackService.ARG_MEDIA_CHANNEL, media.channel)
+                media.thumbnailUrl?.let {
+                    putString(PlaybackService.ARG_MEDIA_THUMBNAIL, it)
+                }
+            }
+        )
+    }
+
+    LaunchedEffect(controller, searchResults) {
+        if (controller == null) return@LaunchedEffect
+        delay(220L)
+        searchResults
+            .asSequence()
+            .filterNot { it.id.startsWith("movie-title:") }
+            .filterNot { it.id.startsWith("movie:narto:") }
+            .take(3)
+            .forEach(::warmMedia)
+    }
+
+    LaunchedEffect(controller, homeSuggestions, trending) {
+        if (controller == null) return@LaunchedEffect
+        delay(350L)
+        (homeSuggestions.take(2) + trending.take(1))
+            .distinctBy { it.id }
+            .filterNot { it.id.startsWith("movie-title:") }
+            .filterNot { it.id.startsWith("movie:narto:") }
+            .forEach(::warmMedia)
+    }
+
+    LaunchedEffect(controller, movieDetail) {
+        if (controller == null) return@LaunchedEffect
+        delay(120L)
+        movieDetail
+            ?.episodes
+            ?.asSequence()
+            ?.map { it.toMediaSummary() }
+            ?.filterNot { it.id.startsWith("movie:narto:") }
+            ?.take(2)
+            ?.forEach(::warmMedia)
+    }
+
     fun playMedia(media: MediaSummary, startPositionMs: Long = 0L) {
         if (resolvingId != null) return
 
@@ -746,6 +878,22 @@ fun EzTubeApp(
         }
         playbackPrefs.saveQueue(queue, queueIndex.coerceAtLeast(0))
 
+        if (media.id.startsWith("movie:narto:")) {
+            val pageUrl = movieProviders.nartoWatchPageUrl(media.id)
+            if (pageUrl == null) {
+                errorMessage = "Unable to open Narto episode"
+                resolvingId = null
+                return
+            }
+            nartoUnlockMedia = media
+            nartoUnlockPageUrl = pageUrl
+            nartoUnlockStartPositionMs = startPositionMs.coerceAtLeast(0L)
+            nartoUnlockStatus = null
+            resolvingId = null
+            showPlayer = false
+            return
+        }
+
         val args = android.os.Bundle().apply {
             putLong(PlaybackService.ARG_POSITION_MS, startPositionMs.coerceAtLeast(0L))
             putBoolean(PlaybackService.ARG_PLAY_WHEN_READY, true)
@@ -774,6 +922,90 @@ fun EzTubeApp(
                 }
                 .onFailure {
                     errorMessage = it.message ?: "Unable to play this item"
+                }
+            if (resolvingId == media.id) resolvingId = null
+        }, context.mainExecutor)
+    }
+
+    fun playCapturedNartoHls(
+        hlsUrl: String,
+        subtitleUrl: String?,
+        requestHeaders: Map<String, String> = emptyMap()
+    ) {
+        val media = nartoUnlockMedia ?: return
+        val pageUrl = nartoUnlockPageUrl ?: return
+        val active = controller ?: run {
+            nartoUnlockStatus = "Playback service is not ready yet"
+            return
+        }
+
+        nartoUnlockStatus = "Starting Narto stream…"
+        resolvingId = media.id
+
+        val args = android.os.Bundle().apply {
+            putString(PlaybackService.ARG_HLS_URL, hlsUrl)
+            putString(PlaybackService.ARG_REFERER, pageUrl)
+            subtitleUrl?.takeIf { it.isNotBlank() }?.let {
+                putString(PlaybackService.ARG_SUBTITLE_URL, it)
+            }
+            if (requestHeaders.isNotEmpty()) {
+                putString(
+                    PlaybackService.ARG_REQUEST_HEADERS_JSON,
+                    org.json.JSONObject(requestHeaders).toString()
+                )
+            }
+            putLong(
+                PlaybackService.ARG_POSITION_MS,
+                nartoUnlockStartPositionMs.coerceAtLeast(0L)
+            )
+            putBoolean(PlaybackService.ARG_PLAY_WHEN_READY, true)
+        }
+
+        val future = active.sendCustomCommand(
+            androidx.media3.session.SessionCommand(
+                PlaybackService.COMMAND_PLAY_DIRECT_HLS,
+                android.os.Bundle.EMPTY
+            ),
+            args
+        )
+
+        future.addListener({
+            runCatching { future.get() }
+                .onSuccess { result ->
+                    if (
+                        result.resultCode ==
+                        androidx.media3.session.SessionResult.RESULT_SUCCESS
+                    ) {
+                        playerError = null
+                        errorMessage = null
+                        movieDiagnostic =
+                            "Provider: Narto Drama\nPlayback: interactive website unlock\nMedia3: signed HLS"
+                        playbackPrefs.save(
+                            media,
+                            nartoUnlockStartPositionMs.coerceAtLeast(0L)
+                        )
+                        scope.launch(Dispatchers.IO) {
+                            history.record(
+                                media,
+                                nartoUnlockStartPositionMs.coerceAtLeast(0L),
+                                0L
+                            )
+                        }
+                        nartoUnlockMedia = null
+                        nartoUnlockPageUrl = null
+                        nartoUnlockStartPositionMs = 0L
+                        nartoUnlockStatus = null
+                        showPlayer = true
+                    } else {
+                        nartoUnlockStatus =
+                            result.extras.getString(
+                                PlaybackService.ARG_ERROR_MESSAGE
+                            ) ?: "Unable to start Narto stream"
+                    }
+                }
+                .onFailure { error ->
+                    nartoUnlockStatus =
+                        error.message ?: "Unable to start Narto stream"
                 }
             if (resolvingId == media.id) resolvingId = null
         }, context.mainExecutor)
@@ -1158,7 +1390,9 @@ fun EzTubeApp(
         sleepMinutes = null
     }
 
-    LaunchedEffect(homeRefreshToken, trendingTopics, trendingLanguage) {
+    LaunchedEffect(selected, homeRefreshToken, trendingTopics, trendingLanguage) {
+        if (selected != Tab.HOME) return@LaunchedEffect
+        delay(450L)
         trendingLoading = true
         val topicOrder = listOf("Music", "Podcasts", "Gaming", "Movies", "Live")
         val selectedTopics = topicOrder.filter { it in trendingTopics }.ifEmpty { listOf("Music") }
@@ -1193,7 +1427,9 @@ fun EzTubeApp(
         trendingLoading = false
     }
 
-    LaunchedEffect(recent.firstOrNull()?.mediaId, favorites.firstOrNull()?.mediaId, recentSearches, homeRefreshToken) {
+    LaunchedEffect(selected, recent.firstOrNull()?.mediaId, favorites.firstOrNull()?.mediaId, recentSearches, homeRefreshToken) {
+        if (selected != Tab.HOME) return@LaunchedEffect
+        delay(120L)
         val searchSeeds = recentSearches.filter { it.isNotBlank() }.distinct().take(5)
         val tasteSeeds = (favorites.map { it.channel } + recent.map { it.channel })
             .filter { it.isNotBlank() }.distinct().take(3)
@@ -1217,7 +1453,9 @@ fun EzTubeApp(
         homeLoading = false
     }
 
-    LaunchedEffect(recentSearches, recent.firstOrNull()?.mediaId, homeRefreshToken) {
+    LaunchedEffect(selected, recentSearches, recent.firstOrNull()?.mediaId, homeRefreshToken) {
+        if (selected != Tab.HOME) return@LaunchedEffect
+        delay(700L)
         val movieSeeds = (
             recentSearches.filter { it.isNotBlank() } +
                 recent
@@ -1320,7 +1558,27 @@ fun EzTubeApp(
             }
         } else {
         Box(Modifier.fillMaxSize()) {
-        if (movieDetail != null || movieDetailLoading || movieDetailError != null) {
+        if (nartoUnlockMedia != null && nartoUnlockPageUrl != null) {
+            NartoUnlockScreen(
+                media = requireNotNull(nartoUnlockMedia),
+                pageUrl = requireNotNull(nartoUnlockPageUrl),
+                status = nartoUnlockStatus,
+                sessionPreviouslyUnlocked = nartoSessionUnlocked,
+                onSessionUnlocked = { nartoSessionUnlocked = true },
+                onStreamCaptured = { mediaUrl, subtitleUrl, requestHeaders ->
+                    if (nartoUnlockMedia != null) {
+                        playCapturedNartoHls(mediaUrl, subtitleUrl, requestHeaders)
+                    }
+                },
+                onCancel = {
+                    nartoUnlockMedia = null
+                    nartoUnlockPageUrl = null
+                    nartoUnlockStartPositionMs = 0L
+                    nartoUnlockStatus = null
+                    resolvingId = null
+                }
+            )
+        } else if (movieDetail != null || movieDetailLoading || movieDetailError != null) {
             Scaffold(bottomBar = {
                 nowPlaying?.let { media -> MiniPlayer(
                     media = media,
@@ -1464,6 +1722,7 @@ fun EzTubeApp(
                     videoMode = videoMode,
                     playbackSpeed = playbackSpeed,
                     compatibilityFallback = compatibilityFallback,
+                    isResolving = resolvingId == nowPlaying?.id,
                     isBuffering = isBuffering,
                     playerError = playerError ?: errorMessage,
                     movieDiagnostic = movieDiagnostic,
@@ -1786,6 +2045,26 @@ fun EzTubeApp(
                 },
                 developerUnlocked = developerUnlocked,
                 developerMode = developerMode,
+                nartoDiagnostic = nartoDiagnostic,
+                nartoDiagnosticRunning = nartoDiagnosticRunning,
+                onRunNartoDiagnostic = { diagnosticQuery ->
+                    if (!nartoDiagnosticRunning) {
+                        scope.launch {
+                            nartoDiagnosticRunning = true
+                            nartoDiagnostic = "Running Narto diagnostics…"
+                            nartoDiagnostic = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    movieProviders.diagnoseNarto(diagnosticQuery)
+                                }.getOrElse { error ->
+                                    "Narto diagnostics failed\n" +
+                                        error.javaClass.simpleName + ": " +
+                                        (error.message ?: "unknown error")
+                                }
+                            }
+                            nartoDiagnosticRunning = false
+                        }
+                    }
+                },
                 onDeveloperMode = {
                     developerMode = it
                     playbackPrefs.saveDeveloperMode(it)
@@ -1797,6 +2076,8 @@ fun EzTubeApp(
                 onDeveloperLock = {
                     developerMode = false
                     developerUnlocked = false
+                    nartoDiagnostic = null
+                    nartoDiagnosticRunning = false
                     playbackPrefs.saveDeveloperMode(false)
                     playbackPrefs.saveDeveloperUnlocked(false)
                 },
@@ -2148,6 +2429,1659 @@ private fun AppHeader(onSettings: () -> Unit, onDoubleTapCenter: () -> Unit) {
     }
 }
 
+@Composable
+private fun NartoUnlockScreen(
+    media: MediaSummary,
+    pageUrl: String,
+    status: String?,
+    sessionPreviouslyUnlocked: Boolean,
+    onSessionUnlocked: () -> Unit,
+    onStreamCaptured: (String, String?, Map<String, String>) -> Unit,
+    onCancel: () -> Unit
+) {
+    var mainWebView by remember(pageUrl) {
+        mutableStateOf<android.webkit.WebView?>(null)
+    }
+    var popupWebView by remember(pageUrl) {
+        mutableStateOf<android.webkit.WebView?>(null)
+    }
+    var popupVisible by remember(pageUrl) { mutableStateOf(false) }
+    var popupTitle by remember(pageUrl) { mutableStateOf("Quảng cáo") }
+    var popupSerial by remember(pageUrl) { mutableIntStateOf(0) }
+    val playbackCaptured = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
+    var capturedSubtitleUrl by remember(pageUrl) { mutableStateOf<String?>(null) }
+    val subtitleWaitArmed = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
+    val subtitleGraceStartedAtMs = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicLong(0L)
+    }
+    val subtitleClassifierRunning = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
+    val subtitleClassifierAttempts = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicInteger(0)
+    }
+    val nartoScope = rememberCoroutineScope()
+    val gateUnlockSeen = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
+    val popupOpenSeen = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
+    var pageReadyForCapture by remember(pageUrl) { mutableStateOf(false) }
+    val pageCaptureReadyFlag = remember(pageUrl) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
+    var webViewGeneration by remember(pageUrl) { mutableIntStateOf(0) }
+    var rendererRecoveryCount by remember(pageUrl) { mutableIntStateOf(0) }
+    val diagnosticEvents = remember(pageUrl) { mutableStateListOf<String>() }
+    var diagnosticSeq by remember(pageUrl) { mutableIntStateOf(0) }
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    val context = LocalContext.current
+
+    fun sanitizeDiagnosticUrl(raw: String?): String {
+        val value = raw.orEmpty()
+        if (value.isBlank()) return "(blank)"
+        return runCatching {
+            val uri = android.net.Uri.parse(value)
+            val host = uri.host.orEmpty().lowercase()
+            var path = uri.path.orEmpty().ifBlank { "/" }
+            path = when {
+                host == "stream.narto-drama.com" && path.startsWith("/e/m/") ->
+                    "/e/m/[redacted]"
+                host.endsWith("narto-drama.com") && path.startsWith("/e/s/") ->
+                    "/e/s/[redacted]"
+                host.endsWith(".mydramawave.com") && path.endsWith(".m3u8", true) ->
+                    "/vt/[redacted].m3u8"
+                path.length > 160 -> path.take(160) + "…"
+                else -> path
+            }
+            if (host.isBlank()) path else host + path
+        }.getOrElse {
+            value.substringBefore('?').take(180)
+        }
+    }
+
+    fun addDiagnostic(event: String, rawUrl: String? = null) {
+        val sanitized = rawUrl?.let(::sanitizeDiagnosticUrl)
+        mainHandler.post {
+            diagnosticSeq += 1
+            val line = buildString {
+                append(diagnosticSeq.toString().padStart(3, '0'))
+                append(" · ")
+                append(event)
+                sanitized?.let {
+                    append(" · ")
+                    append(it)
+                }
+            }
+            if (diagnosticEvents.size >= 120) {
+                diagnosticEvents.removeRange(0, diagnosticEvents.size - 119)
+            }
+            diagnosticEvents += line
+        }
+    }
+
+    fun copyDiagnostic() {
+        val text = buildString {
+            appendLine("Narto post-unlock diagnostic V2")
+            appendLine("Media: " + media.title)
+            appendLine("Page: " + sanitizeDiagnosticUrl(pageUrl))
+            appendLine("Events: " + diagnosticEvents.size)
+            diagnosticEvents.forEach(::appendLine)
+        }.trim()
+        val clipboard = context.getSystemService(
+            android.content.Context.CLIPBOARD_SERVICE
+        ) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(
+            android.content.ClipData.newPlainText("Narto diagnostic", text)
+        )
+        android.widget.Toast.makeText(
+            context,
+            "Đã copy Narto diagnostic",
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    val cookieManager = remember {
+        android.webkit.CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+        }
+    }
+
+    val streamSniffer = remember(pageUrl) {
+        NartoStreamSniffer()
+    }
+
+    fun sameEpisodeUrl(a: String?, b: String): Boolean {
+        val left = runCatching { android.net.Uri.parse(a.orEmpty()) }.getOrNull()
+        val right = runCatching { android.net.Uri.parse(b) }.getOrNull()
+        return left?.host.orEmpty().equals(right?.host.orEmpty(), ignoreCase = true) &&
+            left?.path.orEmpty() == right?.path.orEmpty()
+    }
+
+    fun classifyNartoSubtitleCandidates(urls: List<String>) {
+        if (capturedSubtitleUrl != null || urls.isEmpty()) return
+        if (!subtitleClassifierRunning.compareAndSet(false, true)) return
+
+        val attempt = subtitleClassifierAttempts.incrementAndGet()
+        if (attempt > 2) {
+            subtitleClassifierRunning.set(false)
+            return
+        }
+
+        val snapshots = urls
+            .distinct()
+            .take(32)
+            .map { url -> url to cookieManager.getCookie(url).orEmpty() }
+
+        addDiagnostic("vietsub-native-scan-start")
+
+        nartoScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            suspend fun classifyOne(url: String, cookie: String): String? {
+                return runCatching {
+                    val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    try {
+                        connection.instanceFollowRedirects = true
+                        connection.connectTimeout = 1200
+                        connection.readTimeout = 1200
+                        connection.requestMethod = "GET"
+                        connection.setRequestProperty(
+                            "User-Agent",
+                            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
+                                "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
+                        )
+                        connection.setRequestProperty("Referer", pageUrl)
+                        connection.setRequestProperty("Origin", "https://edge.narto-drama.com")
+                        connection.setRequestProperty("Range", "bytes=0-511")
+                        if (cookie.isNotBlank()) {
+                            connection.setRequestProperty("Cookie", cookie)
+                        }
+
+                        val code = connection.responseCode
+                        if (code !in 200..299) return@runCatching null
+
+                        val contentType = connection.contentType.orEmpty().lowercase()
+                        if (
+                            contentType.contains("text/vtt") ||
+                            contentType.contains("application/vtt")
+                        ) {
+                            return@runCatching url
+                        }
+
+                        val input = connection.inputStream
+                        val buffer = ByteArray(512)
+                        val count = input.use { it.read(buffer) }
+                        if (count <= 0) return@runCatching null
+
+                        val head = String(
+                            buffer,
+                            0,
+                            count,
+                            java.nio.charset.StandardCharsets.UTF_8
+                        )
+                            .removePrefix("\uFEFF")
+                            .trimStart()
+
+                        if (head.startsWith("WEBVTT")) url else null
+                    } finally {
+                        connection.disconnect()
+                    }
+                }.getOrNull()
+            }
+
+            val found: String? = kotlinx.coroutines.coroutineScope {
+                snapshots.map { (url, cookie) ->
+                    async(kotlinx.coroutines.Dispatchers.IO) {
+                        classifyOne(url, cookie)
+                    }
+                }.map { deferred ->
+                    deferred.await()
+                }.firstOrNull { candidate ->
+                    !candidate.isNullOrBlank()
+                }
+            }
+
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                subtitleClassifierRunning.set(false)
+                if (
+                    found != null &&
+                    capturedSubtitleUrl == null &&
+                    pageReadyForCapture
+                ) {
+                    capturedSubtitleUrl = found
+                    addDiagnostic("vietsub-native-detected", found)
+                } else if (found == null) {
+                    addDiagnostic("vietsub-native-none")
+                }
+            }
+        }
+    }
+
+    fun probeMainPlayback(reason: String) {
+        val active = mainWebView ?: return
+        if (!pageReadyForCapture || !sameEpisodeUrl(active.url, pageUrl)) {
+            addDiagnostic("probe-skip-stale-page:" + reason, active.url)
+            return
+        }
+        addDiagnostic("probe-start:" + reason, active.url)
+
+        if (capturedSubtitleUrl == null) {
+            active.evaluateJavascript(
+                """
+                (function() {
+                  if (window.__eztubeSubtitleDiscoveryDone) return;
+                  window.__eztubeSubtitleDiscoveryDone = true;
+                  window.__eztubeSubtitleCandidates = window.__eztubeSubtitleCandidates || [];
+
+                  const normalize = (u) => {
+                    if (!u) return '';
+                    try {
+                      const x = new URL(String(u), location.href);
+                      if (
+                        x.protocol === 'https:' &&
+                        (x.hostname === 'edge.narto-drama.com' ||
+                         x.hostname === 'narto-drama.com' ||
+                         x.hostname === 'stream.narto-drama.com') &&
+                        x.pathname.startsWith('/e/s/')
+                      ) {
+                        return x.href;
+                      }
+                    } catch (e) {}
+                    return '';
+                  };
+
+                  const addCandidate = (u) => {
+                    const normalized = normalize(u);
+                    if (
+                      normalized &&
+                      !window.__eztubeSubtitleCandidates.includes(normalized)
+                    ) {
+                      window.__eztubeSubtitleCandidates.push(normalized);
+                    }
+                    return normalized;
+                  };
+
+                  try {
+                    document.querySelectorAll('track').forEach((t) => {
+                      const src = String(t.src || '');
+                      const lang = String(t.srclang || t.label || '').toLowerCase();
+                      const kind = String(t.kind || '').toLowerCase();
+                      if (
+                        src &&
+                        (
+                          kind === 'subtitles' ||
+                          kind === 'captions' ||
+                          lang.includes('vi') ||
+                          lang.includes('viet')
+                        )
+                      ) {
+                        const normalized = addCandidate(src);
+                        if (normalized) window.__eztubeVietsub = normalized;
+                      }
+                    });
+                  } catch (e) {}
+
+                  try {
+                    const html = String(document.documentElement?.innerHTML || '');
+                    const absolute = html.match(/https:\/\/[^"'\\s<>]+\/e\/s\/[^"'\\s<>]+/gi) || [];
+                    absolute.forEach((u) => addCandidate(u.replace(/\\u0026/g, '&')));
+                    const relative = html.match(/\/e\/s\/[^"'\\s<>]+/gi) || [];
+                    relative.forEach(addCandidate);
+                  } catch (e) {}
+
+                  try {
+                    performance.getEntriesByType('resource')
+                      .map((e) => String(e.name || ''))
+                      .filter((u) => u.includes('narto-drama.com/e/s/'))
+                      .forEach(addCandidate);
+                  } catch (e) {}
+                })();
+                """.trimIndent(),
+                null
+            )
+        }
+
+        active.evaluateJavascript(
+            """
+            (function() {
+              try {
+                const out = [];
+                const push = (kind, value) => {
+                  if (!value) return;
+                  const safe = String(value).split("|").join("¦");
+                  out.push(kind + "|" + safe);
+                };
+
+                push('open.proxy', window.__eztubeOpenProxyState || '');
+                push('open.tap', window.__eztubeOpenProxyLastTap || '');
+                push('open.tree', window.__eztubeOpenTreeMeta || '');
+                push('open.target', window.__eztubeOpenTargetMeta || '');
+                try {
+                  document.querySelectorAll('iframe,frame').forEach((frame, index) => {
+                    push(
+                      'open.frame',
+                      [
+                        'i=' + index,
+                        'src=' + String(frame.src || '').slice(0, 180),
+                        'id=' + String(frame.id || ''),
+                        'class=' + String(frame.className || '').slice(0, 80)
+                      ].join(';')
+                    );
+                  });
+
+                  const dumpRoot = (root, label) => {
+                    let controls = [];
+                    try {
+                      controls = Array.from(
+                        root.querySelectorAll(
+                          'button,a,[role="button"],input[type="button"],input[type="submit"],[onclick]'
+                        )
+                      );
+                    } catch (e) {}
+
+                    controls.slice(0, 24).forEach((el, index) => {
+                      const rect = el.getBoundingClientRect();
+                      const text = String(
+                        el.innerText || el.textContent || el.value || ''
+                      ).trim().replace(/\s+/g, ' ').slice(0, 100);
+                      push(
+                        'open.control',
+                        [
+                          'root=' + label,
+                          'i=' + index,
+                          'tag=' + String(el.tagName || ''),
+                          'id=' + String(el.id || ''),
+                          'class=' + String(el.className || '').slice(0, 80),
+                          'text=' + text,
+                          'href=' + String(el.getAttribute && el.getAttribute('href') || '').slice(0, 120),
+                          'onclick=' + (typeof el.onclick === 'function' ? '1' : '0'),
+                          'rect=' + [
+                            Math.round(rect.left),
+                            Math.round(rect.top),
+                            Math.round(rect.width),
+                            Math.round(rect.height)
+                          ].join(',')
+                        ].join(';')
+                      );
+                    });
+                  };
+
+                  dumpRoot(document, 'main');
+                  document.querySelectorAll('iframe,frame').forEach((frame, index) => {
+                    try {
+                      if (frame.contentDocument) {
+                        dumpRoot(frame.contentDocument, 'frame:' + index);
+                      }
+                    } catch (e) {}
+                  });
+
+                  const dumpScripts = (root, label) => {
+                    let scripts = [];
+                    try {
+                      scripts = Array.from(root.querySelectorAll('script'));
+                    } catch (e) {}
+
+                    scripts.forEach((script, index) => {
+                      const src = String(script.src || '');
+                      const body = String(script.textContent || '');
+                      const lower = body.toLowerCase();
+                      const interesting =
+                        lower.includes('gate-unlock') ||
+                        lower.includes('wrapper-guard') ||
+                        lower.includes('window.open') ||
+                        lower.includes('open(') ||
+                        lower.includes('/ads/') ||
+                        lower.includes('advert');
+                      if (src || interesting) {
+                        const compact = interesting
+                          ? body.replace(/\\s+/g, ' ')
+                          : '';
+                        push(
+                          'open.script',
+                          [
+                            'root=' + label,
+                            'i=' + index,
+                            'src=' + src.slice(0, 180),
+                            'inline=' + compact.slice(0, 260)
+                          ].join(';')
+                        );
+
+                        const keys = [
+                          'gate-unlock',
+                          'window.open',
+                          'wrapper-guard',
+                          '/ads/',
+                          'popup',
+                          'openad',
+                          'advert'
+                        ];
+                        keys.forEach((key) => {
+                          let from = 0;
+                          let count = 0;
+                          while (count < 4) {
+                            const at = compact.toLowerCase().indexOf(key, from);
+                            if (at < 0) break;
+                            const lo = Math.max(0, at - 260);
+                            const hi = Math.min(compact.length, at + key.length + 520);
+                            push(
+                              'open.script.hit',
+                              [
+                                'root=' + label,
+                                'i=' + index,
+                                'key=' + key,
+                                'at=' + at,
+                                compact.slice(lo, hi)
+                              ].join(';')
+                            );
+                            from = at + key.length;
+                            count += 1;
+                          }
+                        });
+
+                        if (
+                          compact.includes('ND-WG-PROBE-START') ||
+                          compact.includes('gate-unlock') ||
+                          compact.includes('wrapper-guard')
+                        ) {
+                          for (let offset = 0; offset < Math.min(compact.length, 6000); offset += 700) {
+                            push(
+                              'open.script.chunk',
+                              [
+                                'root=' + label,
+                                'i=' + index,
+                                'off=' + offset,
+                                compact.slice(offset, offset + 700)
+                              ].join(';')
+                            );
+                          }
+                        }
+                      }
+                    });
+                  };
+
+                  dumpScripts(document, 'main');
+                  document.querySelectorAll('iframe,frame').forEach((frame, index) => {
+                    try {
+                      if (frame.contentDocument) {
+                        dumpScripts(frame.contentDocument, 'frame:' + index);
+                      }
+                    } catch (e) {}
+                  });
+                } catch (e) {}
+                push('subtitle.detected', window.__eztubeVietsub || '');
+                try {
+                  (window.__eztubeSubtitleCandidates || [])
+                    .slice(-32)
+                    .forEach((u) => push('subtitle.candidate', u));
+                } catch (e) {}
+
+                document.querySelectorAll('track').forEach((t) => {
+                  const kind = String(t.kind || '').toLowerCase();
+                  const lang = String(t.srclang || t.label || '').toLowerCase();
+                  if (
+                    kind === 'subtitles' ||
+                    kind === 'captions' ||
+                    lang.includes('vi') ||
+                    lang.includes('viet')
+                  ) {
+                    push('track.src', t.src);
+                  }
+                });
+                document.querySelectorAll('video').forEach((v) => {
+                  push('video.currentSrc', v.currentSrc);
+                  push('video.src', v.src);
+                });
+                document.querySelectorAll('source').forEach((s) => {
+                  push('source.src', s.src);
+                });
+
+                try {
+                  performance.getEntriesByType('resource').slice(-120).forEach((e) => {
+                    const u = String(e.name || '');
+                    if (
+                      u.includes('narto-drama.com') ||
+                      u.includes('.m3u8') ||
+                      u.includes('/e/m/') ||
+                      u.includes('/e/s/')
+                    ) {
+                      push('resource.' + String(e.initiatorType || 'unknown'), u);
+                    }
+                  });
+                } catch (e) {}
+
+                return out.slice(-80).join('\n');
+              } catch (e) {
+                return 'probe-error|' + String(e);
+              }
+            })();
+            """.trimIndent()
+        ) { raw ->
+            val decoded = runCatching {
+                org.json.JSONTokener(raw).nextValue() as? String
+            }.getOrNull().orEmpty()
+
+            val probeLines = decoded.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .map { line ->
+                    line.substringBefore('|', "probe") to line.substringAfter('|', "")
+                }
+                .filter { it.second.isNotBlank() }
+                .toList()
+
+            val nativeSubtitleCandidates = probeLines
+                .map { it.second }
+                .filter { url ->
+                    val uri = runCatching { android.net.Uri.parse(url) }.getOrNull()
+                    val host = uri?.host.orEmpty().lowercase()
+                    val path = uri?.path.orEmpty()
+                    uri?.scheme == "https" &&
+                        (
+                            host == "edge.narto-drama.com" ||
+                            host == "narto-drama.com" ||
+                            host == "stream.narto-drama.com"
+                        ) &&
+                        path.startsWith("/e/s/")
+                }
+                .distinct()
+
+            if (capturedSubtitleUrl == null && nativeSubtitleCandidates.isNotEmpty()) {
+                classifyNartoSubtitleCandidates(nativeSubtitleCandidates)
+            }
+
+            // First pass: capture the subtitle before the video manifest handoff.
+            probeLines.forEach { (kind, url) ->
+                addDiagnostic("probe-" + kind, url)
+
+                val uri = runCatching {
+                    android.net.Uri.parse(url)
+                }.getOrNull()
+                val host = uri?.host.orEmpty().lowercase()
+                val path = uri?.path.orEmpty()
+                val isNartoSideResource =
+                    uri?.scheme == "https" &&
+                        (
+                            host == "edge.narto-drama.com" ||
+                            host == "narto-drama.com" ||
+                            host == "stream.narto-drama.com"
+                        ) &&
+                        path.startsWith("/e/s/")
+                val isSubtitleCandidate =
+                    kind == "subtitle.detected" ||
+                        kind == "track.src" ||
+                        kind == "resource.track"
+
+                if (isNartoSideResource && isSubtitleCandidate) {
+                    capturedSubtitleUrl = url
+                    addDiagnostic("vietsub-track-detected", url)
+                }
+            }
+
+            // Second pass: only after subtitle discovery do we hand the stream to Media3.
+            probeLines.forEach { (_, url) ->
+                val uri = runCatching {
+                    android.net.Uri.parse(url)
+                }.getOrNull()
+                val host = uri?.host.orEmpty().lowercase()
+                val path = uri?.path.orEmpty()
+
+                val nartoPlayable =
+                    (
+                        host == "stream.narto-drama.com" ||
+                        host == "edge.narto-drama.com"
+                    ) &&
+                    (
+                        path.startsWith("/e/m/") ||
+                        path.endsWith(".m3u8", ignoreCase = true)
+                    )
+
+                val unlockedDirectPlayable =
+                    host == "dramabox-stream.narto-drama.com"
+
+                val unlockedUpstreamPlayable =
+                    gateUnlockSeen.get() &&
+                    (
+                        host == "mydramawave.com" ||
+                        host.endsWith(".mydramawave.com")
+                    ) &&
+                    path.endsWith(".m3u8", ignoreCase = true)
+
+                if (nartoPlayable || unlockedDirectPlayable || unlockedUpstreamPlayable) {
+                    val waitingForSubtitle =
+                        capturedSubtitleUrl == null &&
+                            (
+                                subtitleClassifierRunning.get() ||
+                                nativeSubtitleCandidates.isNotEmpty()
+                            )
+
+                    if (
+                        waitingForSubtitle &&
+                        subtitleWaitArmed.compareAndSet(false, true)
+                    ) {
+                        subtitleGraceStartedAtMs.set(android.os.SystemClock.elapsedRealtime())
+                        addDiagnostic("vietsub-grace-wait")
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("vietsub-grace+350ms") },
+                            350
+                        )
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("vietsub-grace+800ms") },
+                            800
+                        )
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("vietsub-grace+1300ms") },
+                            1300
+                        )
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("vietsub-grace+1700ms") },
+                            1700
+                        )
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("vietsub-grace+2900ms") },
+                            2900
+                        )
+                    } else {
+                        val graceElapsedMs =
+                            android.os.SystemClock.elapsedRealtime() -
+                                subtitleGraceStartedAtMs.get()
+                        val subtitleReady = capturedSubtitleUrl != null
+                        val graceExpired =
+                            !waitingForSubtitle ||
+                                (
+                                    subtitleWaitArmed.get() &&
+                                    graceElapsedMs >= 2800L
+                                )
+
+                        if (
+                            (subtitleReady || graceExpired) &&
+                            playbackCaptured.compareAndSet(false, true)
+                        ) {
+                            addDiagnostic(
+                                if (subtitleReady) {
+                                    "probe-playable-manifest-with-sub"
+                                } else {
+                                    "probe-playable-manifest-no-sub"
+                                },
+                                url
+                            )
+                            val sniffedVideo = streamSniffer.bestVideo()
+                            val sniffedSubtitle = streamSniffer.bestSubtitle()
+                            val handoffUrl = sniffedVideo?.url ?: url
+                            val handoffSubtitle =
+                                capturedSubtitleUrl ?: sniffedSubtitle?.url
+
+                            addDiagnostic(
+                                if (sniffedVideo != null) {
+                                    "sniffer-handoff"
+                                } else {
+                                    "probe-handoff"
+                                },
+                                handoffUrl
+                            )
+
+                            onStreamCaptured(
+                                handoffUrl,
+                                handoffSubtitle,
+                                sniffedVideo?.headers.orEmpty()
+                            )
+                        } else if (waitingForSubtitle) {
+                            addDiagnostic("vietsub-still-waiting")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun pinNartoOpenAdButton(reason: String) {
+        val active = mainWebView ?: return
+        active.evaluateJavascript(
+            """
+            (function() {
+              try {
+                const norm = (s) => String(s || '')
+                  .trim()
+                  .toLowerCase()
+                  .replace(/\\s+/g, ' ');
+
+                const roots = [];
+                const seen = new Set();
+                const walkRoot = (root, label) => {
+                  if (!root || seen.has(root)) return;
+                  seen.add(root);
+                  roots.push({ root, label });
+
+                  try {
+                    root.querySelectorAll('*').forEach((el) => {
+                      if (el.shadowRoot) {
+                        walkRoot(el.shadowRoot, label + '>shadow:' + String(el.tagName || ''));
+                      }
+                    });
+                  } catch (e) {}
+
+                  try {
+                    root.querySelectorAll('iframe,frame').forEach((frame, index) => {
+                      try {
+                        const doc = frame.contentDocument;
+                        if (doc) {
+                          walkRoot(doc, label + '>frame:' + index);
+                        }
+                      } catch (e) {}
+                    });
+                  } catch (e) {}
+                };
+                walkRoot(document, 'main');
+
+                const isOpenAdText = (el) => {
+                  const text = norm(el.innerText || el.textContent || el.value);
+                  const aria = norm(el.getAttribute && el.getAttribute('aria-label'));
+                  const title = norm(el.getAttribute && el.getAttribute('title'));
+                  return (
+                    text.includes('mở quảng cáo') ||
+                    text.includes('mo quang cao') ||
+                    aria.includes('mở quảng cáo') ||
+                    aria.includes('mo quang cao') ||
+                    title.includes('mở quảng cáo') ||
+                    title.includes('mo quang cao')
+                  );
+                };
+
+                const findOriginal = () => {
+                  for (const entry of roots) {
+                    let nodes = [];
+                    try {
+                      nodes = Array.from(
+                        entry.root.querySelectorAll(
+                          'button,a,[role="button"],input[type="button"],input[type="submit"],div,span'
+                        )
+                      ).filter((el) => el.id !== 'eztube-narto-open-proxy');
+                    } catch (e) {}
+                    const found = nodes.find(isOpenAdText);
+                    if (found) return { target: found, rootLabel: entry.label };
+                  }
+                  return null;
+                };
+
+                const match = findOriginal();
+                const proxyExisting = document.getElementById('eztube-narto-open-proxy');
+
+                window.__eztubeOpenTreeMeta = [
+                  'roots=' + roots.length,
+                  'iframes=' + document.querySelectorAll('iframe,frame').length,
+                  'shadowHosts=' + Array.from(document.querySelectorAll('*')).filter((el) => !!el.shadowRoot).length
+                ].join(';');
+
+                if (!match) {
+                  window.__eztubeOpenProxyState = 'target-not-found';
+                  window.__eztubeOpenTargetMeta = 'not-found';
+                  if (proxyExisting) proxyExisting.style.display = 'none';
+                  return 'not-found';
+                }
+
+                const original = match.target;
+                try {
+                  const rect = original.getBoundingClientRect();
+                  const parent = original.parentElement;
+                  const style = getComputedStyle(original);
+                  window.__eztubeOpenTargetMeta = [
+                    'root=' + match.rootLabel,
+                    'tag=' + String(original.tagName || ''),
+                    'id=' + String(original.id || ''),
+                    'class=' + String(original.className || '').slice(0, 80),
+                    'href=' + String(original.getAttribute && original.getAttribute('href') || '').slice(0, 120),
+                    'onclick=' + (typeof original.onclick === 'function' ? '1' : '0'),
+                    'disabled=' + (original.disabled ? '1' : '0'),
+                    'ariaDisabled=' + String(original.getAttribute && original.getAttribute('aria-disabled') || ''),
+                    'display=' + String(style.display || ''),
+                    'visibility=' + String(style.visibility || ''),
+                    'pointer=' + String(style.pointerEvents || ''),
+                    'rect=' + [
+                      Math.round(rect.left),
+                      Math.round(rect.top),
+                      Math.round(rect.width),
+                      Math.round(rect.height)
+                    ].join(','),
+                    'parent=' + String(parent && parent.tagName || ''),
+                    'parentClass=' + String(parent && parent.className || '').slice(0, 80)
+                  ].join(';');
+                } catch (e) {
+                  window.__eztubeOpenTargetMeta = 'meta-error:' + String(e);
+                }
+
+                if (!document.getElementById('eztube-narto-proxy-style')) {
+                  const style = document.createElement('style');
+                  style.id = 'eztube-narto-proxy-style';
+                  style.textContent = `
+                    #eztube-narto-open-proxy {
+                      position: fixed !important;
+                      top: 12px !important;
+                      right: 12px !important;
+                      left: auto !important;
+                      bottom: auto !important;
+                      z-index: 2147483647 !important;
+                      min-width: 88px !important;
+                      min-height: 44px !important;
+                      margin: 0 !important;
+                      padding: 10px 20px !important;
+                      border: 0 !important;
+                      border-radius: 999px !important;
+                      font: 600 16px/20px sans-serif !important;
+                      opacity: 1 !important;
+                      visibility: visible !important;
+                      pointer-events: auto !important;
+                      touch-action: manipulation !important;
+                      box-shadow: 0 4px 16px rgba(0,0,0,.28) !important;
+                    }
+                  `;
+                  document.head.appendChild(style);
+                }
+
+                let proxy = proxyExisting;
+                if (!proxy) {
+                  proxy = document.createElement('button');
+                  proxy.id = 'eztube-narto-open-proxy';
+                  proxy.type = 'button';
+                  proxy.textContent = 'Mở';
+                  proxy.setAttribute('aria-label', 'Mở');
+                  proxy.setAttribute('title', 'Mở');
+
+                  proxy.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    const latest = findOriginal();
+                    if (!latest || !latest.target) {
+                      window.__eztubeOpenProxyLastTap = 'no-target';
+                      return;
+                    }
+
+                    const target = latest.target;
+                    if (target.disabled || target.getAttribute('aria-disabled') === 'true') {
+                      window.__eztubeOpenProxyLastTap = 'target-disabled';
+                      return;
+                    }
+
+                    window.__eztubeOpenProxyLastTap =
+                      'forwarded:' + String(latest.rootLabel || 'unknown');
+                    target.click();
+                  }, true);
+
+                  (document.body || document.documentElement).appendChild(proxy);
+                }
+
+                proxy.textContent = 'Mở';
+                proxy.style.display = '';
+                window.__eztubeOpenProxyState = 'ready';
+                if (!window.__eztubeOpenProxyLastTap) {
+                  window.__eztubeOpenProxyLastTap = 'none';
+                }
+                return 'proxy-ready:' + match.rootLabel;
+              } catch (e) {
+                window.__eztubeOpenProxyState = 'error:' + String(e);
+                return 'error';
+              }
+            })();
+            """.trimIndent()
+        ) { raw ->
+            val result = runCatching {
+                org.json.JSONTokener(raw).nextValue() as? String
+            }.getOrNull().orEmpty()
+            addDiagnostic("pin-open-ad:" + reason + ":" + result)
+        }
+    }
+
+    fun notifyMainReturned() {
+        addDiagnostic("main-focus-return")
+        cookieManager.flush()
+        mainWebView?.post {
+            if (gateUnlockSeen.get()) {
+                mainWebView?.settings?.mediaPlaybackRequiresUserGesture = false
+                mainWebView?.evaluateJavascript(
+                    """
+                    (function() {
+                      try {
+                        const v = document.querySelector('video');
+                        if (!v) return 'no-video';
+                        const p = v.play();
+                        if (p && p.catch) p.catch(() => {});
+                        return v.currentSrc || v.src || 'video-woken';
+                      } catch (e) {
+                        return 'wake-error';
+                      }
+                    })();
+                    """.trimIndent(),
+                    null
+                )
+                addDiagnostic("unlocked-video-wake")
+            }
+            mainWebView?.onResume()
+            mainWebView?.evaluateJavascript(
+                """
+                try {
+                  window.dispatchEvent(new Event('focus'));
+                  document.dispatchEvent(new Event('visibilitychange'));
+                } catch (e) {}
+                """.trimIndent(),
+                null
+            )
+
+            mainHandler.postDelayed({ pinNartoOpenAdButton("focus+450ms") }, 450)
+            mainHandler.postDelayed({ pinNartoOpenAdButton("focus+900ms") }, 900)
+            probeMainPlayback("focus")
+            mainHandler.postDelayed({ probeMainPlayback("focus+750ms") }, 750)
+            mainHandler.postDelayed({ probeMainPlayback("focus+2000ms") }, 2000)
+            mainHandler.postDelayed({ probeMainPlayback("focus+5000ms") }, 5000)
+        }
+    }
+
+    fun closePopup() {
+        popupSerial += 1
+        popupOpenSeen.set(false)
+        addDiagnostic("popup-close", popupWebView?.url)
+        popupWebView?.stopLoading()
+        popupWebView?.destroy()
+        popupWebView = null
+        popupVisible = false
+        popupTitle = "Quảng cáo"
+        notifyMainReturned()
+    }
+
+    fun probePopupClosable(reason: String) {
+        val popup = popupWebView ?: return
+        popup.evaluateJavascript(
+            """
+            (function() {
+              try {
+                const candidates = Array.from(
+                  document.querySelectorAll('button,a,[role="button"]')
+                );
+                const visible = (el) => {
+                  const r = el.getBoundingClientRect();
+                  const s = getComputedStyle(el);
+                  return r.width > 0 && r.height > 0 &&
+                    s.display !== 'none' &&
+                    s.visibility !== 'hidden' &&
+                    Number(s.opacity || 1) > 0;
+                };
+                const norm = (s) => String(s || '')
+                  .trim()
+                  .toLowerCase()
+                  .replace(/\\s+/g, ' ');
+                const exact = new Set([
+                  'x','×','close','đóng','skip','bỏ qua','dismiss'
+                ]);
+                for (const el of candidates) {
+                  if (!visible(el)) continue;
+                  const text = norm(el.innerText || el.textContent);
+                  const aria = norm(el.getAttribute('aria-label'));
+                  const title = norm(el.getAttribute('title'));
+                  if (
+                    exact.has(text) ||
+                    exact.has(aria) ||
+                    exact.has(title)
+                  ) {
+                    return 'closable';
+                  }
+                }
+                return '';
+              } catch (e) {
+                return '';
+              }
+            })();
+            """.trimIndent()
+        ) { raw ->
+            val closable = runCatching {
+                org.json.JSONTokener(raw).nextValue() as? String
+            }.getOrNull() == "closable"
+
+            if (closable && popupVisible) {
+                addDiagnostic("popup-close-control-visible:" + reason, popup.url)
+                mainHandler.postDelayed(
+                    {
+                        if (popupVisible && popupWebView === popup) {
+                            addDiagnostic("auto-close-popup-shell", popup.url)
+                            closePopup()
+                        }
+                    },
+                    50
+                )
+            }
+        }
+    }
+
+    BackHandler {
+        val popup = popupWebView
+        when {
+            popupVisible && popup?.canGoBack() == true -> popup.goBack()
+            popupVisible -> closePopup()
+            mainWebView?.canGoBack() == true -> mainWebView?.goBack()
+            else -> onCancel()
+        }
+    }
+
+    fun configureMainWebView(
+        active: android.webkit.WebView,
+        webContext: android.content.Context
+    ) {
+        with(active) {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.mediaPlaybackRequiresUserGesture = true
+            settings.loadsImagesAutomatically = true
+            settings.mixedContentMode =
+                android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            settings.setSupportMultipleWindows(true)
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            
+            cookieManager.setAcceptThirdPartyCookies(this, true)
+            
+            fun inspect(url: String?, event: String = "request") {
+                val value = url.orEmpty()
+                val host = runCatching {
+                    android.net.Uri.parse(value).host.orEmpty().lowercase()
+                }.getOrDefault("")
+                if (
+                    host.endsWith("narto-drama.com") ||
+                    host == "stream.narto-drama.com"
+                ) {
+                    addDiagnostic(event, value)
+                }
+                val uri = runCatching {
+                    android.net.Uri.parse(value)
+                }.getOrNull()
+                val path = uri?.path.orEmpty()
+                val nartoHost = uri?.host.orEmpty().lowercase()
+                // shouldInterceptRequest runs on Chromium's background thread.
+                // Never call any WebView method here (including getUrl()).
+                val currentEpisodeActive = pageCaptureReadyFlag.get()
+            
+                if (
+                    nartoHost == "edge.narto-drama.com" &&
+                    path == "/wrapper-guard/report" &&
+                    popupOpenSeen.compareAndSet(true, false)
+                ) {
+                    addDiagnostic("wrapper-guard-confirmed", value)
+                    mainHandler.postDelayed(
+                        {
+                            if (popupVisible) {
+                                addDiagnostic(
+                                    "auto-close-popup-after-report",
+                                    popupWebView?.url
+                                )
+                                closePopup()
+                            }
+                        },
+                        25
+                    )
+                }
+            
+                if (
+                    currentEpisodeActive &&
+                    nartoHost == "edge.narto-drama.com" &&
+                    path == "/player/ads/gate-unlock" &&
+                    gateUnlockSeen.compareAndSet(false, true)
+                ) {
+                    addDiagnostic("gate-unlock-seen", value)
+                    mainHandler.post { onSessionUnlocked() }
+            
+                    // Narto itself has confirmed that the ad gate is unlocked.
+                    // At this point it is safe to close ezTube's own popup shell
+                    // automatically; we do not click or fake any third-party ad UI.
+                    mainHandler.post {
+                        mainWebView?.settings?.mediaPlaybackRequiresUserGesture = false
+                        mainWebView?.evaluateJavascript(
+                            """
+                            try {
+                              const v = document.querySelector('video');
+                              if (v) {
+                                const p = v.play();
+                                if (p && p.catch) p.catch(() => {});
+                              }
+                            } catch (e) {}
+                            """.trimIndent(),
+                            null
+                        )
+                        if (popupVisible) {
+                            addDiagnostic("auto-close-popup-after-unlock", popupWebView?.url)
+                            closePopup()
+                        } else {
+                            probeMainPlayback("gate-unlock")
+                        }
+                    }
+                    mainHandler.postDelayed(
+                        { probeMainPlayback("gate-unlock+250ms") },
+                        250
+                    )
+                    mainHandler.postDelayed(
+                        { probeMainPlayback("gate-unlock+750ms") },
+                        750
+                    )
+                    mainHandler.postDelayed(
+                        { probeMainPlayback("gate-unlock+1500ms") },
+                        1500
+                    )
+                }
+            
+                val nartoManifest =
+                    (
+                        nartoHost == "stream.narto-drama.com" ||
+                        nartoHost == "edge.narto-drama.com"
+                    ) &&
+                    (
+                        path.startsWith("/e/m/") ||
+                        path.endsWith(".m3u8", ignoreCase = true)
+                    )
+            
+                val unlockedDirectVideo =
+                    nartoHost == "dramabox-stream.narto-drama.com"
+            
+                val unlockedUpstreamManifest =
+                    gateUnlockSeen.get() &&
+                    (
+                        nartoHost == "mydramawave.com" ||
+                        nartoHost.endsWith(".mydramawave.com")
+                    ) &&
+                    path.endsWith(".m3u8", ignoreCase = true)
+            
+                if (currentEpisodeActive && nartoManifest) {
+                    addDiagnostic("signed-hls-detected", value)
+                    // Do not hand off immediately. Let the main-thread probe discover
+                    // subtitle tracks/resources first, then Media3 gets video + subtitle together.
+                    mainHandler.post { probeMainPlayback("signed-manifest") }
+                } else if (currentEpisodeActive && unlockedDirectVideo) {
+                    addDiagnostic("direct-video-detected", value)
+                    mainHandler.post { probeMainPlayback("direct-video") }
+                } else if (currentEpisodeActive && unlockedUpstreamManifest) {
+                    mainHandler.post { probeMainPlayback("upstream-manifest") }
+                }
+            }
+            
+            webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onCreateWindow(
+                    view: android.webkit.WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: android.os.Message?
+                ): Boolean {
+                    val transport =
+                        resultMsg?.obj as? android.webkit.WebView.WebViewTransport
+                            ?: return false
+            
+                    popupWebView?.destroy()
+            
+                    val child = android.webkit.WebView(webContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.mediaPlaybackRequiresUserGesture = true
+                        settings.loadsImagesAutomatically = true
+                        settings.mixedContentMode =
+                            android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                        settings.setSupportMultipleWindows(false)
+                        settings.javaScriptCanOpenWindowsAutomatically = false
+            
+                        cookieManager.setAcceptThirdPartyCookies(this, true)
+            
+                        webChromeClient = object : android.webkit.WebChromeClient() {
+                            override fun onReceivedTitle(
+                                view: android.webkit.WebView?,
+                                title: String?
+                            ) {
+                                popupTitle = title
+                                    ?.trim()
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: "Quảng cáo"
+                            }
+            
+                            override fun onCloseWindow(
+                                window: android.webkit.WebView?
+                            ) {
+                                closePopup()
+                            }
+                        }
+            
+                        webViewClient = object : android.webkit.WebViewClient() {
+                            override fun shouldInterceptRequest(
+                                view: android.webkit.WebView?,
+                                request: android.webkit.WebResourceRequest?
+                            ): android.webkit.WebResourceResponse? {
+                                inspect(
+                                    request?.url?.toString(),
+                                    "popup-" + (request?.method ?: "GET")
+                                )
+                                return super.shouldInterceptRequest(view, request)
+                            }
+            
+                            override fun onRenderProcessGone(
+                                view: android.webkit.WebView?,
+                                detail: android.webkit.RenderProcessGoneDetail?
+                            ): Boolean {
+                                addDiagnostic(
+                                    if (detail?.didCrash() == true) "popup-renderer-crash" else "popup-renderer-gone",
+                                    view?.url
+                                )
+                                mainHandler.post {
+                                    if (popupWebView === view) {
+                                        popupWebView = null
+                                        popupVisible = false
+                                        popupOpenSeen.set(false)
+                                    }
+                                    runCatching { view?.destroy() }
+                                    notifyMainReturned()
+                                }
+                                return true
+                            }
+
+                            override fun onPageStarted(
+                                view: android.webkit.WebView?,
+                                url: String?,
+                                favicon: android.graphics.Bitmap?
+                            ) {
+                                addDiagnostic("popup-page-start", url)
+                            }
+            
+                            override fun onReceivedHttpError(
+                                view: android.webkit.WebView?,
+                                request: android.webkit.WebResourceRequest?,
+                                errorResponse: android.webkit.WebResourceResponse?
+                            ) {
+                                if (request?.isForMainFrame == true) {
+                                    addDiagnostic(
+                                        "popup-http-" +
+                                            (errorResponse?.statusCode ?: 0),
+                                        request.url?.toString()
+                                    )
+                                }
+                            }
+            
+                            override fun onPageFinished(
+                                view: android.webkit.WebView?,
+                                url: String?
+                            ) {
+                                addDiagnostic("popup-page-finish", url)
+                                cookieManager.flush()
+                                mainHandler.postDelayed(
+                                    { probePopupClosable("page+75ms") },
+                                    75
+                                )
+                                mainHandler.postDelayed(
+                                    { probePopupClosable("page+2000ms") },
+                                    2000
+                                )
+                                mainHandler.postDelayed(
+                                    { probePopupClosable("page+5000ms") },
+                                    5000
+                                )
+                            }
+                        }
+                    }
+            
+                    addDiagnostic("popup-open-request")
+                    popupOpenSeen.set(true)
+                    popupSerial += 1
+                    val openedSerial = popupSerial
+                    popupWebView = child
+                    popupVisible = true
+                    transport.webView = child
+                    resultMsg.sendToTarget()
+            
+                    // Some ad destinations never emit Narto's wrapper report
+                    // back to the opener. Mimic the user's own ezTube "Đóng"
+                    // action after a short dwell time so every popup can return
+                    // to the persistent Narto page. The serial guard prevents an
+                    // old delayed callback from closing a newer popup.
+                    mainHandler.postDelayed(
+                        {
+                            if (
+                                popupVisible &&
+                                popupWebView === child &&
+                                popupSerial == openedSerial
+                            ) {
+                                addDiagnostic(
+                                    "auto-close-popup-timeout",
+                                    child.url
+                                )
+                                closePopup()
+                            }
+                        },
+                        900
+                    )
+                    return true
+                }
+            
+                override fun onCloseWindow(
+                    window: android.webkit.WebView?
+                ) {
+                    closePopup()
+                }
+            }
+            
+            webViewClient = object : android.webkit.WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: android.webkit.WebView?,
+                    request: android.webkit.WebResourceRequest?
+                ): android.webkit.WebResourceResponse? {
+                    val requestUrl = request?.url?.toString()
+                    streamSniffer.onRequest(
+                        requestUrl,
+                        request?.requestHeaders.orEmpty()
+                    )
+
+                    streamSniffer.bestSubtitle()?.let { subtitle ->
+                        if (capturedSubtitleUrl == null) {
+                            mainHandler.post {
+                                if (
+                                    capturedSubtitleUrl == null &&
+                                    pageCaptureReadyFlag.get()
+                                ) {
+                                    capturedSubtitleUrl = subtitle.url
+                                    addDiagnostic("vietsub-sniffed", subtitle.url)
+                                    probeMainPlayback("sniffed-subtitle")
+                                }
+                            }
+                        }
+                    }
+
+                    inspect(
+                        requestUrl,
+                        "main-" + (request?.method ?: "GET")
+                    )
+                    return super.shouldInterceptRequest(view, request)
+                }
+            
+                @Deprecated("Deprecated in Java")
+                override fun shouldInterceptRequest(
+                    view: android.webkit.WebView?,
+                    url: String?
+                ): android.webkit.WebResourceResponse? {
+                    inspect(url, "main-GET")
+                    return super.shouldInterceptRequest(view, url)
+                }
+            
+                override fun onRenderProcessGone(
+                    view: android.webkit.WebView?,
+                    detail: android.webkit.RenderProcessGoneDetail?
+                ): Boolean {
+                    addDiagnostic(
+                        if (detail?.didCrash() == true) "main-renderer-crash" else "main-renderer-gone",
+                        view?.url
+                    )
+                    mainHandler.post {
+                        runCatching {
+                            view?.stopLoading()
+                            view?.destroy()
+                        }
+                        if (mainWebView === view) mainWebView = null
+                        pageReadyForCapture = false
+                        pageCaptureReadyFlag.set(false)
+                        playbackCaptured.set(false)
+                        capturedSubtitleUrl = null
+                        subtitleWaitArmed.set(false)
+                        subtitleGraceStartedAtMs.set(0L)
+                        subtitleClassifierRunning.set(false)
+
+                        rendererRecoveryCount += 1
+                        if (rendererRecoveryCount <= 2) {
+                            webViewGeneration += 1
+                        } else {
+                            android.widget.Toast.makeText(
+                                context,
+                                "WebView bị lỗi nhiều lần. Hãy thoát màn Narto và mở lại.",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                            onCancel()
+                        }
+                    }
+                    return true
+                }
+
+                override fun onPageStarted(
+                    view: android.webkit.WebView?,
+                    url: String?,
+                    favicon: android.graphics.Bitmap?
+                ) {
+                    if (sameEpisodeUrl(url, pageUrl)) {
+                        streamSniffer.clear()
+                        pageReadyForCapture = false
+                        pageCaptureReadyFlag.set(false)
+                    }
+                    addDiagnostic("main-page-start", url)
+                }
+            
+                override fun onReceivedHttpError(
+                    view: android.webkit.WebView?,
+                    request: android.webkit.WebResourceRequest?,
+                    errorResponse: android.webkit.WebResourceResponse?
+                ) {
+                    if (request?.isForMainFrame == true) {
+                        addDiagnostic(
+                            "main-http-" +
+                                (errorResponse?.statusCode ?: 0),
+                            request.url?.toString()
+                        )
+                    }
+                }
+            
+                override fun onPageFinished(
+                    view: android.webkit.WebView?,
+                    url: String?
+                ) {
+                    addDiagnostic("main-page-finish", url)
+                    cookieManager.flush()
+                    if (sameEpisodeUrl(url, pageUrl)) {
+                        pageReadyForCapture = true
+                        pageCaptureReadyFlag.set(true)
+                        mainHandler.postDelayed({ pinNartoOpenAdButton("page+100ms") }, 100)
+                        mainHandler.postDelayed({ pinNartoOpenAdButton("page+600ms") }, 600)
+                        mainHandler.postDelayed(
+                            { probeMainPlayback("page-finish+750ms") },
+                            750
+                        )
+                    }
+                }
+            }
+            
+            
+        }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = {
+                        val active = mainWebView
+                        if (active?.canGoBack() == true) active.goBack() else onCancel()
+                    }
+                ) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Mở khóa Narto",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        media.title,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Text(
+                        "Quảng cáo mở trong ezTube bằng cửa sổ con của chính trang Narto. " +
+                            "Sau khi đóng quảng cáo, phiên mở khóa và tín hiệu quay lại trang chính được giữ nguyên.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    status?.takeIf { it.isNotBlank() }?.let {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { copyDiagnostic() }) {
+                            Text("Copy diagnostic")
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "events: " + diagnosticEvents.size,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    diagnosticEvents.takeLast(4).forEach { line ->
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            key(pageUrl, webViewGeneration) {
+                AndroidView(
+                    factory = { webContext ->
+                        android.webkit.WebView(webContext).apply {
+                            mainWebView = this
+                            configureMainWebView(this, webContext)
+                            pageReadyForCapture = false
+                            playbackCaptured.set(false)
+                            capturedSubtitleUrl = null
+                            subtitleWaitArmed.set(false)
+                        subtitleGraceStartedAtMs.set(0L)
+                        subtitleClassifierRunning.set(false)
+                            addDiagnostic("main-load", pageUrl)
+                            loadUrl(pageUrl)
+                        }
+                    },
+                    update = { active ->
+                        mainWebView = active
+                        active.onResume()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                )
+            }
+        }
+
+        if (popupVisible) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+                tonalElevation = 8.dp
+            ) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = {
+                                val popup = popupWebView
+                                if (popup?.canGoBack() == true) popup.goBack() else closePopup()
+                            }
+                        ) {
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
+                        }
+
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                popupTitle,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                runCatching {
+                                    android.net.Uri.parse(
+                                        popupWebView?.url.orEmpty()
+                                    ).host.orEmpty()
+                                }.getOrDefault(""),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        TextButton(onClick = { closePopup() }) {
+                            Text("Đóng")
+                        }
+                    }
+
+                    AndroidView(
+                        factory = { popupContext ->
+                            popupWebView
+                                ?: android.webkit.WebView(popupContext).also {
+                                    popupWebView = it
+                                }
+                        },
+                        update = { active ->
+                            popupWebView = active
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    )
+                }
+            }
+        }
+    }
+
+    DisposableEffect(pageUrl) {
+        onDispose {
+            cookieManager.flush()
+            popupWebView?.stopLoading()
+            popupWebView?.destroy()
+            popupWebView = null
+            popupVisible = false
+            pageCaptureReadyFlag.set(false)
+            mainWebView?.stopLoading()
+            mainWebView?.onPause()
+            mainWebView?.destroy()
+            mainWebView = null
+        }
+    }
+}
+
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsScreen(
@@ -2194,6 +4128,9 @@ private fun SettingsScreen(
     onClearCache: () -> Unit,
     developerUnlocked: Boolean,
     developerMode: Boolean,
+    nartoDiagnostic: String?,
+    nartoDiagnosticRunning: Boolean,
+    onRunNartoDiagnostic: (String) -> Unit,
     onDeveloperMode: (Boolean) -> Unit,
     onDeveloperUnlocked: () -> Unit,
     onDeveloperLock: () -> Unit,
@@ -2201,6 +4138,9 @@ private fun SettingsScreen(
 ) {
     val context = LocalContext.current
     var developerTapCount by remember { mutableIntStateOf(0) }
+    var nartoDiagnosticQuery by remember {
+        mutableStateOf("tôi có ba bạn gái")
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -2690,6 +4630,101 @@ private fun SettingsScreen(
                         onCheckedChange = onDeveloperMode
                     )
                 }
+
+                if (developerMode) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    ) {
+                        Column(
+                            Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "Narto diagnostics",
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "Checks what the Android client actually receives from Narto. " +
+                                    "It reports HTTP status, final URL, Cloudflare challenge detection, " +
+                                    "detail links, parsed cards and title matches.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = nartoDiagnosticQuery,
+                                onValueChange = { nartoDiagnosticQuery = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                label = { Text("Movie search query") }
+                            )
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        onRunNartoDiagnostic(nartoDiagnosticQuery)
+                                    },
+                                    enabled = !nartoDiagnosticRunning &&
+                                        nartoDiagnosticQuery.isNotBlank()
+                                ) {
+                                    if (nartoDiagnosticRunning) {
+                                        CircularProgressIndicator(
+                                            Modifier.size(16.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                    }
+                                    Text(
+                                        if (nartoDiagnosticRunning) "Running…"
+                                        else "Run Narto diagnostic"
+                                    )
+                                }
+
+                                if (!nartoDiagnostic.isNullOrBlank()) {
+                                    TextButton(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(
+                                                android.content.ClipboardManager::class.java
+                                            )
+                                            clipboard?.setPrimaryClip(
+                                                android.content.ClipData.newPlainText(
+                                                    "Narto diagnostics",
+                                                    nartoDiagnostic.orEmpty()
+                                                )
+                                            )
+                                            Toast.makeText(
+                                                context,
+                                                "Diagnostics copied",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    ) {
+                                        Text("Copy")
+                                    }
+                                }
+                            }
+
+                            if (!nartoDiagnostic.isNullOrBlank()) {
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(10.dp),
+                                    tonalElevation = 1.dp
+                                ) {
+                                    Text(
+                                        nartoDiagnostic,
+                                        modifier = Modifier.padding(10.dp),
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 TextButton(
                     onClick = onDeveloperLock,
                     modifier = Modifier.align(Alignment.End)
@@ -2776,16 +4811,30 @@ private fun SearchScreen(
 ) {
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searchSort by remember { mutableStateOf(SearchSort.RELEVANCE) }
     var youtubeSearchMode by remember { mutableStateOf(YouTubeSearchMode.ALL) }
+    var movieSearchMode by remember { mutableStateOf(MovieSearchMode.ALL) }
+    var loadedExtraPages by remember(query, sourceMode, youtubeSearchMode) {
+        mutableIntStateOf(0)
+    }
     var playlistTarget by remember { mutableStateOf<MediaSummary?>(null) }
-    val displayResults = remember(results, searchSort) {
+    val displayResults = remember(results, searchSort, sourceMode, movieSearchMode) {
+        val sourceFiltered = if (sourceMode == SearchSourceMode.MOVIE) {
+            when (movieSearchMode) {
+                MovieSearchMode.ALL -> results
+                MovieSearchMode.MOVIE -> results.filter { it.isSeries == false }
+                MovieSearchMode.SERIES -> results.filter { it.isSeries == true }
+            }
+        } else {
+            results
+        }
         when (searchSort) {
-            SearchSort.RELEVANCE -> results
-            SearchSort.NEWEST -> results.sortedBy { searchAgeRank(it.uploadDateText) }
-            SearchSort.VIEWS -> results.sortedByDescending { it.viewCount }
-            SearchSort.DURATION -> results.sortedByDescending { it.durationSeconds }
+            SearchSort.RELEVANCE -> sourceFiltered
+            SearchSort.NEWEST -> sourceFiltered.sortedBy { searchAgeRank(it.uploadDateText) }
+            SearchSort.VIEWS -> sourceFiltered.sortedByDescending { it.viewCount }
+            SearchSort.DURATION -> sourceFiltered.sortedByDescending { it.durationSeconds }
         }
     }
 
@@ -2799,8 +4848,16 @@ private fun SearchScreen(
         if (normalized != query) onQueryChange(normalized)
         scope.launch {
             loading = true
+            loadedExtraPages = 0
             searchError = null
+
+            // Reset the lazy-list anchor before a new result set is attached.
+            // requestScrollToItem() applies to the next remeasure, which avoids
+            // the first-search race where Compose preserves an old bottom anchor.
+            listState.requestScrollToItem(0)
+            onResultsChange(emptyList())
             onSearchSubmitted(normalized)
+
             runCatching {
                 withContext(Dispatchers.IO) {
                     when (mode) {
@@ -2813,9 +4870,59 @@ private fun SearchScreen(
                     }
                 }
             }
-                .onSuccess { onResultsChange(it) }
+                .onSuccess {
+                    listState.requestScrollToItem(0)
+                    onResultsChange(it)
+                }
                 .onFailure { searchError = it.message ?: "Search failed" }
             loading = false
+        }
+    }
+
+    fun loadMore() {
+        if (
+            sourceMode != SearchSourceMode.YOUTUBE ||
+            query.isBlank() ||
+            loading ||
+            loadingMore ||
+            results.isEmpty() ||
+            loadedExtraPages >= 5
+        ) return
+
+        val nextExtraPages = loadedExtraPages + 1
+        scope.launch {
+            loadingMore = true
+            searchError = null
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    when (youtubeSearchMode) {
+                        YouTubeSearchMode.ALL ->
+                            source.searchMore(query.trim(), nextExtraPages)
+                        YouTubeSearchMode.LIVE ->
+                            source.searchLiveMore(query.trim(), nextExtraPages)
+                        YouTubeSearchMode.SHORTS ->
+                            source.searchShortsMore(query.trim(), nextExtraPages)
+                    }
+                }
+            }.onSuccess { expanded ->
+                loadedExtraPages = nextExtraPages
+                onResultsChange(expanded)
+            }.onFailure {
+                searchError = it.message ?: "Unable to load more results"
+            }
+            loadingMore = false
+        }
+    }
+
+    val userHasScrolledSearch by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 ||
+                listState.firstVisibleItemScrollOffset > 0
+        }
+    }
+    val reachedSearchEnd by remember {
+        derivedStateOf {
+            userHasScrolledSearch && !listState.canScrollForward
         }
     }
 
@@ -2831,6 +4938,7 @@ private fun SearchScreen(
                     if (sourceMode != SearchSourceMode.YOUTUBE) {
                         onSourceModeChange(SearchSourceMode.YOUTUBE)
                         youtubeSearchMode = YouTubeSearchMode.ALL
+                        movieSearchMode = MovieSearchMode.ALL
                         searchError = null
                         onResultsChange(emptyList())
                         if (query.isNotBlank()) {
@@ -2843,42 +4951,50 @@ private fun SearchScreen(
                     }
                 },
                 label = { Text("YouTube", maxLines = 1) },
-                modifier = Modifier.weight(1f).height(40.dp)
+                modifier = Modifier.weight(1f).height(32.dp)
             )
             FilterChip(
                 selected = sourceMode == SearchSourceMode.MOVIE,
                 onClick = {
                     if (sourceMode != SearchSourceMode.MOVIE) {
                         onSourceModeChange(SearchSourceMode.MOVIE)
+                        movieSearchMode = MovieSearchMode.ALL
                         searchError = null
                         onResultsChange(emptyList())
                         if (query.isNotBlank()) submit(query, SearchSourceMode.MOVIE)
                     }
                 },
                 label = { Text("Movie", maxLines = 1) },
-                modifier = Modifier.weight(1f).height(40.dp)
+                modifier = Modifier.weight(1f).height(32.dp)
             )
         }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = query,
             onValueChange = onQueryChange,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp, max = 104.dp),
-            singleLine = false,
-            minLines = 1,
-            maxLines = 3,
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium,
             placeholder = {
                 Text(
                     if (sourceMode == SearchSourceMode.MOVIE)
                         "Search movies…"
                     else
-                        "Search YouTube…"
+                        "Search YouTube…",
+                    style = MaterialTheme.typography.bodyMedium
                 )
             },
-            leadingIcon = { Icon(Icons.Outlined.Search, null) },
+            leadingIcon = {
+                Icon(Icons.Outlined.Search, null, Modifier.size(18.dp))
+            },
             trailingIcon = {
-                if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) {
-                    Icon(Icons.Outlined.Close, "Clear")
+                if (query.isNotEmpty()) {
+                    IconButton(
+                        onClick = { onQueryChange("") },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Outlined.Close, "Clear", Modifier.size(18.dp))
+                    }
                 }
             },
             keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { submit() }),
@@ -2887,11 +5003,11 @@ private fun SearchScreen(
             ),
             shape = RoundedCornerShape(16.dp)
         )
-        if (sourceMode == SearchSourceMode.YOUTUBE) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            if (sourceMode == SearchSourceMode.YOUTUBE) {
                 YouTubeSearchMode.entries.forEach { option ->
                     FilterChip(
                         selected = youtubeSearchMode == option,
@@ -2909,8 +5025,32 @@ private fun SearchScreen(
                                 }
                             }
                         },
-                        label = { Text(option.label) },
-                        modifier = Modifier.weight(1f).height(34.dp)
+                        label = {
+                            Text(
+                                option.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1
+                            )
+                        },
+                        modifier = Modifier.weight(1f).height(28.dp)
+                    )
+                }
+            } else {
+                MovieSearchMode.entries.forEach { option ->
+                    FilterChip(
+                        selected = movieSearchMode == option,
+                        onClick = {
+                            movieSearchMode = option
+                            searchSort = SearchSort.RELEVANCE
+                        },
+                        label = {
+                            Text(
+                                option.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1
+                            )
+                        },
+                        modifier = Modifier.weight(1f).height(28.dp)
                     )
                 }
             }
@@ -2928,14 +5068,14 @@ private fun SearchScreen(
                     ) {
                         AssistChip(
                             onClick = { submit(recent) },
-                            modifier = Modifier.height(34.dp),
+                            modifier = Modifier.height(28.dp),
                             label = {
                                 Text(
                                     recent,
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.labelSmall,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(max = 210.dp)
+                                    modifier = Modifier.widthIn(max = 170.dp)
                                 )
                             }
                         )
@@ -2943,7 +5083,7 @@ private fun SearchScreen(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .offset(x = 2.dp, y = (-2).dp)
-                                .size(14.dp)
+                                .size(12.dp)
                                 .clickable { onRecentSearchDelete(recent) },
                             shape = RoundedCornerShape(50),
                             color = MaterialTheme.colorScheme.surface,
@@ -2956,7 +5096,7 @@ private fun SearchScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.Close,
                                     contentDescription = "Delete search",
-                                    modifier = Modifier.size(8.dp)
+                                    modifier = Modifier.size(7.dp)
                                 )
                             }
                         }
@@ -2973,7 +5113,7 @@ private fun SearchScreen(
                     Surface(
                         modifier = Modifier
                             .weight(1f)
-                            .height(30.dp)
+                            .height(24.dp)
                             .clickable { searchSort = option },
                         shape = RoundedCornerShape(10.dp),
                         color = if (searchSort == option) MaterialTheme.colorScheme.secondaryContainer
@@ -2985,7 +5125,7 @@ private fun SearchScreen(
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
                                 option.label,
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1,
                                 softWrap = false
                             )
@@ -3047,8 +5187,12 @@ private fun SearchScreen(
                 }
             }
         } else {
-            LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(top = 10.dp, bottom = 88.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 itemsIndexed(displayResults, key = { index, media -> "search-" + index + "-" + media.id }) { _, media ->
                     SearchResult(
                         media = media,
@@ -3066,6 +5210,76 @@ private fun SearchScreen(
                         isWatchLater = media.id in watchLaterIds,
                         onToggleWatchLater = { onToggleWatchLater(media) }
                     )
+                }
+                if (loadingMore) {
+                    item(key = "search-loading-more") {
+                        LinearProgressIndicator(
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+                item(key = "search-footer-actions") {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp)
+                            .padding(horizontal = 8.dp, vertical = 10.dp)
+                    ) {
+                        if (reachedSearchEnd) {
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .clickable(
+                                            enabled = sourceMode == SearchSourceMode.YOUTUBE &&
+                                                !loadingMore &&
+                                                loadedExtraPages < 5,
+                                            onClick = { loadMore() }
+                                        ),
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.secondaryContainer
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxSize(),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            if (loadedExtraPages >= 5) "Đã tải tối đa" else "Thêm",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+                                }
+
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .clickable {
+                                            scope.launch { listState.animateScrollToItem(0) }
+                                        },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxSize(),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Outlined.KeyboardArrowUp, null, Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Lên đầu", style = MaterialTheme.typography.labelMedium)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3541,13 +5755,32 @@ private fun SearchResult(
                     ),
                     color = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
+                        .align(Alignment.BottomStart)
                         .padding(3.dp)
                         .background(
                             MaterialTheme.colorScheme.scrim.copy(alpha = 0.78f),
                             RoundedCornerShape(4.dp)
                         )
                         .padding(horizontal = 3.dp, vertical = 0.dp)
+                )
+            }
+
+            mediaSourceBadge(media)?.let { sourceBadge ->
+                Text(
+                    sourceBadge,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.72f,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(3.dp)
+                        .background(
+                            MaterialTheme.colorScheme.scrim.copy(alpha = 0.82f),
+                            RoundedCornerShape(4.dp)
+                        )
+                        .padding(horizontal = 4.dp, vertical = 0.dp)
                 )
             }
             progressEntry
@@ -3851,6 +6084,18 @@ private fun NetworkStatusIcon(
     )
 }
 
+private fun mediaSourceBadge(media: MediaSummary): String? {
+    val id = media.id.lowercase()
+    return when {
+        id.startsWith("movie-title:narto:") || id.startsWith("movie:narto:") -> "NARTO"
+        id.startsWith("movie-title:phimapi:") || id.startsWith("movie:phimapi:") -> "KKPHIM"
+        id.startsWith("movie-title:ophim:") || id.startsWith("movie:ophim:") -> "OPHIM"
+        id.startsWith("movie-title:motphim:") || id.startsWith("movie:motphim:") -> "MOTPHIM"
+        id.startsWith("movie-title:biliintl:") || id.startsWith("movie:biliintl:") -> "BILI"
+        else -> null
+    }
+}
+
 private fun formatBytes(bytes: Long): String {
     val value = bytes.coerceAtLeast(0L)
     if (value < 1024L) return "${value} B"
@@ -4031,7 +6276,7 @@ private fun HomeScreen(
     val visibleRecommendations =
         if (showAllRecommendations) displayedRecommendations else displayedRecommendations.take(5)
     val trendingListIndex = run {
-        var index = 1 // "For you"
+        var index = 1 // top actions
         if (continueWatching.isNotEmpty()) {
             index += 1 + continueWatching.size // heading + rows
         }
@@ -4056,10 +6301,6 @@ private fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item {
-            Text("For you", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("Suggestions shaped by what you listen to",
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onSearch, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Outlined.Search, null)
@@ -6427,6 +8668,7 @@ private data class FullPlayerState(
     val videoMode: Boolean,
     val playbackSpeed: Float,
     val compatibilityFallback: Boolean,
+    val isResolving: Boolean,
     val isBuffering: Boolean,
     val playerError: String?,
     val movieDiagnostic: String?,
@@ -6492,6 +8734,7 @@ private fun FullPlayer(
     val videoMode = state.videoMode
     val playbackSpeed = state.playbackSpeed
     val compatibilityFallback = state.compatibilityFallback
+    val isResolving = state.isResolving
     val isBuffering = state.isBuffering
     val playerError = state.playerError
     val movieDiagnostic = state.movieDiagnostic
@@ -6597,6 +8840,7 @@ private fun FullPlayer(
     var holdSeekPreviewMs by remember { mutableLongStateOf(-1L) }
     var showDeveloperDiagnostics by remember { mutableStateOf(false) }
     var fullscreenRequested by remember { mutableStateOf(false) }
+    var portraitVideo by remember(media.id) { mutableStateOf(false) }
     var inlineVideoControlsVisible by remember(media.id, videoMode) { mutableStateOf(true) }
     var inlineVideoControlsEpoch by remember { mutableIntStateOf(0) }
     var fullscreenRendered by remember { mutableStateOf(false) }
@@ -6629,6 +8873,14 @@ private fun FullPlayer(
         while (true) {
             position = controller?.currentPosition?.coerceAtLeast(0L) ?: 0L
             duration = controller?.duration?.takeIf { it > 0 } ?: 0L
+
+            controller?.videoSize?.let { size ->
+                if (size.width > 0 && size.height > 0) {
+                    // Use the decoded stream dimensions, not poster/metadata.
+                    // Vertical dramas should stay portrait when entering fullscreen.
+                    portraitVideo = size.height > size.width
+                }
+            }
             delay(500)
         }
     }
@@ -6638,19 +8890,22 @@ private fun FullPlayer(
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape =
         configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val isPortrait =
+        configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+    val fullscreenOrientationReady =
+        if (portraitVideo) isPortrait else isLandscape
 
-    // Keep the normal player visible while Android is rotating into landscape.
-    // Likewise, keep the fullscreen surface alive while rotating back to portrait.
-    // This prevents Compose from rendering the wrong layout for a transient
-    // orientation and avoids the diagonal/half-rotated frames seen during transition.
-    LaunchedEffect(fullscreenRequested, isLandscape) {
+    // Render fullscreen only after Android reaches the orientation that matches
+    // the actual decoded video. Vertical dramas therefore use portrait fullscreen,
+    // while normal widescreen video keeps the existing landscape behavior.
+    LaunchedEffect(fullscreenRequested, fullscreenOrientationReady, portraitVideo) {
         when {
-            fullscreenRequested && isLandscape -> {
+            fullscreenRequested && fullscreenOrientationReady -> {
                 fullscreenRendered = true
                 fullscreenControlsVisible = true
                 fullscreenControlsEpoch += 1
             }
-            !fullscreenRequested && !isLandscape -> {
+            !fullscreenRequested && isPortrait -> {
                 fullscreenRendered = false
                 fullscreenSpeedMenu = false
                 fullscreenQualityMenu = false
@@ -6660,10 +8915,15 @@ private fun FullPlayer(
         }
     }
 
-    DisposableEffect(fullscreenRequested, activity) {
+    DisposableEffect(fullscreenRequested, portraitVideo, activity) {
         val originalBrightness = activity?.window?.attributes?.screenBrightness
         if (fullscreenRequested && activity != null) {
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            activity.requestedOrientation =
+                if (portraitVideo) {
+                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                } else {
+                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                }
             WindowCompat.setDecorFitsSystemWindows(activity.window, false)
             WindowInsetsControllerCompat(activity.window, activity.window.decorView).apply {
                 systemBarsBehavior =
@@ -7529,7 +9789,33 @@ private fun FullPlayer(
                                 }
                             }
                     )
-                    if (inlineVideoControlsVisible) {
+                    if (isResolving || isBuffering) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(16.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.62f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = androidx.compose.ui.graphics.Color.White
+                                )
+                                Text(
+                                    if (isResolving) "Đang chuẩn bị nguồn…" else "Đang tải…",
+                                    color = androidx.compose.ui.graphics.Color.White,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+                    }
+                    if (inlineVideoControlsVisible && !isResolving) {
                         FilledTonalIconButton(
                             onClick = { fullscreenRequested = true },
                             modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(38.dp)
@@ -7539,12 +9825,42 @@ private fun FullPlayer(
                     }
                 }
             } else {
-                AsyncImage(
-                    media.thumbnailUrl, null,
-                    Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentScale = ContentScale.Crop
-                )
+                Box(
+                    Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    AsyncImage(
+                        media.thumbnailUrl,
+                        null,
+                        Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                    if (isResolving || isBuffering) {
+                        Surface(
+                            modifier = Modifier.align(Alignment.Center),
+                            shape = RoundedCornerShape(14.dp),
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.62f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = androidx.compose.ui.graphics.Color.White
+                                )
+                                Text(
+                                    if (isResolving) "Đang chuẩn bị nguồn…" else "Đang tải…",
+                                    color = androidx.compose.ui.graphics.Color.White,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+                    }
+                }
             }
             Spacer(Modifier.height(12.dp))
             Text(media.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
@@ -8239,7 +10555,7 @@ private fun FullPlayer(
         }
         Surface(tonalElevation = 6.dp, shadowElevation = 6.dp) {
             Column {
-                if (isBuffering) {
+                if (isResolving || isBuffering) {
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxWidth().height(3.dp)
                     )

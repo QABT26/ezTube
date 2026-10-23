@@ -415,23 +415,30 @@ class NewPipeYouTubeSource : YouTubeSource {
     private suspend fun searchStreams(
         query: String,
         predicate: (StreamInfoItem) -> Boolean,
-        badge: String? = null
+        badge: String? = null,
+        extraPages: Int = 0,
+        preferredFilters: List<String> = listOf("videos", "all")
     ): List<MediaSummary> {
         val normalized = query.trim()
         if (normalized.isEmpty()) return emptyList()
 
         val service = ServiceList.YouTube
         val factory = service.searchQHFactory
-        val contentFilter = factory.availableContentFilter
+        val availableFilters = factory.availableContentFilter
             .filterGroups
             .asSequence()
             .flatMap { it.filterItems.asSequence() }
-            .firstOrNull { it.name.equals("videos", ignoreCase = true) }
-            ?: factory.availableContentFilter
-                .filterGroups
-                .asSequence()
-                .flatMap { it.filterItems.asSequence() }
-                .firstOrNull { it.name.equals("all", ignoreCase = true) }
+            .toList()
+        val contentFilter = preferredFilters
+            .asSequence()
+            .mapNotNull { preferred ->
+                availableFilters.firstOrNull {
+                    it.name.equals(preferred, ignoreCase = true) ||
+                        it.name.contains(preferred, ignoreCase = true)
+                }
+            }
+            .firstOrNull()
+            ?: availableFilters.firstOrNull()
             ?: error("YouTube search has no usable content filter")
 
         val searchHandler = factory.fromQuery(
@@ -440,8 +447,18 @@ class NewPipeYouTubeSource : YouTubeSource {
             null
         )
 
-        return SearchInfo.getInfo(service, searchHandler)
-            .relatedItems
+        val first = SearchInfo.getInfo(service, searchHandler)
+        val all = first.relatedItems.toMutableList()
+        var next = first.nextPage
+        var pages = 0
+        while (next != null && pages < extraPages.coerceIn(0, 5)) {
+            val page = SearchInfo.getMoreItems(service, searchHandler, next)
+            all += page.items
+            next = page.nextPage
+            pages += 1
+        }
+
+        return all
             .asSequence()
             .filterIsInstance<StreamInfoItem>()
             .filter(predicate)
@@ -458,7 +475,32 @@ class NewPipeYouTubeSource : YouTubeSource {
                     thumbnailBadge = badge
                 )
             }
+            .distinctBy { it.id }
             .toList()
+    }
+
+    private fun isLikelyLive(item: StreamInfoItem): Boolean {
+        if (
+            item.streamType == StreamType.LIVE_STREAM ||
+            item.streamType == StreamType.AUDIO_LIVE_STREAM
+        ) return true
+
+        val haystack = buildString {
+            append(item.name)
+            append(' ')
+            append(item.uploaderName.orEmpty())
+        }.lowercase()
+
+        return " live" in " $haystack" ||
+            "livestream" in haystack ||
+            "trực tiếp" in haystack ||
+            "🔴" in haystack
+    }
+
+    private fun isLikelyShort(item: StreamInfoItem): Boolean {
+        if (item.isShortFormContent) return true
+        val duration = item.duration
+        return duration in 1..180
     }
 
     override suspend fun search(query: String): List<MediaSummary> =
@@ -466,20 +508,45 @@ class NewPipeYouTubeSource : YouTubeSource {
 
     override suspend fun searchLive(query: String): List<MediaSummary> =
         searchStreams(
-            query,
-            predicate = {
-                !it.isShortFormContent &&
-                    (it.streamType == StreamType.LIVE_STREAM ||
-                        it.streamType == StreamType.AUDIO_LIVE_STREAM)
-            },
-            badge = "LIVE"
+            query = query.trim() + " live",
+            predicate = ::isLikelyLive,
+            badge = "LIVE",
+            extraPages = 2,
+            preferredFilters = listOf("live", "livestream", "videos", "all")
         )
 
     override suspend fun searchShorts(query: String): List<MediaSummary> =
         searchStreams(
+            query = query.trim() + " shorts",
+            predicate = ::isLikelyShort,
+            badge = "SHORT",
+            extraPages = 2,
+            preferredFilters = listOf("shorts", "short", "videos", "all")
+        )
+
+    suspend fun searchMore(query: String, extraPages: Int): List<MediaSummary> =
+        searchStreams(
             query,
-            predicate = { it.isShortFormContent },
-            badge = "SHORT"
+            predicate = { !it.isShortFormContent },
+            extraPages = extraPages
+        )
+
+    suspend fun searchLiveMore(query: String, extraPages: Int): List<MediaSummary> =
+        searchStreams(
+            query = query.trim() + " live",
+            predicate = ::isLikelyLive,
+            badge = "LIVE",
+            extraPages = (extraPages + 2).coerceAtMost(5),
+            preferredFilters = listOf("live", "livestream", "videos", "all")
+        )
+
+    suspend fun searchShortsMore(query: String, extraPages: Int): List<MediaSummary> =
+        searchStreams(
+            query = query.trim() + " shorts",
+            predicate = ::isLikelyShort,
+            badge = "SHORT",
+            extraPages = (extraPages + 2).coerceAtMost(5),
+            preferredFilters = listOf("shorts", "short", "videos", "all")
         )
 
     override suspend fun comments(mediaId: String): CommentsPage {

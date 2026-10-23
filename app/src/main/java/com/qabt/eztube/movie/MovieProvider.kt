@@ -29,7 +29,8 @@ data class MovieCatalogItem(
         thumbnailUrl = thumbnailUrl,
         uploadDateText = year?.toString(),
         durationSeconds = durationSeconds ?: -1L,
-        thumbnailBadge = episodeBadge
+        thumbnailBadge = episodeBadge,
+        isSeries = isSeries
     )
 }
 
@@ -97,6 +98,7 @@ data class MovieVideoStream(
 data class MoviePlayback(
     val mediaId: String,
     val hlsUrl: String? = null,
+    val directUrl: String? = null,
     val videoStreams: List<MovieVideoStream> = emptyList(),
     val audioUrl: String? = null,
     val audioMimeType: String? = null,

@@ -37,7 +37,10 @@ class PlaybackQueueManager(
     private data class ResolvedPlayback(
         val mediaItem: MediaItem,
         val mediaSource: MediaSource?,
-        val sabrQualityController: SabrMediaSourceFactory.QualityController? = null
+        val sabrQualityController: SabrMediaSourceFactory.QualityController? = null,
+        val prebufferUrl: String? = null,
+        val prebufferCompanionUrl: String? = null,
+        val prebufferHeaders: Map<String, String> = emptyMap()
     )
 
     private val mediaSourceFactory by lazy {
@@ -47,6 +50,8 @@ class PlaybackQueueManager(
         private const val MAX_SOURCE_RECOVERY_ATTEMPTS = 3
         private const val MAX_RESOLVE_ATTEMPTS = 3
         private const val SABR_FAILURE_COOLDOWN_MS = 15_000L
+        private const val WARM_CACHE_TTL_MS = 90_000L
+        private const val WARM_CACHE_MAX_ENTRIES = 6
     }
 
     @Volatile private var busy = false
@@ -66,6 +71,134 @@ class PlaybackQueueManager(
     @Volatile private var sabrQualityWarmPending = false
     private val sabrFailureUntilMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
     @Volatile private var lastSabrFallbackReason: String? = null
+
+    private data class WarmKey(
+        val mediaId: String,
+        val videoMode: Boolean,
+        val videoHeight: Int?,
+        val audioQuality: AudioQuality?
+    )
+
+    private data class WarmEntry(
+        val resolved: ResolvedPlayback,
+        val createdAtMs: Long
+    )
+
+    private val warmCache = java.util.LinkedHashMap<WarmKey, WarmEntry>()
+    private val warmInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<WarmKey>()
+
+    private fun warmKey(media: MediaSummary): WarmKey {
+        val videoMode = media.id.startsWith("movie:") || preferences.loadVideoMode()
+        return WarmKey(
+            mediaId = media.id,
+            videoMode = videoMode,
+            videoHeight = if (videoMode) {
+                preferences.effectiveVideoQuality().targetHeight
+            } else {
+                null
+            },
+            audioQuality = if (videoMode) null else preferences.effectiveAudioQuality()
+        )
+    }
+
+    @Synchronized
+    private fun takeWarm(media: MediaSummary): ResolvedPlayback? {
+        val key = warmKey(media)
+        val entry = warmCache.remove(key) ?: return null
+        val age = android.os.SystemClock.elapsedRealtime() - entry.createdAtMs
+        return entry.resolved.takeIf { age >= 0L && age <= WARM_CACHE_TTL_MS }
+    }
+
+    @Synchronized
+    private fun putWarm(key: WarmKey, resolved: ResolvedPlayback) {
+        warmCache[key] = WarmEntry(
+            resolved = resolved,
+            createdAtMs = android.os.SystemClock.elapsedRealtime()
+        )
+        while (warmCache.size > WARM_CACHE_MAX_ENTRIES) {
+            val oldest = warmCache.entries.firstOrNull()?.key ?: break
+            warmCache.remove(oldest)
+        }
+    }
+
+    @Synchronized
+    private fun clearWarm(mediaId: String? = null) {
+        if (mediaId == null) {
+            warmCache.clear()
+        } else {
+            val keys = warmCache.keys.filter { it.mediaId == mediaId }
+            keys.forEach(warmCache::remove)
+        }
+    }
+
+    fun warm(media: MediaSummary) {
+        if (media.id.startsWith("movie:narto:")) return
+        if (!preferences.shouldPreloadOnCurrentNetwork()) return
+        if (player.currentMediaItem?.mediaId == media.id) return
+
+        val key = warmKey(media)
+        synchronized(this) {
+            val existing = warmCache[key]
+            if (existing != null) {
+                val age = android.os.SystemClock.elapsedRealtime() - existing.createdAtMs
+                if (age >= 0L && age <= WARM_CACHE_TTL_MS) return
+                warmCache.remove(key)
+            }
+        }
+        if (!warmInFlight.add(key)) return
+
+        scope.launch {
+            val resolved = runCatching {
+                if (
+                    PlaybackSourceResolver.resolve(media.id) is PlaybackSource.YouTube &&
+                    key.videoMode
+                ) {
+                    val streams = withContext(Dispatchers.IO) {
+                        source.videoStreams(media.id)
+                    }
+                    val stream = VideoStreamSelector.selectFastStart(
+                        streams,
+                        preferences.effectiveVideoQuality()
+                    ) ?: error("No warmable YouTube video stream")
+                    resolvedPlayback(media, stream)
+                } else {
+                    resolve(
+                        media = media,
+                        fastStart = key.videoMode,
+                        initialPositionMs = 0L
+                    ).getOrThrow()
+                }
+            }.getOrNull()
+
+            if (resolved != null) {
+                // Movie providers frequently use signed/fragile CDN URLs and some
+                // legacy hosts reset the connection when we probe bytes before the
+                // real Media3 request. Keep predictive resolve for movies, but only
+                // byte-prebuffer YouTube/non-movie sources.
+                if (!media.id.startsWith("movie:")) {
+                    listOfNotNull(
+                        resolved.prebufferUrl,
+                        resolved.prebufferCompanionUrl
+                    )
+                        .distinct()
+                        .filter { it.startsWith("http://") || it.startsWith("https://") }
+                        .take(2)
+                        .forEach { url ->
+                            withContext(Dispatchers.IO) {
+                                runCatching {
+                                    mediaSourceFactory.prebuffer(
+                                        url = url,
+                                        headers = resolved.prebufferHeaders
+                                    )
+                                }
+                            }
+                        }
+                }
+                putWarm(key, resolved)
+            }
+            warmInFlight.remove(key)
+        }
+    }
 
     private fun mediaSourceFor(mediaItem: MediaItem, stream: AudioStream): MediaSource? {
         val audioUrl = stream.companionAudioUrl ?: return null
@@ -108,7 +241,8 @@ class PlaybackQueueManager(
 
         return ResolvedPlayback(
             mediaItem = mediaItem,
-            mediaSource = mediaSourceFactory.create(mediaItem, source)
+            mediaSource = mediaSourceFactory.create(mediaItem, source),
+            prebufferUrl = uri
         )
     }
 
@@ -139,7 +273,12 @@ class PlaybackQueueManager(
             }
 
         val isSplit = splitVideo != null && !playback.audioUrl.isNullOrBlank()
-        val engine = if (isSplit) PlaybackService.ENGINE_DIRECT else PlaybackService.ENGINE_HLS
+        val isDirect = !playback.directUrl.isNullOrBlank()
+        val engine = if (isSplit || isDirect) {
+            PlaybackService.ENGINE_DIRECT
+        } else {
+            PlaybackService.ENGINE_HLS
+        }
         val selectedHeight = splitVideo?.height ?: 0
 
         val diagnostic = buildString {
@@ -213,7 +352,30 @@ class PlaybackQueueManager(
                     audioUrl = audioUrl,
                     audioMimeType = playback.audioMimeType,
                     headers = playback.requestHeaders
-                )
+                ),
+                prebufferUrl = video.url,
+                prebufferCompanionUrl = audioUrl,
+                prebufferHeaders = playback.requestHeaders
+            )
+        }
+
+        playback.directUrl?.takeIf { it.isNotBlank() }?.let { directUrl ->
+            val mediaItem = MediaItem.Builder()
+                .setMediaId(media.id)
+                .setUri(directUrl)
+                .setSubtitleConfigurations(subtitleConfigurations)
+                .setMediaMetadata(metadata)
+                .build()
+
+            return ResolvedPlayback(
+                mediaItem = mediaItem,
+                mediaSource = mediaSourceFactory.createMovieDirect(
+                    mediaItem = mediaItem,
+                    url = directUrl,
+                    headers = playback.requestHeaders
+                ),
+                prebufferUrl = directUrl,
+                prebufferHeaders = playback.requestHeaders
             )
         }
 
@@ -233,7 +395,9 @@ class PlaybackQueueManager(
                 mediaItem = mediaItem,
                 manifestUrl = hlsUrl,
                 headers = playback.requestHeaders
-            )
+            ),
+            prebufferUrl = hlsUrl,
+            prebufferHeaders = playback.requestHeaders
         )
     }
 
@@ -349,7 +513,9 @@ class PlaybackQueueManager(
             .build()
         return ResolvedPlayback(
             mediaItem = mediaItem,
-            mediaSource = mediaSourceFor(mediaItem, stream)
+            mediaSource = mediaSourceFor(mediaItem, stream),
+            prebufferUrl = stream.url,
+            prebufferCompanionUrl = stream.companionAudioUrl
         )
     }
 
@@ -372,7 +538,10 @@ class PlaybackQueueManager(
         preferences.saveQueue(saved.first, index)
         preferences.save(saved.first[index], 0L)
         clearAlternateStream()
-        if (!preferences.loadSleepEndCurrent()) {
+        if (
+            !preferences.loadSleepEndCurrent() &&
+            !id.startsWith("movie:narto:")
+        ) {
             ensureNext(saved.first, index)
         }
         warmAlternateStream(saved.first[index])
@@ -390,6 +559,11 @@ class PlaybackQueueManager(
         val items = saved.first
         if (items.isEmpty()) return
         val currentId = player.currentMediaItem?.mediaId
+        if (currentId?.startsWith("movie:narto:") == true) {
+            // Narto requires the user-visible website unlock flow for each episode.
+            // Never auto-resolve the next episode behind that gate.
+            return
+        }
         val current = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
         val target = QueueNavigationPolicy.endedTarget(
             current = current,
@@ -475,6 +649,199 @@ class PlaybackQueueManager(
         )
     }
 
+    fun playDirectMovieHls(
+        hlsUrl: String,
+        referer: String,
+        subtitleUrl: String?,
+        requestHeaders: Map<String, String> = emptyMap(),
+        positionMs: Long,
+        playWhenReady: Boolean,
+        onComplete: (Result<Unit>) -> Unit
+    ) {
+        if (busy) {
+            onComplete(Result.failure(IllegalStateException("Playback resolver is busy")))
+            return
+        }
+        val parsedHls = runCatching { Uri.parse(hlsUrl) }.getOrNull()
+        val hlsHost = parsedHls?.host.orEmpty().lowercase()
+        val hlsPath = parsedHls?.path.orEmpty()
+        val isSignedNartoManifest =
+            parsedHls?.scheme == "https" &&
+                hlsHost == "stream.narto-drama.com" &&
+                hlsPath.startsWith("/e/m/")
+        val isUnlockedDramaWaveManifest =
+            parsedHls?.scheme == "https" &&
+                (
+                    hlsHost == "mydramawave.com" ||
+                    hlsHost.endsWith(".mydramawave.com")
+                ) &&
+                hlsPath.endsWith(".m3u8", ignoreCase = true)
+        val isUnlockedDramaBoxDirect =
+            parsedHls?.scheme == "https" &&
+                hlsHost == "dramabox-stream.narto-drama.com"
+
+        if (
+            !isSignedNartoManifest &&
+            !isUnlockedDramaWaveManifest &&
+            !isUnlockedDramaBoxDirect
+        ) {
+            onComplete(Result.failure(IllegalArgumentException("Invalid Narto media URL")))
+            return
+        }
+
+        val safeSubtitleUrl = subtitleUrl
+            ?.takeIf { it.isNotBlank() }
+            ?.takeIf { value ->
+                val uri = runCatching { Uri.parse(value) }.getOrNull()
+                val host = uri?.host.orEmpty().lowercase()
+                val path = uri?.path.orEmpty()
+                uri?.scheme == "https" &&
+                    (
+                        host == "edge.narto-drama.com" ||
+                        host == "narto-drama.com" ||
+                        host == "stream.narto-drama.com"
+                    ) &&
+                    path.startsWith("/e/s/")
+            }
+
+        val saved = preferences.loadQueue()
+        if (saved == null || saved.first.isEmpty()) {
+            onComplete(Result.failure(IllegalStateException("Playback queue is empty")))
+            return
+        }
+        val target = saved.second
+        val media = saved.first.getOrNull(target)
+        if (media == null || !media.id.startsWith("movie:narto:")) {
+            onComplete(Result.failure(IllegalStateException("Current item is not Narto")))
+            return
+        }
+
+        preferences.networkPolicyBlockReason()?.let { reason ->
+            onComplete(Result.failure(IllegalStateException(reason)))
+            return
+        }
+
+        busy = true
+        invalidatePending()
+        val requestGeneration = generation
+
+        player.stop()
+        player.clearMediaItems()
+
+        scope.launch {
+            runCatching {
+                resolvedMoviePlayback(
+                    media,
+                    MoviePlayback(
+                        mediaId = media.id,
+                        hlsUrl = hlsUrl.takeUnless { isUnlockedDramaBoxDirect },
+                        directUrl = hlsUrl.takeIf { isUnlockedDramaBoxDirect },
+                        subtitles = safeSubtitleUrl
+                            ?.let {
+                                listOf(
+                                    com.qabt.eztube.movie.MovieSubtitle(
+                                        language = "vi",
+                                        label = "Tiếng Việt",
+                                        url = it,
+                                        mimeType = "text/vtt"
+                                    )
+                                )
+                            }
+                            .orEmpty(),
+                        requestHeaders = buildMap {
+                            put(
+                                "User-Agent",
+                                "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
+                                    "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
+                            )
+                            put("Referer", referer)
+                            put(
+                                "Origin",
+                                runCatching {
+                                    val uri = Uri.parse(referer)
+                                    val host = uri.host.orEmpty()
+                                    if (uri.scheme == "https" && host.endsWith("narto-drama.com")) {
+                                        "https://" + host
+                                    } else {
+                                        "https://narto-drama.com"
+                                    }
+                                }.getOrDefault("https://narto-drama.com")
+                            )
+
+                            requestHeaders.forEach { (key, value) ->
+                                if (
+                                    value.isNotBlank() &&
+                                    (
+                                        key.equals("User-Agent", ignoreCase = true) ||
+                                        key.equals("Referer", ignoreCase = true) ||
+                                        key.equals("Origin", ignoreCase = true)
+                                    )
+                                ) {
+                                    put(
+                                        when {
+                                            key.equals("User-Agent", true) -> "User-Agent"
+                                            key.equals("Referer", true) -> "Referer"
+                                            else -> "Origin"
+                                        },
+                                        value
+                                    )
+                                }
+                            }
+                        },
+                        diagnostic = buildString {
+                            append("Provider: Narto Drama")
+                            append("\nPlayback: interactive website unlock")
+                            append(
+                                if (isUnlockedDramaBoxDirect) {
+                                    "\nMedia3: direct source"
+                                } else {
+                                    "\nMedia3: signed HLS"
+                                }
+                            )
+                        }
+                    )
+                )
+            }.onSuccess { item ->
+                if (requestGeneration != generation) {
+                    onComplete(
+                        Result.failure(
+                            IllegalStateException("Playback request was superseded")
+                        )
+                    )
+                    return@onSuccess
+                }
+
+                val latest = preferences.loadQueue()
+                if (latest == null || latest.first.getOrNull(target)?.id != media.id) {
+                    onComplete(
+                        Result.failure(
+                            IllegalStateException("Playback queue changed during unlock")
+                        )
+                    )
+                    return@onSuccess
+                }
+
+                setResolved(item)
+                player.prepare()
+                if (positionMs > 0L) player.seekTo(positionMs.coerceAtLeast(0L))
+                player.setPlaybackSpeed(preferences.loadSpeed())
+                if (playWhenReady) player.play() else player.pause()
+                preferences.saveQueue(saved.first, target)
+                preferences.saveSession(
+                    media,
+                    positionMs.coerceAtLeast(0L),
+                    playWhenReady
+                )
+                clearAlternateStream()
+                onComplete(Result.success(Unit))
+            }.onFailure { error ->
+                onComplete(Result.failure(error))
+            }
+
+            busy = false
+        }
+    }
+
     fun playSavedCurrent(
         positionMs: Long,
         playWhenReady: Boolean,
@@ -509,6 +876,11 @@ class PlaybackQueueManager(
         val saved = preferences.loadQueue() ?: return
         val items = saved.first
         val currentId = player.currentMediaItem?.mediaId ?: return
+        if (currentId.startsWith("movie:narto:")) {
+            // A failed/expired signed Narto manifest must go through the visible
+            // unlock page again; background retries cannot reproduce that session.
+            return
+        }
         val index = items.indexOfFirst { it.id == currentId }.takeIf { it >= 0 } ?: saved.second
         if (index !in items.indices) return
 
@@ -520,6 +892,7 @@ class PlaybackQueueManager(
 
         val positionMs = player.currentPosition.coerceAtLeast(0L)
         val shouldPlay = player.playWhenReady
+        clearWarm(currentId)
 
         // Give a movie source one real Media3 retry before blacklisting its provider.
         // This avoids treating a transient manifest/segment error as proof that the
@@ -615,6 +988,7 @@ class PlaybackQueueManager(
     }
 
     fun applyVideoQualityChange(positionMs: Long, playWhenReady: Boolean): String {
+        clearWarm()
         if (activePlaybackEngine == PlaybackService.ENGINE_SABR) {
             val controller = activeSabrQualityController
             if (controller == null) {
@@ -748,6 +1122,13 @@ class PlaybackQueueManager(
             repeatMode = preferences.loadRepeatMode()
         ) ?: return
 
+        if (items[target].id.startsWith("movie:narto:")) {
+            // App UI owns the visible Narto unlock flow. Background/system
+            // transport must not try to resolve a gated episode and surface a
+            // misleading source error.
+            return
+        }
+
         // Native adjacent items are safe only when they match the logical target.
         // Queue edits can otherwise leave a stale resolved item in Media3.
         if (delta > 0 && target == current + 1 && player.hasNextMediaItem()) {
@@ -781,6 +1162,7 @@ class PlaybackQueueManager(
             !preferences.shouldPreloadOnCurrentNetwork()
         ) return
         val next = items.getOrNull(index + 1) ?: return
+        if (next.id.startsWith("movie:narto:")) return
         val current = player.currentMediaItemIndex
         val loadedNext = if (current >= 0 && current + 1 < player.mediaItemCount) {
             player.getMediaItemAt(current + 1)
@@ -841,11 +1223,16 @@ class PlaybackQueueManager(
         scope.launch {
             val media = items[target]
             val useFastStart = allowFastStart && preferences.loadVideoMode() && playWhenReady
-            val resolved = resolveWithRetry(
-                media,
-                fastStart = useFastStart,
-                initialPositionMs = positionMs
-            )
+            val warmed = takeWarm(media)
+            val resolved = if (warmed != null) {
+                Result.success(warmed)
+            } else {
+                resolveWithRetry(
+                    media,
+                    fastStart = useFastStart,
+                    initialPositionMs = positionMs
+                )
+            }
             resolved.onSuccess { item ->
                 if (requestGeneration != generation) {
                     onComplete?.invoke(Result.failure(IllegalStateException("Playback request was superseded")))
@@ -961,7 +1348,9 @@ class PlaybackQueueManager(
         setResolved(
             ResolvedPlayback(
                 mediaItem = mediaItem,
-                mediaSource = mediaSourceFor(mediaItem, stream)
+                mediaSource = mediaSourceFor(mediaItem, stream),
+                prebufferUrl = stream.url,
+                prebufferCompanionUrl = stream.companionAudioUrl
             )
         )
         player.prepare()
