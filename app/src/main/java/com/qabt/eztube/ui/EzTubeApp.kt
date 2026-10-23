@@ -4907,16 +4907,10 @@ private fun SearchScreen(
         }
     }
 
-    val showSearchFooterActions by remember {
+    val userHasScrolledSearch by remember {
         derivedStateOf {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-            val userHasScrolled =
-                listState.firstVisibleItemIndex > 0 ||
-                    listState.firstVisibleItemScrollOffset > 0
-
-            displayResults.isNotEmpty() &&
-                userHasScrolled &&
-                lastVisible >= displayResults.lastIndex
+            listState.firstVisibleItemIndex > 0 ||
+                listState.firstVisibleItemScrollOffset > 0
         }
     }
 
@@ -5181,8 +5175,12 @@ private fun SearchScreen(
                 }
             }
         } else {
-            LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(top = 10.dp, bottom = 88.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 itemsIndexed(displayResults, key = { index, media -> "search-" + index + "-" + media.id }) { _, media ->
                     SearchResult(
                         media = media,
@@ -5208,12 +5206,12 @@ private fun SearchScreen(
                         )
                     }
                 }
-                if (showSearchFooterActions) {
-                    item(key = "search-footer-actions") {
+                item(key = "search-footer-actions") {
+                    if (userHasScrolledSearch) {
                         Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
@@ -5261,7 +5259,6 @@ private fun SearchScreen(
                             }
                         }
                     }
-                }
                 }
             }
         }
